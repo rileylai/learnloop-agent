@@ -60,7 +60,7 @@ It indexes existing Notion notes as read-only knowledge, generates AI supplement
 - Keep critical product label `AI Supplement Zone`.
 - Prefer short sections and tables.
 - Record major decisions as ADR files under `docs/decisions/`.
-- Update `DAILY_LOG.md` after meaningful work.
+- Update `dev_state/DAILY_LOG.md` after meaningful local development work.
 - If behavior changes, update related docs.
 
 ## 7. Definition of Done
@@ -69,7 +69,7 @@ A task is done only when:
 - Unit tests or documentation acceptance checks pass.
 - Guardrails are not weakened.
 - Relevant docs are updated.
-- `DAILY_LOG.md` has a short entry.
+- `dev_state/DAILY_LOG.md` has a short entry for meaningful local development work.
 - No secrets or private Notion content are committed.
 
 ## 8. Current MVP Constraints
