@@ -23,4 +23,4 @@ What belongs here:
 - Do not write RQ directly into business logic.
 - Do not add LangChain/LangGraph/MCP implementation in MVP.
 - Add comments only for purpose or non-obvious logic.
-- Update `DAILY_LOG.md` after meaningful changes.
+- Update `dev_state/DAILY_LOG.md` after meaningful local development work.
