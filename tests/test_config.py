@@ -1,4 +1,4 @@
-from app.config import get_settings
+from src.app.config import get_settings
 
 
 def _clear_settings_cache() -> None:
