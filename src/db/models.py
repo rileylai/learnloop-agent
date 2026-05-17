@@ -1,0 +1,169 @@
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text, text
+from sqlalchemy.orm import Mapped, mapped_column
+
+from src.db.base import Base
+
+
+class NotionPage(Base):
+    __tablename__ = "notion_pages"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    notion_page_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    notion_path: Mapped[str] = mapped_column(Text, nullable=False)
+    last_edited_time: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class NotionBlock(Base):
+    __tablename__ = "notion_blocks"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    notion_block_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False, index=True)
+    notion_page_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("notion_pages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    parent_block_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("notion_blocks.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    block_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_text: Mapped[str] = mapped_column(Text, nullable=True)
+    block_path: Mapped[str] = mapped_column(Text, nullable=True)
+    block_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class SourceDocument(Base):
+    __tablename__ = "source_documents"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    source_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_display_name: Mapped[str] = mapped_column(String(512), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    raw_text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class KnowledgeChunk(Base):
+    __tablename__ = "knowledge_chunks"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    source_document_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("source_documents.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    notion_block_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("notion_blocks.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
+    notion_path: Mapped[str] = mapped_column(Text, nullable=True)
+    embedding_text: Mapped[str] = mapped_column(Text, nullable=True)
+    source_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class ChangeRequest(Base):
+    __tablename__ = "change_requests"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    source_document_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("source_documents.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    target_notion_page_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("notion_pages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    proposal_json: Mapped[str] = mapped_column(Text, nullable=False)
+    failure_reason: Mapped[str] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    workflow_run_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("workflow_runs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    event: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    details_json: Mapped[str] = mapped_column(Text, nullable=True)
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class WorkflowRun(Base):
+    __tablename__ = "workflow_runs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    workflow_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    failure_reason: Mapped[str] = mapped_column(String(128), nullable=True)
+    metadata_json: Mapped[str] = mapped_column(Text, nullable=True)
+    started_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    finished_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=True)
