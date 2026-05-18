@@ -16,6 +16,8 @@ The agent can write only accepted content into `AI Supplement Zone`.
 - Auto page re-index after accepted agent append.
 - Pending/rejected drafts are not used in production RAG.
 - Every workflow must be auditable and testable.
+- MCP-oriented architecture, not standalone MCP-server-first.
+- Provider and tool interfaces are schema-friendly and provider-agnostic.
 
 ### 2.1 Two Harness Layers
 This project has two separate harness layers.
@@ -27,7 +29,7 @@ Development harness:
 
 Runtime agent harness:
 - Used by LearnLoop Agent when the product is running.
-- Main sources: runtime prompt templates, `docs/prompts/*.md` when explicitly loaded, tool schemas, RAG retrieval policy, Notion indexed notes, accepted AI supplement content, output validators, and permission checks.
+- Main sources: runtime prompt templates, `docs/prompts/*.md` when explicitly loaded, provider router, tool registry, tool schemas, RAG retrieval policy, Notion indexed notes, accepted AI supplement content, output validators, and permission checks.
 - Purpose: answer user learning questions, decide when to use RAG, enforce Notion source-of-truth rules, validate outputs, and support human accept/reject workflows.
 
 Important boundary:
@@ -126,6 +128,7 @@ Sync statements:
 | In Scope | structured JSON logs | Use structured JSON logs for workflows. |
 | In Scope | token cost tracking | Track token input/output and estimated cost. |
 | In Scope | failure_reason logging | Track failures with failure_reason taxonomy. |
+| In Scope | MCP-oriented interfaces | Use provider-agnostic LLM interfaces and schema-friendly local tool adapters. |
 | Out of Scope | WhatsApp | Not in MVP. |
 | Out of Scope | LINE | Not in MVP. |
 | Out of Scope | Discord | Not in MVP. |
@@ -138,7 +141,7 @@ Sync statements:
 | Out of Scope | reranker | Not in MVP. |
 | Out of Scope | LLM-as-judge | Not in MVP. |
 | Out of Scope | AWS deployment | Deferred to V2. |
-| Out of Scope | MCP implementation | Not in MVP. |
+| Out of Scope | Standalone MCP server implementation | Not in MVP; local tool interfaces come first. |
 | Out of Scope | LangChain / LangGraph implementation | Not in MVP. |
 
 ## 8. Functional Requirements
@@ -198,7 +201,16 @@ Orchestrators
   - Supplement Orchestrator
   - QA Orchestrator
   ↓
-Tools / Services
+Provider Router
+  - OpenAI Provider Adapter first
+  - Claude Provider Adapter later
+  - Gemini Provider Adapter later
+  ↓
+Tool Registry
+  - Local Tool Adapters in MVP
+  - Future MCP Client after tool contracts stabilize
+  ↓
+Tools / Services / Repositories
   - Notion Reader Tool
   - Notion Writer Tool
   - PDF Parser Tool
@@ -206,8 +218,9 @@ Tools / Services
   - Web Article Tool
   - YouTube Transcript Tool
   - Vector Search Tool
-  - LLM Client
   - Guardrails
+  - Repositories for PostgreSQL/pgvector
+  - QueueClient for Redis/RQ
   ↓
 Storage (derived state + workflow state)
   - PostgreSQL
@@ -224,6 +237,13 @@ Sync behavior in MVP:
   - Auto page re-index after accepted append
   - No always-on cloud sync
 ```
+
+Boundary rules:
+- API routes and orchestrators must not import OpenAI, Claude, Gemini, Notion, Redis, PostgreSQL, or external API SDKs directly.
+- LLM calls go through Provider Router and provider adapters.
+- External capabilities go through Tool Registry and local tool adapters; future MCP clients can be added behind the same registry.
+- PostgreSQL and Redis stay backend infrastructure behind repositories and QueueClient, not LLM-facing tools.
+- Permission checks, write safety, RAG inclusion rules, output validation, and proposal state transitions remain deterministic backend logic.
 
 ## 11. Main Workflows
 ### 11.1 Initial Indexing
@@ -467,8 +487,9 @@ Production-RAG invariant:
 | Vector DB | pgvector |
 | Queue | Redis + RQ behind QueueClient interface |
 | Cache/session/idempotency | Redis |
-| LLM | OpenAI first behind provider interface |
-| Embedding | OpenAI embedding first behind interface |
+| LLM | OpenAI first behind Provider Router and provider interface |
+| Embedding | OpenAI embedding first behind provider interface |
+| Tool access | Local Tool Registry first; future MCP Client after contracts stabilize |
 | Notion | Official Notion API |
 | PDF parsing | PyMuPDF or pdfplumber |
 | OCR | Tesseract first, PaddleOCR optional later |
@@ -478,10 +499,12 @@ Production-RAG invariant:
 | Deployment | local-first Docker Compose |
 
 Decision notes:
-- No MCP in MVP.
+- No standalone MCP server in MVP.
+- MCP-oriented provider/tool interfaces are allowed in MVP.
 - No LangChain in MVP.
 - No LangGraph in MVP.
 - Keep RQ access behind QueueClient interface only.
+- Keep DB access behind repositories only.
 
 ## 15. Guardrails
 | Guardrail | Rule |
@@ -558,7 +581,7 @@ Failure taxonomy:
 
 ## 18. Architectural Decisions
 - ADR-001: Use FastAPI.
-- ADR-002: No MCP in MVP.
+- ADR-002: MCP-oriented architecture; no standalone MCP server in MVP.
 - ADR-003: No LangChain Agent in MVP.
 - ADR-004: No LangGraph in MVP.
 - ADR-005: Use PostgreSQL + pgvector.

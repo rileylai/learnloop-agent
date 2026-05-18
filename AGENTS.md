@@ -18,10 +18,16 @@ It indexes existing Notion notes as read-only knowledge, generates AI supplement
 
 ## 3. Architecture Rule
 - Use flow: API Route -> Orchestrator -> Service / Tool -> Repository -> External System.
-- API routes must not directly call Notion, OpenAI, Redis, or PostgreSQL.
+- LLM flow: API Route -> Orchestrator -> Provider Router -> Provider Adapter.
+- Tool flow: API Route -> Orchestrator -> Tool Registry -> Local Tool Adapter or future MCP Client.
+- API routes and orchestrators must not directly import or call OpenAI, Claude, Gemini, Notion, Redis, PostgreSQL, or external APIs.
 - Queue backend must be accessed only through a QueueClient interface.
-- LLM provider must be accessed only through a provider interface.
-- Tool interfaces should be designed so they can later be exposed through MCP, but MCP is not implemented in MVP.
+- LLM calls must go through a provider router/interface.
+- External capabilities must go through schema-friendly tool interfaces.
+- DB access still goes through repositories; queue access still goes through QueueClient.
+- Raw PostgreSQL and Redis must not become LLM-facing tools.
+- Tool interfaces should be MCP-compatible so they can later be exposed through MCP, but standalone MCP servers are not implemented in MVP.
+- Business rules, permission checks, output validation, RAG inclusion rules, and Notion write safety must remain deterministic backend logic, not delegated to the LLM.
 - Do not add LangChain or LangGraph in MVP unless a future ADR explicitly approves it.
 
 ## 4. Documentation Navigation
@@ -95,7 +101,7 @@ A task is done only when:
 - Local-only MVP.
 - Telegram first.
 - No WhatsApp, LINE, Discord, Bilibili in MVP.
-- No MCP in MVP.
+- No standalone MCP server in MVP; MCP-oriented provider/tool interfaces are allowed.
 - No LangChain or LangGraph in MVP.
 - No always-on cloud sync.
 - No direct original note editing.
