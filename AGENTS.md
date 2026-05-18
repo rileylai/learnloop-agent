@@ -41,7 +41,25 @@ It indexes existing Notion notes as read-only knowledge, generates AI supplement
 - `docs/prompts/`: prompt templates.
 - `docs/decisions/`: ADRs.
 
-## 5. Coding Style Rules
+## 5. Task Start Rule
+Before making code changes, always read:
+1. `AGENTS.md`
+2. `docs/00-design-doc.md`
+3. `dev_state/PROJECT_ROADMAP.md`
+4. `dev_state/DAILY_LOG.md`
+5. Task-related docs from the map above.
+
+Task-related examples:
+- DB or repository task: read `docs/01-architecture.md` and `docs/11-coding-style.md`.
+- Workflow or queue task: read `docs/02-workflows.md` and `docs/08-observability.md`.
+- Notion or write-policy task: read `docs/03-guardrails.md` and `docs/06-notion-permission-model.md`.
+- RAG task: read `docs/05-rag-design.md`.
+- API task: read `docs/09-api-contract.md`.
+
+Repo docs are development and maintenance context by default.
+They are not production RAG source unless a future ADR and implementation explicitly wire them into runtime retrieval.
+
+## 6. Coding Style Rules
 - Use Python for backend.
 - Use FastAPI for API layer when implementation starts.
 - Use simple, explicit code.
@@ -55,7 +73,7 @@ It indexes existing Notion notes as read-only knowledge, generates AI supplement
 - Add English comments only when they explain purpose or non-obvious logic.
 - Do not over-comment obvious lines.
 
-## 6. Documentation Style Rules
+## 7. Documentation Style Rules
 - Use simple English.
 - Keep critical product label `AI Supplement Zone`.
 - Prefer short sections and tables.
@@ -63,7 +81,7 @@ It indexes existing Notion notes as read-only knowledge, generates AI supplement
 - Update `dev_state/DAILY_LOG.md` after meaningful local development work.
 - If behavior changes, update related docs.
 
-## 7. Definition of Done
+## 8. Definition of Done
 A task is done only when:
 - The implementation matches the design doc.
 - Unit tests or documentation acceptance checks pass.
@@ -72,7 +90,7 @@ A task is done only when:
 - `dev_state/DAILY_LOG.md` has a short entry for meaningful local development work.
 - No secrets or private Notion content are committed.
 
-## 8. Current MVP Constraints
+## 9. Current MVP Constraints
 - Local-only MVP.
 - Telegram first.
 - No WhatsApp, LINE, Discord, Bilibili in MVP.
