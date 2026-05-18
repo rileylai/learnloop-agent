@@ -17,6 +17,24 @@ The agent can write only accepted content into `AI Supplement Zone`.
 - Pending/rejected drafts are not used in production RAG.
 - Every workflow must be auditable and testable.
 
+### 2.1 Two Harness Layers
+This project has two separate harness layers.
+
+Development harness:
+- Used by Codex, coding agents, and maintainers during software development.
+- Main sources: `AGENTS.md`, `docs/*.md`, `dev_state/PROJECT_ROADMAP.md`, and `dev_state/DAILY_LOG.md`.
+- Purpose: guide code generation, enforce architecture rules, document workflow/API decisions, and prevent unsafe assumptions.
+
+Runtime agent harness:
+- Used by LearnLoop Agent when the product is running.
+- Main sources: runtime prompt templates, `docs/prompts/*.md` when explicitly loaded, tool schemas, RAG retrieval policy, Notion indexed notes, accepted AI supplement content, output validators, and permission checks.
+- Purpose: answer user learning questions, decide when to use RAG, enforce Notion source-of-truth rules, validate outputs, and support human accept/reject workflows.
+
+Important boundary:
+- Project docs under `docs/*.md` are development specifications by default.
+- They are not the default production RAG source for user-facing QA.
+- Production user QA must retrieve from indexed Notion content and accepted AI supplement content unless a future ADR explicitly approves another source.
+
 ## 3. Notion Ownership Model
 - Existing notes are read-only for direct agent editing.
 - Newly manual-created notes are also read-only for direct agent editing.

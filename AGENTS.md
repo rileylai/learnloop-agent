@@ -57,6 +57,7 @@ Task-related examples:
 - API task: read `docs/09-api-contract.md`.
 
 Repo docs are development and maintenance context by default.
+`AGENTS.md` is development-agent guidance, not the LearnLoop runtime system prompt.
 They are not production RAG source unless a future ADR and implementation explicitly wire them into runtime retrieval.
 
 ## 6. Coding Style Rules
