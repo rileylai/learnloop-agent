@@ -66,6 +66,39 @@ Backend-owned deterministic logic:
 - Proposal state transitions.
 - Audit logging decisions.
 
+## Current Interface Skeletons (Implemented)
+Provider boundary (Step 6.1):
+- `src/providers/models.py`: `LLMMessage`, `LLMRequest`, `LLMResponse`.
+- `src/providers/base.py`: `LLMProvider`.
+- `src/providers/router.py`: `ProviderRouter` with deterministic registration and lookup errors.
+
+Tool boundary (Step 6.2):
+- `src/tools/models.py`: `ToolSpec`, `ToolContext`, `ToolResult`, `ToolError`.
+- `src/tools/base.py`: `Tool`.
+- `src/tools/registry.py`: `ToolRegistry` with deterministic registration and lookup errors.
+
+Orchestrator contract:
+- Orchestrators call `ProviderRouter` and `ToolRegistry` only.
+- Orchestrators do not import provider SDKs, Notion SDK, Redis clients, or DB drivers directly.
+
+## Future MCP Server Boundary (Post-MVP)
+Tools that may be extracted into MCP servers later:
+
+| Local Adapter Family | Future MCP Server Candidate | Keep in Backend |
+|---|---|---|
+| Notion read access | Notion reader server | Permission checks and page ownership policy. |
+| Notion write access | Notion append-only writer server | `AI Supplement Zone` write safety and accept-gate checks. |
+| Ingestion adapters | PDF/OCR/URL/YouTube parser servers | Source validation, dedup policy, and workflow decisions. |
+| Retrieval adapter | Vector search server facade | Production-RAG inclusion/exclusion and citation policy. |
+
+Logic that must stay deterministic backend code (not MCP-owned):
+- Permission checks and ownership model enforcement.
+- Notion write safety (`Change Request -> Human Accept -> Append`).
+- Production-RAG eligibility checks (`pending` and `rejected` exclusion).
+- Output schema validation and failure_reason mapping.
+- Change request state transitions and audit decisions.
+- Queue scheduling policy and idempotency handling.
+
 ## Infrastructure Boundary
 - PostgreSQL and pgvector are accessed only through repositories.
 - Redis/RQ is accessed only through QueueClient.
