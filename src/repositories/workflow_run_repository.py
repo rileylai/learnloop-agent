@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from src.db.models import WorkflowRun
@@ -11,6 +12,10 @@ from src.db.models import WorkflowRun
 class WorkflowRunRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
+
+    def _allocate_workflow_run_id_for_sqlite(self) -> int:
+        max_id = self._session.query(func.max(WorkflowRun.id)).scalar()
+        return int(max_id or 0) + 1
 
     def create_workflow_run(
         self,
@@ -31,6 +36,8 @@ class WorkflowRunRepository:
         )
         if workflow_run_id is not None:
             workflow_run.id = workflow_run_id
+        elif self._session.bind is not None and self._session.bind.dialect.name == "sqlite":
+            workflow_run.id = self._allocate_workflow_run_id_for_sqlite()
 
         self._session.add(workflow_run)
         self._session.commit()
