@@ -3,6 +3,7 @@ from src.repositories.chunk_repository import (
     ChunkRepository,
     ChunkRepositoryError,
     NotionChunkUpsert,
+    RetrievalChunkCandidate,
 )
 from src.repositories.notion_block_repository import NotionBlockRepository, NotionBlockSnapshot
 from src.repositories.notion_page_repository import NotionPageRepository
@@ -14,6 +15,7 @@ __all__ = [
     "ChunkRepositoryError",
     "NotionBlockRepository",
     "NotionChunkUpsert",
+    "RetrievalChunkCandidate",
     "NotionBlockSnapshot",
     "NotionPageRepository",
     "WorkflowRunRepository",

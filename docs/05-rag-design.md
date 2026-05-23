@@ -133,3 +133,30 @@ Rules:
   - Rebuild page blocks with page-level replacement.
   - Rebuild notion chunks and upsert with page-level replacement.
 - If one page fails, fail the incremental workflow deterministically with failure reason and workflow id.
+
+## Production Chunk Retrieval (Step 17)
+
+File:
+- `src/rag/retriever.py`
+
+Goal:
+- Retrieve relevant chunks for QA from production-safe indexed content.
+- Support deterministic scope filtering before answer generation.
+
+Component:
+- `ProductionChunkRetriever`
+
+Scope filters:
+- `page_ids`: filter chunks to specific Notion pages.
+- `section_paths`: filter chunks by Notion path prefix for section-level scope.
+- `source_kinds`: filter by chunk source kind.
+
+Ranking behavior:
+- Use lexical overlap scoring by default.
+- If query embedding and chunk embedding are both available, combine cosine similarity with lexical score.
+- Keep ranking deterministic and stable.
+
+Production-RAG rules in this step:
+- Current MVP production retrieval is constrained to `source_kind="notion"`.
+- Non-production chunk kinds are excluded.
+- No reranker is used in MVP.

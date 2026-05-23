@@ -4,10 +4,10 @@ import json
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from src.db.models import KnowledgeChunk, NotionBlock
+from src.db.models import KnowledgeChunk, NotionBlock, NotionPage
 
 
 class ChunkRepositoryError(Exception):
@@ -26,6 +26,17 @@ class NotionChunkUpsert:
     notion_block_ids: List[str] = field(default_factory=list)
     source_kind: str = "notion"
     embedding: Optional[List[float]] = None
+
+
+@dataclass
+class RetrievalChunkCandidate:
+    chunk_id: int
+    chunk_index: int
+    chunk_text: str
+    notion_path: str
+    source_kind: str
+    notion_page_id: Optional[str]
+    embedding_text: Optional[str]
 
 
 class ChunkRepository:
@@ -95,6 +106,69 @@ class ChunkRepository:
             self._session.refresh(chunk)
         return inserted
 
+    def list_production_chunks(
+        self,
+        *,
+        page_ids: Optional[List[str]] = None,
+        section_paths: Optional[List[str]] = None,
+        source_kinds: Optional[List[str]] = None,
+    ) -> List[RetrievalChunkCandidate]:
+        normalized_page_ids = self._normalize_text_list(page_ids)
+        normalized_section_paths = [
+            self._normalize_path(path) for path in self._normalize_text_list(section_paths)
+        ]
+        normalized_source_kinds = self._normalize_source_kinds(source_kinds)
+
+        # Current production RAG in MVP reads from indexed Notion chunks only.
+        effective_source_kinds = [
+            source_kind for source_kind in normalized_source_kinds if source_kind == "notion"
+        ]
+        if not effective_source_kinds:
+            return []
+
+        query = (
+            self._session.query(
+                KnowledgeChunk.id,
+                KnowledgeChunk.chunk_index,
+                KnowledgeChunk.chunk_text,
+                KnowledgeChunk.notion_path,
+                KnowledgeChunk.source_kind,
+                KnowledgeChunk.embedding_text,
+                NotionPage.notion_page_id,
+            )
+            .outerjoin(NotionBlock, KnowledgeChunk.notion_block_id == NotionBlock.id)
+            .outerjoin(NotionPage, NotionBlock.notion_page_id == NotionPage.id)
+            .filter(KnowledgeChunk.source_kind.in_(effective_source_kinds))
+        )
+
+        if normalized_page_ids:
+            query = query.filter(NotionPage.notion_page_id.in_(normalized_page_ids))
+
+        if normalized_section_paths:
+            section_conditions = []
+            for section_path in normalized_section_paths:
+                section_conditions.append(
+                    or_(
+                        KnowledgeChunk.notion_path == section_path,
+                        KnowledgeChunk.notion_path.like(f"{section_path}/%"),
+                    )
+                )
+            query = query.filter(or_(*section_conditions))
+
+        rows = query.order_by(KnowledgeChunk.id.asc()).all()
+        return [
+            RetrievalChunkCandidate(
+                chunk_id=row.id,
+                chunk_index=row.chunk_index,
+                chunk_text=row.chunk_text,
+                notion_path=row.notion_path or "",
+                source_kind=row.source_kind,
+                notion_page_id=row.notion_page_id,
+                embedding_text=row.embedding_text,
+            )
+            for row in rows
+        ]
+
     def _select_chunk_block_id(
         self,
         *,
@@ -113,3 +187,33 @@ class ChunkRepository:
         if embedding is None:
             return None
         return json.dumps(embedding)
+
+    def _normalize_source_kinds(self, source_kinds: Optional[List[str]]) -> List[str]:
+        if source_kinds is None:
+            return ["notion"]
+        normalized = []
+        seen = set()
+        for source_kind in source_kinds:
+            candidate = str(source_kind).strip().lower()
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
+            normalized.append(candidate)
+        return normalized
+
+    def _normalize_text_list(self, values: Optional[List[str]]) -> List[str]:
+        if values is None:
+            return []
+        normalized = []
+        seen = set()
+        for value in values:
+            candidate = str(value).strip()
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
+            normalized.append(candidate)
+        return normalized
+
+    def _normalize_path(self, path: str) -> str:
+        segments = [segment.strip() for segment in path.split("/") if segment.strip()]
+        return "/".join(segments)

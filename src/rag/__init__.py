@@ -9,6 +9,7 @@ from src.rag.chunker import (
     NotionChunkDraft,
     chunk_notion_page,
 )
+from src.rag.retriever import ProductionChunkRetriever, RetrievedChunk
 
 __all__ = [
     "BlockPathNode",
@@ -16,6 +17,8 @@ __all__ = [
     "ChunkerBlock",
     "ChunkerPage",
     "NotionChunkDraft",
+    "ProductionChunkRetriever",
+    "RetrievedChunk",
     "build_block_paths",
     "chunk_notion_page",
 ]
