@@ -80,6 +80,46 @@ def _sample_tree_v2() -> NotionPageTree:
     )
 
 
+def _sample_tree_mixed_types_with_untrusted_paths() -> NotionPageTree:
+    return NotionPageTree(
+        page_id="page-mixed",
+        title="Mixed Path Page",
+        notion_path="Knowledge/Mixed",
+        blocks=[
+            NotionBlockNode(
+                block_id="blk-h1",
+                block_type="heading_2",
+                content_text="Root Heading",
+                block_path="INVALID/PATH",
+                children=[
+                    NotionBlockNode(
+                        block_id="blk-toggle",
+                        block_type="toggle",
+                        content_text="Toggle Topic",
+                        block_path="INVALID/PATH",
+                        children=[
+                            NotionBlockNode(
+                                block_id="blk-child-page",
+                                block_type="child_page",
+                                content_text="Child Page A",
+                                block_path="INVALID/PATH",
+                                children=[
+                                    NotionBlockNode(
+                                        block_id="blk-leaf",
+                                        block_type="paragraph",
+                                        content_text="Leaf Note",
+                                        block_path="INVALID/PATH",
+                                    )
+                                ],
+                            )
+                        ],
+                    )
+                ],
+            )
+        ],
+    )
+
+
 def test_index_page_api_persists_page_and_nested_blocks() -> None:
     session_factory = _build_session_factory()
     pages = {"page-1": _sample_tree_v1()}
@@ -137,6 +177,63 @@ def test_index_page_api_persists_page_and_nested_blocks() -> None:
             assert workflow_run is not None
             assert workflow_run.status == "succeeded"
             assert workflow_run.failure_reason is None
+        finally:
+            session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_index_page_api_builds_paths_from_block_hierarchy() -> None:
+    session_factory = _build_session_factory()
+    pages = {"page-mixed": _sample_tree_mixed_types_with_untrusted_paths()}
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _tool_registry_override() -> ToolRegistry:
+        return _build_tool_registry(pages)
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_tool_registry] = _tool_registry_override
+
+    try:
+        client = TestClient(app)
+        response = client.post("/api/notion/index/page", json={"page_id": "page-mixed"})
+
+        assert response.status_code == 200
+
+        session: Session = session_factory()
+        try:
+            page = (
+                session.query(NotionPage)
+                .filter(NotionPage.notion_page_id == "page-mixed")
+                .one_or_none()
+            )
+            assert page is not None
+
+            blocks = {
+                block.notion_block_id: block
+                for block in session.query(NotionBlock)
+                .filter(NotionBlock.notion_page_id == page.id)
+                .all()
+            }
+            assert blocks["blk-h1"].block_path == "Knowledge/Mixed/Root Heading"
+            assert (
+                blocks["blk-toggle"].block_path
+                == "Knowledge/Mixed/Root Heading/Toggle Topic"
+            )
+            assert (
+                blocks["blk-child-page"].block_path
+                == "Knowledge/Mixed/Root Heading/Toggle Topic/Child Page A"
+            )
+            assert (
+                blocks["blk-leaf"].block_path
+                == "Knowledge/Mixed/Root Heading/Toggle Topic/Child Page A/Leaf Note"
+            )
         finally:
             session.close()
     finally:

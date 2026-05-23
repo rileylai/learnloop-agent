@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field, ValidationError
 
+from src.rag import BlockPathNode, BlockPathSnapshot, build_block_paths
 from src.repositories import (
     NotionBlockRepository,
     NotionBlockSnapshot,
@@ -62,7 +63,6 @@ class _ToolBlockPayload(BaseModel):
     block_id: str
     block_type: str
     content_text: str = ""
-    block_path: str = ""
     children: List["_ToolBlockPayload"] = Field(default_factory=list)
 
 
@@ -157,9 +157,19 @@ class NotionPageIndexOrchestrator:
                 title=page_payload.title,
                 notion_path=page_payload.notion_path,
             )
+            block_paths = build_block_paths(
+                page_path=page_payload.notion_path,
+                blocks=[
+                    self._to_block_path_node(block_payload)
+                    for block_payload in block_payloads
+                ],
+            )
             inserted_blocks = self._notion_block_repository.replace_page_blocks(
                 notion_page_db_id=notion_page.id,
-                root_blocks=[self._to_block_snapshot(block) for block in block_payloads],
+                root_blocks=[
+                    self._to_block_snapshot(block_snapshot)
+                    for block_snapshot in block_paths
+                ],
             )
             self._workflow_run_service.mark_workflow_succeeded(
                 workflow_run.id,
@@ -253,7 +263,15 @@ class NotionPageIndexOrchestrator:
                 failure_reason="UNKNOWN_ERROR",
             ) from exc
 
-    def _to_block_snapshot(self, block: _ToolBlockPayload) -> NotionBlockSnapshot:
+    def _to_block_path_node(self, block: _ToolBlockPayload) -> BlockPathNode:
+        return BlockPathNode(
+            block_id=block.block_id,
+            block_type=block.block_type,
+            content_text=block.content_text,
+            children=[self._to_block_path_node(child) for child in block.children],
+        )
+
+    def _to_block_snapshot(self, block: BlockPathSnapshot) -> NotionBlockSnapshot:
         return NotionBlockSnapshot(
             notion_block_id=block.block_id,
             block_type=block.block_type,
