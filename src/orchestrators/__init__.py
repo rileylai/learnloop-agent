@@ -1,3 +1,8 @@
+from src.orchestrators.document_ingestion_orchestrator import (
+    DocumentIngestionError,
+    DocumentIngestionOrchestrator,
+    DocumentIngestionResult,
+)
 from src.orchestrators.notion_incremental_index_orchestrator import (
     NotionIncrementalIndexOrchestrator,
     NotionIncrementalIndexResult,
@@ -24,6 +29,9 @@ __all__ = [
     "NotionIncrementalIndexOrchestrator",
     "NotionIncrementalIndexResult",
     "NotionIncrementalIndexedPageResult",
+    "DocumentIngestionError",
+    "DocumentIngestionOrchestrator",
+    "DocumentIngestionResult",
     "NotionPageIndexError",
     "NotionPageIndexOrchestrator",
     "NotionPageIndexResult",

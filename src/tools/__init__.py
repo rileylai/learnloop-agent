@@ -7,6 +7,13 @@ from src.tools.notion_reader_tool import (
     NotionReaderClient,
     NotionReaderTool,
 )
+from src.tools.pdf_parser_tool import (
+    PDFParserClient,
+    PDFParserClientError,
+    PDFParserTool,
+    ParsedPDFDocument,
+    PyPDFParserClient,
+)
 from src.tools.registry import (
     ToolAlreadyRegisteredError,
     ToolNameInvalidError,
@@ -22,6 +29,11 @@ __all__ = [
     "NotionPageTree",
     "NotionReaderClient",
     "NotionReaderTool",
+    "PDFParserClient",
+    "PDFParserClientError",
+    "PDFParserTool",
+    "ParsedPDFDocument",
+    "PyPDFParserClient",
     "ToolAlreadyRegisteredError",
     "ToolContext",
     "ToolError",

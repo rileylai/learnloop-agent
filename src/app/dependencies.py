@@ -4,13 +4,20 @@ from functools import lru_cache
 
 from src.app.config import get_settings
 from src.providers import OpenAIClient, ProviderRouter
-from src.tools import InMemoryNotionReaderClient, NotionReaderTool, ToolRegistry
+from src.tools import (
+    InMemoryNotionReaderClient,
+    NotionReaderTool,
+    PDFParserTool,
+    PyPDFParserClient,
+    ToolRegistry,
+)
 
 
 @lru_cache(maxsize=1)
 def get_tool_registry() -> ToolRegistry:
     registry = ToolRegistry()
     registry.register_tool(NotionReaderTool(InMemoryNotionReaderClient(pages={})))
+    registry.register_tool(PDFParserTool(PyPDFParserClient()))
     return registry
 
 

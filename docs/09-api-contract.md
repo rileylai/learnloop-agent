@@ -151,6 +151,45 @@ Notes:
 - Orchestrator starts `workflow_type=ingestion` and persists source metadata through repository.
 - Step 20 stores core fields: `source_type`, `source_display_name`, and `content_hash`.
 
+### POST `/api/ingest/document`
+Ingest one uploaded PDF document, extract text, and create one source document.
+
+Request:
+- `multipart/form-data`
+- field: `document` (PDF file)
+
+Success response `200`:
+
+```json
+{
+  "workflow_run_id": 402,
+  "status": "succeeded",
+  "source_document_id": 2,
+  "source_type": "pdf",
+  "source_display_name": "lecture-week5.pdf",
+  "content_hash": "b42b4ab40f62f4ec3f71d1677ad86a427b6996f71bf6200ff646862b5f37f06b"
+}
+```
+
+Failure response example `422` (parse failed):
+
+```json
+{
+  "detail": {
+    "error_code": "PDF_PARSE_FAILED",
+    "message": "No extractable text found in PDF",
+    "failure_reason": "PDF_PARSE_FAILED",
+    "workflow_run_id": 402
+  }
+}
+```
+
+Notes:
+- Route must call orchestrator only.
+- Orchestrator must call `ToolRegistry` -> `PDFParserTool`.
+- This endpoint does not perform Notion write operations.
+- Source display name is the uploaded filename.
+
 ## QA API
 
 ### POST `/api/qa`
