@@ -6,6 +6,7 @@ from src.providers.embedding import (
     EmbeddingResponse,
     OpenAIEmbeddingClient,
 )
+from src.providers.llm import BaseLLMClient, LLMClientError, OpenAIClient
 from src.providers.models import LLMMessage, LLMRequest, LLMResponse
 from src.providers.router import (
     ProviderAlreadyRegisteredError,
@@ -20,10 +21,13 @@ __all__ = [
     "EmbeddingClientError",
     "EmbeddingRequest",
     "EmbeddingResponse",
+    "BaseLLMClient",
+    "LLMClientError",
     "LLMMessage",
     "LLMProvider",
     "LLMRequest",
     "LLMResponse",
+    "OpenAIClient",
     "OpenAIEmbeddingClient",
     "ProviderAlreadyRegisteredError",
     "ProviderNameInvalidError",

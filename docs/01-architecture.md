@@ -72,6 +72,10 @@ Provider boundary (Step 6.1):
 - `src/providers/base.py`: `LLMProvider`.
 - `src/providers/router.py`: `ProviderRouter` with deterministic registration and lookup errors.
 
+Provider client implementation (Step 18):
+- `src/providers/llm.py`: `BaseLLMClient`, `OpenAIClient`, and deterministic `LLMClientError`.
+- `OpenAIClient` uses transport injection for deterministic tests and stays behind the provider interface.
+
 Tool boundary (Step 6.2):
 - `src/tools/models.py`: `ToolSpec`, `ToolContext`, `ToolResult`, `ToolError`.
 - `src/tools/base.py`: `Tool`.
