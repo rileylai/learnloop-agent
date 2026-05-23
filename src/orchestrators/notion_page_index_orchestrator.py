@@ -7,10 +7,20 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field, ValidationError
 
-from src.rag import BlockPathNode, BlockPathSnapshot, build_block_paths
+from src.rag import (
+    BlockPathNode,
+    BlockPathSnapshot,
+    ChunkerBlock,
+    ChunkerPage,
+    build_block_paths,
+    chunk_notion_page,
+)
 from src.repositories import (
+    ChunkRepository,
+    ChunkRepositoryError,
     NotionBlockRepository,
     NotionBlockSnapshot,
+    NotionChunkUpsert,
     NotionPageRepository,
 )
 from src.services import STANDARD_FAILURE_REASONS, WorkflowRunService
@@ -33,6 +43,16 @@ class NotionPageIndexResult:
     page_title: str
     notion_path: str
     indexed_block_count: int
+
+
+@dataclass
+class NotionIndexedPageSnapshot:
+    notion_page_db_id: int
+    notion_page_id: str
+    page_title: str
+    notion_path: str
+    indexed_block_count: int
+    indexed_chunk_count: int
 
 
 class NotionPageIndexError(Exception):
@@ -74,11 +94,13 @@ class NotionPageIndexOrchestrator:
         notion_page_repository: NotionPageRepository,
         notion_block_repository: NotionBlockRepository,
         workflow_run_service: WorkflowRunService,
+        chunk_repository: Optional[ChunkRepository] = None,
     ) -> None:
         self._tool_registry = tool_registry
         self._notion_page_repository = notion_page_repository
         self._notion_block_repository = notion_block_repository
         self._workflow_run_service = workflow_run_service
+        self._chunk_repository = chunk_repository
 
     async def index_page(
         self,
@@ -108,12 +130,74 @@ class NotionPageIndexOrchestrator:
             ),
         )
 
+        try:
+            snapshot = await self.index_page_snapshot(
+                page_id=normalized_page_id,
+                request_workflow_id=request_workflow_id,
+            )
+            self._workflow_run_service.mark_workflow_succeeded(
+                workflow_run.id,
+                metadata_json=json.dumps(
+                    {
+                        "operation": "index_page",
+                        "page_id": normalized_page_id,
+                        "indexed_block_count": snapshot.indexed_block_count,
+                        "indexed_chunk_count": snapshot.indexed_chunk_count,
+                    },
+                    sort_keys=True,
+                ),
+            )
+        except NotionPageIndexError as exc:
+            self._workflow_run_service.mark_workflow_failed(
+                workflow_run.id,
+                failure_reason=exc.failure_reason,
+                metadata_json=json.dumps(
+                    {
+                        "operation": "index_page",
+                        "page_id": normalized_page_id,
+                        "error_code": exc.error_code,
+                    },
+                    sort_keys=True,
+                ),
+            )
+            raise NotionPageIndexError(
+                error_code=exc.error_code,
+                message=exc.message,
+                http_status_code=exc.http_status_code,
+                failure_reason=exc.failure_reason,
+                workflow_run_id=workflow_run.id,
+            ) from exc
+
+        return NotionPageIndexResult(
+            workflow_run_id=workflow_run.id,
+            status="succeeded",
+            notion_page_id=snapshot.notion_page_id,
+            page_title=snapshot.page_title,
+            notion_path=snapshot.notion_path,
+            indexed_block_count=snapshot.indexed_block_count,
+        )
+
+    async def index_page_snapshot(
+        self,
+        *,
+        page_id: str,
+        request_workflow_id: str,
+    ) -> NotionIndexedPageSnapshot:
+        normalized_page_id = page_id.strip()
+        if not normalized_page_id:
+            raise NotionPageIndexError(
+                error_code="INVALID_ARGUMENT",
+                message="page_id must not be empty",
+                http_status_code=HTTPStatus.BAD_REQUEST,
+                failure_reason="UNKNOWN_ERROR",
+            )
+
         tool_result = await self._tool_registry.call_tool(
             NOTION_READER_TOOL_NAME,
             context=ToolContext(
                 workflow_id=request_workflow_id,
                 metadata={
-                    "operation": "index_page",
+                    "operation": "index_page_snapshot",
                     "page_id": normalized_page_id,
                 },
             ),
@@ -126,26 +210,11 @@ class NotionPageIndexOrchestrator:
             if tool_result.error is not None:
                 error_code = tool_result.error.code
                 message = tool_result.error.message
-
-            failure_reason = self._normalize_failure_reason(error_code)
-            self._workflow_run_service.mark_workflow_failed(
-                workflow_run.id,
-                failure_reason=failure_reason,
-                metadata_json=json.dumps(
-                    {
-                        "operation": "index_page",
-                        "page_id": normalized_page_id,
-                        "tool_error_code": error_code,
-                    },
-                    sort_keys=True,
-                ),
-            )
             raise NotionPageIndexError(
                 error_code=error_code,
                 message=message,
                 http_status_code=self._http_status_for_tool_error(error_code),
-                failure_reason=failure_reason,
-                workflow_run_id=workflow_run.id,
+                failure_reason=self._normalize_failure_reason(error_code),
             )
 
         try:
@@ -171,59 +240,41 @@ class NotionPageIndexOrchestrator:
                     for block_snapshot in block_paths
                 ],
             )
-            self._workflow_run_service.mark_workflow_succeeded(
-                workflow_run.id,
-                metadata_json=json.dumps(
-                    {
-                        "operation": "index_page",
-                        "page_id": normalized_page_id,
-                        "indexed_block_count": len(inserted_blocks),
-                    },
-                    sort_keys=True,
-                ),
-            )
+            indexed_chunk_count = 0
+            if self._chunk_repository is not None:
+                chunk_upserts = self._build_chunk_upserts(
+                    page_payload=page_payload,
+                    block_paths=block_paths,
+                )
+                self._chunk_repository.upsert_chunks(
+                    notion_page_db_id=notion_page.id,
+                    chunks=chunk_upserts,
+                )
+                indexed_chunk_count = len(chunk_upserts)
         except NotionPageIndexError:
-            self._workflow_run_service.mark_workflow_failed(
-                workflow_run.id,
-                failure_reason="UNKNOWN_ERROR",
-                metadata_json=json.dumps(
-                    {
-                        "operation": "index_page",
-                        "page_id": normalized_page_id,
-                        "error_code": "TOOL_OUTPUT_INVALID",
-                    },
-                    sort_keys=True,
-                ),
-            )
             raise
+        except ChunkRepositoryError as exc:
+            raise NotionPageIndexError(
+                error_code="VECTOR_UPSERT_FAILED",
+                message=f"Failed to upsert notion chunks: {exc}",
+                http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                failure_reason="VECTOR_UPSERT_FAILED",
+            ) from exc
         except Exception as exc:
-            self._workflow_run_service.mark_workflow_failed(
-                workflow_run.id,
-                failure_reason="UNKNOWN_ERROR",
-                metadata_json=json.dumps(
-                    {
-                        "operation": "index_page",
-                        "page_id": normalized_page_id,
-                        "error_code": "INDEX_PAGE_PERSIST_FAILED",
-                    },
-                    sort_keys=True,
-                ),
-            )
             raise NotionPageIndexError(
                 error_code="INDEX_PAGE_PERSIST_FAILED",
                 message=f"Failed to persist indexed page: {exc}",
                 http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 failure_reason="UNKNOWN_ERROR",
-                workflow_run_id=workflow_run.id,
             ) from exc
 
-        return NotionPageIndexResult(
-            workflow_run_id=workflow_run.id,
-            status="succeeded",
+        return NotionIndexedPageSnapshot(
+            notion_page_db_id=notion_page.id,
             notion_page_id=notion_page.notion_page_id,
             page_title=notion_page.title,
             notion_path=notion_page.notion_path,
             indexed_block_count=len(inserted_blocks),
+            indexed_chunk_count=indexed_chunk_count,
         )
 
     def _http_status_for_tool_error(self, error_code: str) -> int:
@@ -263,6 +314,40 @@ class NotionPageIndexOrchestrator:
                 failure_reason="UNKNOWN_ERROR",
             ) from exc
 
+    def _build_chunk_upserts(
+        self,
+        *,
+        page_payload: _ToolPagePayload,
+        block_paths: List[BlockPathSnapshot],
+    ) -> List[NotionChunkUpsert]:
+        chunk_drafts = chunk_notion_page(
+            ChunkerPage(
+                notion_page_id=page_payload.page_id,
+                title=page_payload.title,
+                notion_path=page_payload.notion_path,
+                blocks=[
+                    self._to_chunker_block(block_snapshot)
+                    for block_snapshot in block_paths
+                ],
+            )
+        )
+        return [
+            NotionChunkUpsert(
+                chunk_index=draft.chunk_index,
+                chunk_text=draft.chunk_text,
+                notion_path=draft.notion_path,
+                notion_block_ids=self._extract_chunk_block_ids(draft.citation_meta),
+                source_kind=draft.source_kind,
+            )
+            for draft in chunk_drafts
+        ]
+
+    def _extract_chunk_block_ids(self, citation_meta: Dict[str, Any]) -> List[str]:
+        value = citation_meta.get("notion_block_ids")
+        if not isinstance(value, list):
+            return []
+        return [str(block_id).strip() for block_id in value if str(block_id).strip()]
+
     def _to_block_path_node(self, block: _ToolBlockPayload) -> BlockPathNode:
         return BlockPathNode(
             block_id=block.block_id,
@@ -278,4 +363,13 @@ class NotionPageIndexOrchestrator:
             content_text=block.content_text,
             block_path=block.block_path,
             children=[self._to_block_snapshot(child) for child in block.children],
+        )
+
+    def _to_chunker_block(self, block: BlockPathSnapshot) -> ChunkerBlock:
+        return ChunkerBlock(
+            notion_block_id=block.block_id,
+            block_type=block.block_type,
+            content_text=block.content_text,
+            block_path=block.block_path,
+            children=[self._to_chunker_block(child) for child in block.children],
         )

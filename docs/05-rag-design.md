@@ -117,3 +117,19 @@ Rules:
 - Keep cross-page chunks untouched.
 - Map each chunk to a page block via `notion_block_ids` from citation metadata.
 - Store embedding vectors as serialized text in current MVP schema (`embedding_text`).
+
+## Manual Incremental Sync Reconciliation (Step 16)
+
+Endpoint:
+- `POST /api/notion/index/incremental`
+
+Goal:
+- Reconcile manual Notion edits/deletes/merges with current Notion truth.
+
+Rules:
+- Input provides changed `page_ids` for manual sync.
+- For each page id:
+  - Re-read current page tree from Notion reader tool.
+  - Rebuild page blocks with page-level replacement.
+  - Rebuild notion chunks and upsert with page-level replacement.
+- If one page fails, fail the incremental workflow deterministically with failure reason and workflow id.

@@ -10,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 from src.app.dependencies import get_tool_registry
 from src.app.main import app
 from src.db.base import Base
-from src.db.models import NotionBlock, NotionPage, WorkflowRun
+from src.db.models import KnowledgeChunk, NotionBlock, NotionPage, WorkflowRun
 from src.db.session import get_db_session
 from src.tools import (
     InMemoryNotionReaderClient,
@@ -29,7 +29,12 @@ def _build_session_factory():
     )
     Base.metadata.create_all(
         engine,
-        tables=[NotionPage.__table__, NotionBlock.__table__, WorkflowRun.__table__],
+        tables=[
+            NotionPage.__table__,
+            NotionBlock.__table__,
+            KnowledgeChunk.__table__,
+            WorkflowRun.__table__,
+        ],
     )
     return sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
@@ -113,6 +118,68 @@ def _sample_tree_mixed_types_with_untrusted_paths() -> NotionPageTree:
                                 ],
                             )
                         ],
+                    )
+                ],
+            )
+        ],
+    )
+
+
+def _sample_incremental_v1() -> NotionPageTree:
+    return NotionPageTree(
+        page_id="page-sync",
+        title="Sync Test Page",
+        notion_path="Knowledge/Sync",
+        blocks=[
+            NotionBlockNode(
+                block_id="blk-old-a",
+                block_type="heading_2",
+                content_text="Old Section A",
+                block_path="Knowledge/Sync/Old Section A",
+                children=[
+                    NotionBlockNode(
+                        block_id="blk-old-a-p",
+                        block_type="paragraph",
+                        content_text="Old note A",
+                        block_path="Knowledge/Sync/Old Section A/Old note A",
+                    )
+                ],
+            ),
+            NotionBlockNode(
+                block_id="blk-old-b",
+                block_type="heading_2",
+                content_text="Old Section B",
+                block_path="Knowledge/Sync/Old Section B",
+                children=[
+                    NotionBlockNode(
+                        block_id="blk-old-b-p",
+                        block_type="paragraph",
+                        content_text="Old note B",
+                        block_path="Knowledge/Sync/Old Section B/Old note B",
+                    )
+                ],
+            ),
+        ],
+    )
+
+
+def _sample_incremental_v2_after_manual_delete() -> NotionPageTree:
+    return NotionPageTree(
+        page_id="page-sync",
+        title="Sync Test Page",
+        notion_path="Knowledge/Sync",
+        blocks=[
+            NotionBlockNode(
+                block_id="blk-old-b",
+                block_type="heading_2",
+                content_text="Old Section B",
+                block_path="Knowledge/Sync/Old Section B",
+                children=[
+                    NotionBlockNode(
+                        block_id="blk-old-b-p",
+                        block_type="paragraph",
+                        content_text="Old note B (edited)",
+                        block_path="Knowledge/Sync/Old Section B/Old note B (edited)",
                     )
                 ],
             )
@@ -316,6 +383,130 @@ def test_index_page_api_returns_not_found_when_page_missing() -> None:
         session: Session = session_factory()
         try:
             workflow_runs = session.query(WorkflowRun).all()
+            assert len(workflow_runs) == 1
+            assert workflow_runs[0].status == "failed"
+            assert workflow_runs[0].failure_reason == "NOTION_PAGE_NOT_FOUND"
+        finally:
+            session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_index_incremental_api_reconciles_manual_deletion_with_page_replacement() -> None:
+    session_factory = _build_session_factory()
+    pages = {"page-sync": _sample_incremental_v1()}
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _tool_registry_override() -> ToolRegistry:
+        return _build_tool_registry(pages)
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_tool_registry] = _tool_registry_override
+
+    try:
+        client = TestClient(app)
+        first_response = client.post("/api/notion/index/page", json={"page_id": "page-sync"})
+        assert first_response.status_code == 200
+
+        session: Session = session_factory()
+        try:
+            page = (
+                session.query(NotionPage)
+                .filter(NotionPage.notion_page_id == "page-sync")
+                .one_or_none()
+            )
+            assert page is not None
+            original_chunk_count = (
+                session.query(KnowledgeChunk)
+                .join(NotionBlock, KnowledgeChunk.notion_block_id == NotionBlock.id)
+                .filter(NotionBlock.notion_page_id == page.id)
+                .count()
+            )
+            assert original_chunk_count == 2
+        finally:
+            session.close()
+
+        pages["page-sync"] = _sample_incremental_v2_after_manual_delete()
+        incremental_response = client.post(
+            "/api/notion/index/incremental",
+            json={"page_ids": ["page-sync"]},
+        )
+        assert incremental_response.status_code == 200
+        payload = incremental_response.json()
+        assert payload["status"] == "succeeded"
+        assert payload["sync_mode"] == "manual"
+        assert payload["processed_page_count"] == 1
+        assert payload["indexed_pages"][0]["page_id"] == "page-sync"
+        assert payload["indexed_pages"][0]["indexed_block_count"] == 2
+
+        session = session_factory()
+        try:
+            page = (
+                session.query(NotionPage)
+                .filter(NotionPage.notion_page_id == "page-sync")
+                .one_or_none()
+            )
+            assert page is not None
+            blocks = (
+                session.query(NotionBlock)
+                .filter(NotionBlock.notion_page_id == page.id)
+                .all()
+            )
+            assert len(blocks) == 2
+            assert {block.notion_block_id for block in blocks} == {"blk-old-b", "blk-old-b-p"}
+
+            chunks = (
+                session.query(KnowledgeChunk)
+                .join(NotionBlock, KnowledgeChunk.notion_block_id == NotionBlock.id)
+                .filter(NotionBlock.notion_page_id == page.id)
+                .all()
+            )
+            assert len(chunks) == 1
+            assert chunks[0].chunk_text == "Old Section B\nOld note B (edited)"
+        finally:
+            session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_index_incremental_api_returns_not_found_when_any_page_missing() -> None:
+    session_factory = _build_session_factory()
+    pages = {"page-sync": _sample_incremental_v1()}
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _tool_registry_override() -> ToolRegistry:
+        return _build_tool_registry(pages)
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_tool_registry] = _tool_registry_override
+
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/notion/index/incremental",
+            json={"page_ids": ["page-sync", "missing-page"]},
+        )
+        assert response.status_code == 404
+        detail = response.json()["detail"]
+        assert detail["error_code"] == "NOTION_PAGE_NOT_FOUND"
+        assert detail["failure_reason"] == "NOTION_PAGE_NOT_FOUND"
+        assert detail["workflow_run_id"] is not None
+
+        session: Session = session_factory()
+        try:
+            workflow_runs = session.query(WorkflowRun).order_by(WorkflowRun.id.asc()).all()
             assert len(workflow_runs) == 1
             assert workflow_runs[0].status == "failed"
             assert workflow_runs[0].failure_reason == "NOTION_PAGE_NOT_FOUND"
