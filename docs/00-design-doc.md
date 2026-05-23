@@ -450,6 +450,7 @@ Design notes:
 ### 13.2 Ingestion APIs
 | Method | Endpoint | Description |
 |---|---|---|
+| POST | `/api/ingest/source` | Create source document metadata from normalized source text. |
 | POST | `/api/ingest/document` | Ingest PDF/document source. |
 | POST | `/api/ingest/url` | Ingest URL article source. |
 | POST | `/api/ingest/youtube` | Ingest YouTube transcript source. |

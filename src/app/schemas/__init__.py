@@ -6,6 +6,10 @@ from src.app.schemas.notion_index import (
     NotionPageIndexResponse,
 )
 from src.app.schemas.qa import QACitation, QARequest, QAResponse
+from src.app.schemas.source_ingest import (
+    SourceDocumentCreateRequest,
+    SourceDocumentCreateResponse,
+)
 
 __all__ = [
     "QACitation",
@@ -16,4 +20,6 @@ __all__ = [
     "NotionPageIndexResponse",
     "QARequest",
     "QAResponse",
+    "SourceDocumentCreateRequest",
+    "SourceDocumentCreateResponse",
 ]

@@ -7,6 +7,7 @@ from src.repositories.chunk_repository import (
 )
 from src.repositories.notion_block_repository import NotionBlockRepository, NotionBlockSnapshot
 from src.repositories.notion_page_repository import NotionPageRepository
+from src.repositories.source_document_repository import SourceDocumentRepository
 from src.repositories.workflow_run_repository import WorkflowRunRepository
 
 __all__ = [
@@ -18,5 +19,6 @@ __all__ = [
     "RetrievalChunkCandidate",
     "NotionBlockSnapshot",
     "NotionPageRepository",
+    "SourceDocumentRepository",
     "WorkflowRunRepository",
 ]

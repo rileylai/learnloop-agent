@@ -1,0 +1,27 @@
+from __future__ import annotations
+
+from pydantic import BaseModel, Field
+
+
+class SourceDocumentCreateRequest(BaseModel):
+    source_type: str = Field(
+        min_length=1,
+        description="Source type: pdf, url, youtube, screenshot, or chat_text.",
+    )
+    source_display_name: str = Field(
+        min_length=1,
+        description="Display name shown in source metadata.",
+    )
+    raw_text: str = Field(
+        min_length=1,
+        description="Normalized source text used for proposal generation.",
+    )
+
+
+class SourceDocumentCreateResponse(BaseModel):
+    workflow_run_id: int
+    status: str
+    source_document_id: int
+    source_type: str
+    source_display_name: str
+    content_hash: str

@@ -14,6 +14,11 @@ from src.orchestrators.qa_orchestrator import (
     QAResult,
     QACitationResult,
 )
+from src.orchestrators.source_document_orchestrator import (
+    SourceDocumentCreateResult,
+    SourceDocumentOrchestrator,
+    SourceDocumentWorkflowError,
+)
 
 __all__ = [
     "NotionIncrementalIndexOrchestrator",
@@ -26,4 +31,7 @@ __all__ = [
     "QAOrchestrator",
     "QAOrchestratorError",
     "QAResult",
+    "SourceDocumentCreateResult",
+    "SourceDocumentOrchestrator",
+    "SourceDocumentWorkflowError",
 ]

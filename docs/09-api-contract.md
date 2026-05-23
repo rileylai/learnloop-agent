@@ -105,6 +105,52 @@ Notes:
 - Reconciliation uses page-level replacement.
 - For each changed page, stale blocks/chunks are removed and current Notion page content is re-indexed.
 
+## Ingestion Foundation API
+
+### POST `/api/ingest/source`
+Create one `source_documents` row from normalized source text.
+
+Request:
+
+```json
+{
+  "source_type": "pdf",
+  "source_display_name": "lecture1.pdf",
+  "raw_text": "Transformer notes from lecture 1"
+}
+```
+
+Success response `200`:
+
+```json
+{
+  "workflow_run_id": 401,
+  "status": "succeeded",
+  "source_document_id": 1,
+  "source_type": "pdf",
+  "source_display_name": "lecture1.pdf",
+  "content_hash": "4f9b56d58d6f1d4a2c7c87791ce58eceefc9c1be9b9c517f4f67de9f0f5b74f1"
+}
+```
+
+Failure response example `400` (unsupported source type):
+
+```json
+{
+  "detail": {
+    "error_code": "INVALID_ARGUMENT",
+    "message": "source_type must be one of: pdf, url, youtube, screenshot, chat_text",
+    "failure_reason": "UNKNOWN_ERROR",
+    "workflow_run_id": null
+  }
+}
+```
+
+Notes:
+- Route must call orchestrator only.
+- Orchestrator starts `workflow_type=ingestion` and persists source metadata through repository.
+- Step 20 stores core fields: `source_type`, `source_display_name`, and `content_hash`.
+
 ## QA API
 
 ### POST `/api/qa`
