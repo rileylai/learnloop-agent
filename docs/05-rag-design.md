@@ -98,3 +98,22 @@ Rules:
 - Orchestrators and services should depend on `EmbeddingClient`, not provider SDKs.
 - OpenAI adapter can use transport injection for deterministic unit tests.
 - Mock tests validate request payload, response mapping, and error behavior without real network.
+
+## Chunk Upsert with Page Replacement (Step 15)
+
+Files:
+- `src/repositories/chunk_repository.py`
+
+Goal:
+- Upsert Notion chunks with page-level replacement semantics.
+- Re-indexing the same page must replace old chunks and avoid duplicates.
+
+Component:
+- `ChunkRepository.upsert_chunks(notion_page_db_id, chunks)`
+
+Rules:
+- Scope deletion to `source_kind="notion"` chunks mapped to blocks in the target page.
+- Delete old page chunks first, then insert new chunks in `chunk_index` order.
+- Keep cross-page chunks untouched.
+- Map each chunk to a page block via `notion_block_ids` from citation metadata.
+- Store embedding vectors as serialized text in current MVP schema (`embedding_text`).
