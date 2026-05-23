@@ -47,3 +47,54 @@ Knowledge/Mixed/Root Heading/Toggle Topic
 Knowledge/Mixed/Root Heading/Toggle Topic/Child Page A
 Knowledge/Mixed/Root Heading/Toggle Topic/Child Page A/Leaf Note
 ```
+
+## Notion Chunker (Step 13)
+
+File:
+- `src/rag/chunker.py`
+
+Goal:
+- Convert indexed Notion blocks into chunk drafts for retrieval and embedding.
+- Keep `notion_path` metadata on each chunk for citation traceability.
+
+Input:
+- One indexed Notion page (`notion_page_id`, title, `notion_path`)
+- Nested blocks with block id, block type, text, block path, and children
+
+Output:
+- Ordered chunk drafts with:
+  - `chunk_index`
+  - `chunk_text`
+  - `notion_path`
+  - `citation_meta` (`notion_page_id`, `notion_page_title`, `notion_page_path`, `notion_block_ids`)
+
+Boundary rules:
+- Start a new chunk when block type hits a section boundary:
+  - `heading_1`, `heading_2`, `heading_3`, `toggle`, `child_page`
+- This enforces chunking around page/toggle/heading/section boundaries.
+- Non-boundary text before the first section boundary stays in page-level chunks.
+
+Chunk text rules:
+- Normalize whitespace in block text.
+- Skip empty text lines.
+- Split chunk text when adding the next line would exceed `max_chunk_chars`.
+
+## Embedding Provider Abstraction (Step 14)
+
+Files:
+- `src/providers/embedding.py`
+
+Goal:
+- Keep embedding logic behind a provider-style interface.
+- Start with OpenAI embedding adapter while keeping extension points for other providers.
+
+Components:
+- `EmbeddingClient`: abstract embedding interface for orchestrator/service usage.
+- `EmbeddingRequest`: input schema (`inputs`, optional `model`, optional `dimensions`, optional metadata).
+- `EmbeddingResponse`: output schema (`embeddings`, token usage, provider/model metadata).
+- `OpenAIEmbeddingClient`: OpenAI-first adapter implementing `EmbeddingClient`.
+
+Rules:
+- Orchestrators and services should depend on `EmbeddingClient`, not provider SDKs.
+- OpenAI adapter can use transport injection for deterministic unit tests.
+- Mock tests validate request payload, response mapping, and error behavior without real network.
