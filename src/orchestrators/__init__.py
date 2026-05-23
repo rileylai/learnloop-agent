@@ -8,6 +8,12 @@ from src.orchestrators.notion_page_index_orchestrator import (
     NotionPageIndexOrchestrator,
     NotionPageIndexResult,
 )
+from src.orchestrators.qa_orchestrator import (
+    QAOrchestrator,
+    QAOrchestratorError,
+    QAResult,
+    QACitationResult,
+)
 
 __all__ = [
     "NotionIncrementalIndexOrchestrator",
@@ -16,4 +22,8 @@ __all__ = [
     "NotionPageIndexError",
     "NotionPageIndexOrchestrator",
     "NotionPageIndexResult",
+    "QACitationResult",
+    "QAOrchestrator",
+    "QAOrchestratorError",
+    "QAResult",
 ]

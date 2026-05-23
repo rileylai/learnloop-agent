@@ -104,3 +104,80 @@ Notes:
 - Route must call orchestrator. Route does not call Notion directly.
 - Reconciliation uses page-level replacement.
 - For each changed page, stale blocks/chunks are removed and current Notion page content is re-indexed.
+
+## QA API
+
+### POST `/api/qa`
+Run production RAG QA and return answer with citation paths.
+
+Request:
+
+```json
+{
+  "query": "Explain attention in week5 notes",
+  "top_k": 5,
+  "page_ids": ["page-nlp-week5"],
+  "section_paths": ["Knowledge/NLP/Week5/Attention"],
+  "source_kinds": ["notion"],
+  "provider_name": "openai",
+  "model": "gpt-4o-mini"
+}
+```
+
+Success response `200`:
+
+```json
+{
+  "workflow_run_id": 301,
+  "status": "succeeded",
+  "answer": "Attention aligns query and key to weight values.",
+  "insufficient_info": false,
+  "retrieved_chunk_count": 2,
+  "citations": [
+    {
+      "notion_path": "Knowledge/NLP/Week5/Attention",
+      "page_id": "page-nlp-week5",
+      "score": 0.934211
+    }
+  ],
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "token_input": 25,
+  "token_output": 10
+}
+```
+
+Insufficient-info response `200`:
+
+```json
+{
+  "workflow_run_id": 302,
+  "status": "succeeded",
+  "answer": "I do not have enough information in production notes to answer safely.",
+  "insufficient_info": true,
+  "retrieved_chunk_count": 0,
+  "citations": [],
+  "provider": null,
+  "model": null,
+  "token_input": null,
+  "token_output": null
+}
+```
+
+Failure response example `500` (provider not configured):
+
+```json
+{
+  "detail": {
+    "error_code": "PROVIDER_NOT_FOUND",
+    "message": "Provider is not registered: 'openai'",
+    "failure_reason": "UNKNOWN_ERROR",
+    "workflow_run_id": 303
+  }
+}
+```
+
+Notes:
+- Route must call orchestrator only.
+- Orchestrator retrieves production chunks and calls `ProviderRouter`.
+- `pending` and `rejected` content remains excluded by production retrieval policy.

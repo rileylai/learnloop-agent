@@ -160,3 +160,27 @@ Production-RAG rules in this step:
 - Current MVP production retrieval is constrained to `source_kind="notion"`.
 - Non-production chunk kinds are excluded.
 - No reranker is used in MVP.
+
+## RAG QA Endpoint (Step 19)
+
+Files:
+- `src/orchestrators/qa_orchestrator.py`
+- `src/app/api/routes/qa.py`
+
+Goal:
+- Expose `POST /api/qa` for grounded QA over production chunks.
+- Return answer with Notion-path citations, or deterministic insufficient-info response.
+
+Flow:
+- API Route -> QA Orchestrator -> ProductionChunkRetriever -> ProviderRouter.
+- Route does not call provider SDKs or database SQL directly.
+
+Behavior:
+- Retrieve production chunks using scope filters (`page_ids`, `section_paths`, `source_kinds`).
+- If no chunk is retrieved, return insufficient-info response and empty citations.
+- If chunks exist, build context prompt and call LLM through `ProviderRouter`.
+- Return structured citations from retrieved chunk paths for deterministic citation output.
+
+Failure handling:
+- Provider missing or provider call failure returns deterministic error with workflow id.
+- Invalid or empty LLM output maps to `LLM_OUTPUT_INVALID`.
