@@ -1,3 +1,8 @@
+from src.services.duplicate_checker import (
+    DuplicateCheckResult,
+    DuplicateKnowledgeChecker,
+    DuplicateMatch,
+)
 from src.services.workflow_run_service import (
     STANDARD_FAILURE_REASONS,
     WORKFLOW_STATUS_FAILED,
@@ -10,6 +15,9 @@ from src.services.workflow_run_service import (
 )
 
 __all__ = [
+    "DuplicateCheckResult",
+    "DuplicateKnowledgeChecker",
+    "DuplicateMatch",
     "STANDARD_FAILURE_REASONS",
     "WORKFLOW_STATUS_FAILED",
     "WORKFLOW_STATUS_RUNNING",
