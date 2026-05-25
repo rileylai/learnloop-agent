@@ -12,6 +12,8 @@ from src.tools import (
     TrafilaturaURLArticleParserClient,
     ToolRegistry,
     URLArticleParserTool,
+    YouTubeTranscriptAPIClient,
+    YouTubeTranscriptTool,
 )
 
 
@@ -21,6 +23,7 @@ def get_tool_registry() -> ToolRegistry:
     registry.register_tool(NotionReaderTool(InMemoryNotionReaderClient(pages={})))
     registry.register_tool(PDFParserTool(PyPDFParserClient()))
     registry.register_tool(URLArticleParserTool(TrafilaturaURLArticleParserClient()))
+    registry.register_tool(YouTubeTranscriptTool(YouTubeTranscriptAPIClient()))
     return registry
 
 

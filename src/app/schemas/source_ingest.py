@@ -32,3 +32,10 @@ class URLIngestionRequest(BaseModel):
         min_length=1,
         description="Absolute article URL to ingest (http/https).",
     )
+
+
+class YouTubeIngestionRequest(BaseModel):
+    url: str = Field(
+        min_length=1,
+        description="Absolute YouTube video URL to ingest transcript from.",
+    )

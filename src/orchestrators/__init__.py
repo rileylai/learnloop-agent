@@ -29,6 +29,11 @@ from src.orchestrators.url_ingestion_orchestrator import (
     URLIngestionOrchestrator,
     URLIngestionResult,
 )
+from src.orchestrators.youtube_ingestion_orchestrator import (
+    YouTubeIngestionError,
+    YouTubeIngestionOrchestrator,
+    YouTubeIngestionResult,
+)
 
 __all__ = [
     "NotionIncrementalIndexOrchestrator",
@@ -50,4 +55,7 @@ __all__ = [
     "URLIngestionError",
     "URLIngestionOrchestrator",
     "URLIngestionResult",
+    "YouTubeIngestionError",
+    "YouTubeIngestionOrchestrator",
+    "YouTubeIngestionResult",
 ]

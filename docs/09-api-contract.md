@@ -233,6 +233,49 @@ Notes:
 - This endpoint does not perform Notion write operations.
 - Source display name preserves the full URL string.
 
+### POST `/api/ingest/youtube`
+Ingest one YouTube video transcript and create one source document.
+
+Request:
+
+```json
+{
+  "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+}
+```
+
+Success response `200`:
+
+```json
+{
+  "workflow_run_id": 404,
+  "status": "succeeded",
+  "source_document_id": 4,
+  "source_type": "youtube",
+  "source_display_name": "YouTube transcript (dQw4w9WgXcQ)",
+  "content_hash": "972ebd505260f1f7d55d5bdb4e08a4aa4f53b7900f87fbeb1d3e602dcc8f2e38"
+}
+```
+
+Failure response example `422` (transcript unavailable):
+
+```json
+{
+  "detail": {
+    "error_code": "YOUTUBE_TRANSCRIPT_NOT_FOUND",
+    "message": "No transcript found for this YouTube video",
+    "failure_reason": "YOUTUBE_TRANSCRIPT_NOT_FOUND",
+    "workflow_run_id": 404
+  }
+}
+```
+
+Notes:
+- Route must call orchestrator only.
+- Orchestrator must call `ToolRegistry` -> `YouTubeTranscriptTool`.
+- This endpoint does not perform Notion write operations.
+- MVP is transcript-only; no speech-to-text fallback for videos without transcript.
+
 ## QA API
 
 ### POST `/api/qa`

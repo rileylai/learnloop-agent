@@ -9,6 +9,7 @@ from src.app.schemas.qa import QACitation, QARequest, QAResponse
 from src.app.schemas.source_ingest import (
     SourceDocumentCreateRequest,
     SourceDocumentCreateResponse,
+    YouTubeIngestionRequest,
     URLIngestionRequest,
 )
 
@@ -23,5 +24,6 @@ __all__ = [
     "QAResponse",
     "SourceDocumentCreateRequest",
     "SourceDocumentCreateResponse",
+    "YouTubeIngestionRequest",
     "URLIngestionRequest",
 ]

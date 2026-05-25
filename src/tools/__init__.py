@@ -28,6 +28,13 @@ from src.tools.url_article_parser_tool import (
     URLArticleParserClientError,
     URLArticleParserTool,
 )
+from src.tools.youtube_transcript_tool import (
+    ParsedYouTubeTranscript,
+    YouTubeTranscriptAPIClient,
+    YouTubeTranscriptParserClient,
+    YouTubeTranscriptParserClientError,
+    YouTubeTranscriptTool,
+)
 
 __all__ = [
     "Tool",
@@ -46,6 +53,11 @@ __all__ = [
     "URLArticleParserClient",
     "URLArticleParserClientError",
     "URLArticleParserTool",
+    "ParsedYouTubeTranscript",
+    "YouTubeTranscriptAPIClient",
+    "YouTubeTranscriptParserClient",
+    "YouTubeTranscriptParserClientError",
+    "YouTubeTranscriptTool",
     "ToolAlreadyRegisteredError",
     "ToolContext",
     "ToolError",
