@@ -13,7 +13,16 @@ from src.app.main import app
 from src.db.base import Base
 from src.db.models import NotionBlock, NotionPage, SourceDocument, WorkflowRun
 from src.db.session import get_db_session
-from src.tools import PDFParserClient, PDFParserClientError, PDFParserTool, ToolRegistry
+from src.tools import (
+    PDFParserClient,
+    PDFParserClientError,
+    PDFParserTool,
+    ParsedURLArticle,
+    ToolRegistry,
+    URLArticleParserClient,
+    URLArticleParserClientError,
+    URLArticleParserTool,
+)
 
 
 @dataclass
@@ -44,6 +53,24 @@ class _FakePDFParserClient(PDFParserClient):
         return _FakeParsedPDF(raw_text=self._raw_text, page_count=self._page_count)
 
 
+class _FakeURLArticleParserClient(URLArticleParserClient):
+    def __init__(
+        self,
+        *,
+        raw_text: str = "",
+        should_fail: bool = False,
+        failure_message: str = "fetch failed",
+    ) -> None:
+        self._raw_text = raw_text
+        self._should_fail = should_fail
+        self._failure_message = failure_message
+
+    def parse_article(self, *, url: str) -> ParsedURLArticle:
+        if self._should_fail:
+            raise URLArticleParserClientError(self._failure_message)
+        return ParsedURLArticle(url=url, raw_text=self._raw_text)
+
+
 def _build_session_factory():
     engine = create_engine(
         "sqlite+pysqlite://",
@@ -65,6 +92,14 @@ def _build_session_factory():
 def _build_tool_registry_with_pdf_parser(parser_client: PDFParserClient) -> ToolRegistry:
     registry = ToolRegistry()
     registry.register_tool(PDFParserTool(parser_client))
+    return registry
+
+
+def _build_tool_registry_with_url_parser(
+    parser_client: URLArticleParserClient,
+) -> ToolRegistry:
+    registry = ToolRegistry()
+    registry.register_tool(URLArticleParserTool(parser_client))
     return registry
 
 
@@ -319,6 +354,110 @@ def test_ingest_document_api_returns_pdf_parse_failed() -> None:
             assert workflow_run.workflow_type == "ingestion"
             assert workflow_run.status == "failed"
             assert workflow_run.failure_reason == "PDF_PARSE_FAILED"
+        finally:
+            session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_ingest_url_api_persists_extracted_text_and_full_url_display_name() -> None:
+    session_factory = _build_session_factory()
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _tool_registry_override() -> ToolRegistry:
+        return _build_tool_registry_with_url_parser(
+            _FakeURLArticleParserClient(raw_text="Attention article summary")
+        )
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_tool_registry] = _tool_registry_override
+
+    try:
+        client = TestClient(app)
+        source_url = "https://example.com/nlp-week5"
+        response = client.post(
+            "/api/ingest/url",
+            json={"url": source_url},
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "succeeded"
+        assert payload["source_type"] == "url"
+        assert payload["source_display_name"] == source_url
+        assert payload["content_hash"] == hashlib.sha256(
+            "Attention article summary".encode("utf-8")
+        ).hexdigest()
+
+        session: Session = session_factory()
+        try:
+            source_document = session.get(SourceDocument, payload["source_document_id"])
+            assert source_document is not None
+            assert source_document.source_type == "url"
+            assert source_document.source_display_name == source_url
+            assert source_document.raw_text == "Attention article summary"
+
+            workflow_run = session.get(WorkflowRun, payload["workflow_run_id"])
+            assert workflow_run is not None
+            assert workflow_run.workflow_type == "ingestion"
+            assert workflow_run.status == "succeeded"
+            assert workflow_run.failure_reason is None
+
+            # Step 22 must not perform Notion writes.
+            assert session.query(NotionPage).count() == 0
+            assert session.query(NotionBlock).count() == 0
+        finally:
+            session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_ingest_url_api_returns_url_fetch_failed() -> None:
+    session_factory = _build_session_factory()
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _tool_registry_override() -> ToolRegistry:
+        return _build_tool_registry_with_url_parser(
+            _FakeURLArticleParserClient(
+                should_fail=True,
+                failure_message="article fetch failed",
+            )
+        )
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_tool_registry] = _tool_registry_override
+
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/ingest/url",
+            json={"url": "https://example.com/fail"},
+        )
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        assert detail["error_code"] == "URL_FETCH_FAILED"
+        assert detail["failure_reason"] == "URL_FETCH_FAILED"
+        assert detail["workflow_run_id"] is not None
+
+        session: Session = session_factory()
+        try:
+            assert session.query(SourceDocument).count() == 0
+            workflow_run = session.get(WorkflowRun, detail["workflow_run_id"])
+            assert workflow_run is not None
+            assert workflow_run.workflow_type == "ingestion"
+            assert workflow_run.status == "failed"
+            assert workflow_run.failure_reason == "URL_FETCH_FAILED"
         finally:
             session.close()
     finally:

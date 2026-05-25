@@ -25,3 +25,10 @@ class SourceDocumentCreateResponse(BaseModel):
     source_type: str
     source_display_name: str
     content_hash: str
+
+
+class URLIngestionRequest(BaseModel):
+    url: str = Field(
+        min_length=1,
+        description="Absolute article URL to ingest (http/https).",
+    )

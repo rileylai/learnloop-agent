@@ -190,6 +190,49 @@ Notes:
 - This endpoint does not perform Notion write operations.
 - Source display name is the uploaded filename.
 
+### POST `/api/ingest/url`
+Ingest one URL article, extract normalized text, and create one source document.
+
+Request:
+
+```json
+{
+  "url": "https://example.com/nlp-week5"
+}
+```
+
+Success response `200`:
+
+```json
+{
+  "workflow_run_id": 403,
+  "status": "succeeded",
+  "source_document_id": 3,
+  "source_type": "url",
+  "source_display_name": "https://example.com/nlp-week5",
+  "content_hash": "271f1c0e18d86bd53b4a46d2a7e05320b89432135b86564f3cd6de44db69b7f3"
+}
+```
+
+Failure response example `422` (fetch or extraction failed):
+
+```json
+{
+  "detail": {
+    "error_code": "URL_FETCH_FAILED",
+    "message": "No extractable text found in URL article",
+    "failure_reason": "URL_FETCH_FAILED",
+    "workflow_run_id": 403
+  }
+}
+```
+
+Notes:
+- Route must call orchestrator only.
+- Orchestrator must call `ToolRegistry` -> `URLArticleParserTool`.
+- This endpoint does not perform Notion write operations.
+- Source display name preserves the full URL string.
+
 ## QA API
 
 ### POST `/api/qa`

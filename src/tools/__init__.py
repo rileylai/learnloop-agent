@@ -21,6 +21,13 @@ from src.tools.registry import (
     ToolRegistry,
     ToolRegistryError,
 )
+from src.tools.url_article_parser_tool import (
+    ParsedURLArticle,
+    TrafilaturaURLArticleParserClient,
+    URLArticleParserClient,
+    URLArticleParserClientError,
+    URLArticleParserTool,
+)
 
 __all__ = [
     "Tool",
@@ -34,6 +41,11 @@ __all__ = [
     "PDFParserTool",
     "ParsedPDFDocument",
     "PyPDFParserClient",
+    "ParsedURLArticle",
+    "TrafilaturaURLArticleParserClient",
+    "URLArticleParserClient",
+    "URLArticleParserClientError",
+    "URLArticleParserTool",
     "ToolAlreadyRegisteredError",
     "ToolContext",
     "ToolError",

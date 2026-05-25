@@ -24,6 +24,11 @@ from src.orchestrators.source_document_orchestrator import (
     SourceDocumentOrchestrator,
     SourceDocumentWorkflowError,
 )
+from src.orchestrators.url_ingestion_orchestrator import (
+    URLIngestionError,
+    URLIngestionOrchestrator,
+    URLIngestionResult,
+)
 
 __all__ = [
     "NotionIncrementalIndexOrchestrator",
@@ -42,4 +47,7 @@ __all__ = [
     "SourceDocumentCreateResult",
     "SourceDocumentOrchestrator",
     "SourceDocumentWorkflowError",
+    "URLIngestionError",
+    "URLIngestionOrchestrator",
+    "URLIngestionResult",
 ]

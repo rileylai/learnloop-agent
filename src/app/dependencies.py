@@ -9,7 +9,9 @@ from src.tools import (
     NotionReaderTool,
     PDFParserTool,
     PyPDFParserClient,
+    TrafilaturaURLArticleParserClient,
     ToolRegistry,
+    URLArticleParserTool,
 )
 
 
@@ -18,6 +20,7 @@ def get_tool_registry() -> ToolRegistry:
     registry = ToolRegistry()
     registry.register_tool(NotionReaderTool(InMemoryNotionReaderClient(pages={})))
     registry.register_tool(PDFParserTool(PyPDFParserClient()))
+    registry.register_tool(URLArticleParserTool(TrafilaturaURLArticleParserClient()))
     return registry
 
 
