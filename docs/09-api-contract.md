@@ -276,6 +276,45 @@ Notes:
 - This endpoint does not perform Notion write operations.
 - MVP is transcript-only; no speech-to-text fallback for videos without transcript.
 
+### POST `/api/ingest/image-ocr`
+Ingest multiple screenshots, run OCR in upload order, and create one source document.
+
+Request:
+- `multipart/form-data`
+- repeated field: `images` (image files in intended reading order)
+
+Success response `200`:
+
+```json
+{
+  "workflow_run_id": 405,
+  "status": "succeeded",
+  "source_document_id": 5,
+  "source_type": "screenshot",
+  "source_display_name": "Screenshot batch (3 images)",
+  "content_hash": "30c8e52d4dc85f94fcdbdf6916696559f027c7af5269f78f8bdce840f31f586f"
+}
+```
+
+Failure response example `422` (OCR failed):
+
+```json
+{
+  "detail": {
+    "error_code": "OCR_FAILED",
+    "message": "No extractable text found in images",
+    "failure_reason": "OCR_FAILED",
+    "workflow_run_id": 405
+  }
+}
+```
+
+Notes:
+- Route must call orchestrator only.
+- Orchestrator must call `ToolRegistry` -> `ImageOCRTool`.
+- This endpoint does not perform Notion write operations.
+- Uploaded image order must be preserved in OCR text concatenation.
+
 ## QA API
 
 ### POST `/api/qa`

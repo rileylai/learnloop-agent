@@ -1,4 +1,12 @@
 from src.tools.base import Tool
+from src.tools.image_ocr_tool import (
+    ImageOCRParserClient,
+    ImageOCRParserClientError,
+    ImageOCRTool,
+    OCRImageInput,
+    ParsedImageOCR,
+    TesseractImageOCRParserClient,
+)
 from src.tools.models import ToolContext, ToolError, ToolResult, ToolSpec
 from src.tools.notion_reader_tool import (
     InMemoryNotionReaderClient,
@@ -38,6 +46,9 @@ from src.tools.youtube_transcript_tool import (
 
 __all__ = [
     "Tool",
+    "ImageOCRParserClient",
+    "ImageOCRParserClientError",
+    "ImageOCRTool",
     "InMemoryNotionReaderClient",
     "NotionBlockNode",
     "NotionPageTree",
@@ -54,6 +65,9 @@ __all__ = [
     "URLArticleParserClientError",
     "URLArticleParserTool",
     "ParsedYouTubeTranscript",
+    "OCRImageInput",
+    "ParsedImageOCR",
+    "TesseractImageOCRParserClient",
     "YouTubeTranscriptAPIClient",
     "YouTubeTranscriptParserClient",
     "YouTubeTranscriptParserClientError",

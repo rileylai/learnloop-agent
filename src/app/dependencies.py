@@ -5,10 +5,12 @@ from functools import lru_cache
 from src.app.config import get_settings
 from src.providers import OpenAIClient, ProviderRouter
 from src.tools import (
+    ImageOCRTool,
     InMemoryNotionReaderClient,
     NotionReaderTool,
     PDFParserTool,
     PyPDFParserClient,
+    TesseractImageOCRParserClient,
     TrafilaturaURLArticleParserClient,
     ToolRegistry,
     URLArticleParserTool,
@@ -24,6 +26,7 @@ def get_tool_registry() -> ToolRegistry:
     registry.register_tool(PDFParserTool(PyPDFParserClient()))
     registry.register_tool(URLArticleParserTool(TrafilaturaURLArticleParserClient()))
     registry.register_tool(YouTubeTranscriptTool(YouTubeTranscriptAPIClient()))
+    registry.register_tool(ImageOCRTool(TesseractImageOCRParserClient()))
     return registry
 
 

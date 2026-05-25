@@ -3,6 +3,12 @@ from src.orchestrators.document_ingestion_orchestrator import (
     DocumentIngestionOrchestrator,
     DocumentIngestionResult,
 )
+from src.orchestrators.image_ocr_ingestion_orchestrator import (
+    ImageOCRIngestionError,
+    ImageOCRIngestionOrchestrator,
+    ImageOCRIngestionResult,
+    ImageUploadInput,
+)
 from src.orchestrators.notion_incremental_index_orchestrator import (
     NotionIncrementalIndexOrchestrator,
     NotionIncrementalIndexResult,
@@ -42,6 +48,10 @@ __all__ = [
     "DocumentIngestionError",
     "DocumentIngestionOrchestrator",
     "DocumentIngestionResult",
+    "ImageOCRIngestionError",
+    "ImageOCRIngestionOrchestrator",
+    "ImageOCRIngestionResult",
+    "ImageUploadInput",
     "NotionPageIndexError",
     "NotionPageIndexOrchestrator",
     "NotionPageIndexResult",

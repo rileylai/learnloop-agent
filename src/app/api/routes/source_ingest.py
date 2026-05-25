@@ -14,6 +14,9 @@ from src.db.session import get_db_session
 from src.orchestrators import (
     DocumentIngestionError,
     DocumentIngestionOrchestrator,
+    ImageOCRIngestionError,
+    ImageOCRIngestionOrchestrator,
+    ImageUploadInput,
     SourceDocumentOrchestrator,
     SourceDocumentWorkflowError,
     YouTubeIngestionError,
@@ -44,6 +47,18 @@ def _build_document_ingestion_orchestrator(
     tool_registry: ToolRegistry,
 ) -> DocumentIngestionOrchestrator:
     return DocumentIngestionOrchestrator(
+        tool_registry=tool_registry,
+        source_document_repository=SourceDocumentRepository(db_session),
+        workflow_run_service=WorkflowRunService(WorkflowRunRepository(db_session)),
+    )
+
+
+def _build_image_ocr_ingestion_orchestrator(
+    *,
+    db_session: Session,
+    tool_registry: ToolRegistry,
+) -> ImageOCRIngestionOrchestrator:
+    return ImageOCRIngestionOrchestrator(
         tool_registry=tool_registry,
         source_document_repository=SourceDocumentRepository(db_session),
         workflow_run_service=WorkflowRunService(WorkflowRunRepository(db_session)),
@@ -221,6 +236,56 @@ async def ingest_youtube_transcript(
                 "workflow_run_id": exc.workflow_run_id,
             },
         ) from exc
+
+    return SourceDocumentCreateResponse(
+        workflow_run_id=result.workflow_run_id,
+        status=result.status,
+        source_document_id=result.source_document_id,
+        source_type=result.source_type,
+        source_display_name=result.source_display_name,
+        content_hash=result.content_hash,
+    )
+
+
+@router.post("/api/ingest/image-ocr", response_model=SourceDocumentCreateResponse)
+async def ingest_image_ocr(
+    request: Request,
+    images: list[UploadFile] = File(...),
+    db_session: Session = Depends(get_db_session),
+    tool_registry: ToolRegistry = Depends(get_tool_registry),
+) -> SourceDocumentCreateResponse:
+    orchestrator = _build_image_ocr_ingestion_orchestrator(
+        db_session=db_session,
+        tool_registry=tool_registry,
+    )
+    request_workflow_id = str(getattr(request.state, "workflow_id", ""))
+
+    image_inputs: list[ImageUploadInput] = []
+    try:
+        for index, image in enumerate(images, start=1):
+            image_bytes = await image.read()
+            image_file_name = (image.filename or "").strip() or f"image-{index}"
+            image_inputs.append(
+                ImageUploadInput(file_name=image_file_name, file_bytes=image_bytes)
+            )
+
+        result = await orchestrator.ingest_image_ocr(
+            images=image_inputs,
+            request_workflow_id=request_workflow_id,
+        )
+    except ImageOCRIngestionError as exc:
+        raise HTTPException(
+            status_code=exc.http_status_code,
+            detail={
+                "error_code": exc.error_code,
+                "message": exc.message,
+                "failure_reason": exc.failure_reason,
+                "workflow_run_id": exc.workflow_run_id,
+            },
+        ) from exc
+    finally:
+        for image in images:
+            await image.close()
 
     return SourceDocumentCreateResponse(
         workflow_run_id=result.workflow_run_id,
