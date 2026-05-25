@@ -13,6 +13,7 @@ from src.app.main import app
 from src.db.base import Base
 from src.db.models import NotionBlock, NotionPage, SourceDocument, WorkflowRun
 from src.db.session import get_db_session
+from src.orchestrators import MVP_CHAT_TEXT_MAX_CHARS
 from src.tools import (
     ImageOCRParserClient,
     ImageOCRParserClientError,
@@ -762,6 +763,99 @@ def test_ingest_image_ocr_api_returns_ocr_failed() -> None:
             assert workflow_run.workflow_type == "ingestion"
             assert workflow_run.status == "failed"
             assert workflow_run.failure_reason == "OCR_FAILED"
+        finally:
+            session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_ingest_chat_text_api_persists_short_text() -> None:
+    session_factory = _build_session_factory()
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db_session] = _db_override
+
+    try:
+        client = TestClient(app)
+        chat_text = "Meeting notes about retrieval quality and attention concepts."
+        response = client.post(
+            "/api/ingest/chat-text",
+            json={
+                "chat_text": chat_text,
+                "source_display_name": "chat-2026-05-25",
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "succeeded"
+        assert payload["source_type"] == "chat_text"
+        assert payload["source_display_name"] == "chat-2026-05-25"
+        assert payload["content_hash"] == hashlib.sha256(
+            chat_text.encode("utf-8")
+        ).hexdigest()
+
+        session: Session = session_factory()
+        try:
+            source_document = session.get(SourceDocument, payload["source_document_id"])
+            assert source_document is not None
+            assert source_document.source_type == "chat_text"
+            assert source_document.source_display_name == "chat-2026-05-25"
+            assert source_document.raw_text == chat_text
+
+            workflow_run = session.get(WorkflowRun, payload["workflow_run_id"])
+            assert workflow_run is not None
+            assert workflow_run.workflow_type == "ingestion"
+            assert workflow_run.status == "succeeded"
+            assert workflow_run.failure_reason is None
+
+            # Step 25 must not perform Notion writes.
+            assert session.query(NotionPage).count() == 0
+            assert session.query(NotionBlock).count() == 0
+        finally:
+            session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_ingest_chat_text_api_rejects_over_limit_text() -> None:
+    session_factory = _build_session_factory()
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db_session] = _db_override
+
+    try:
+        client = TestClient(app)
+        too_long_chat_text = "a" * (MVP_CHAT_TEXT_MAX_CHARS + 1)
+        response = client.post(
+            "/api/ingest/chat-text",
+            json={
+                "chat_text": too_long_chat_text,
+                "source_display_name": "chat-too-long",
+            },
+        )
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert detail["error_code"] == "INVALID_ARGUMENT"
+        assert detail["failure_reason"] == "UNKNOWN_ERROR"
+        assert "exceeds MVP length limit" in detail["message"]
+        assert detail["workflow_run_id"] is None
+
+        session: Session = session_factory()
+        try:
+            assert session.query(SourceDocument).count() == 0
+            assert session.query(WorkflowRun).count() == 0
         finally:
             session.close()
     finally:

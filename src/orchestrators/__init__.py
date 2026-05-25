@@ -1,3 +1,10 @@
+from src.orchestrators.chat_text_ingestion_orchestrator import (
+    ChatTextIngestionError,
+    ChatTextIngestionOrchestrator,
+    ChatTextIngestionResult,
+    DEFAULT_CHAT_TEXT_SOURCE_DISPLAY_NAME,
+    MVP_CHAT_TEXT_MAX_CHARS,
+)
 from src.orchestrators.document_ingestion_orchestrator import (
     DocumentIngestionError,
     DocumentIngestionOrchestrator,
@@ -45,6 +52,11 @@ __all__ = [
     "NotionIncrementalIndexOrchestrator",
     "NotionIncrementalIndexResult",
     "NotionIncrementalIndexedPageResult",
+    "ChatTextIngestionError",
+    "ChatTextIngestionOrchestrator",
+    "ChatTextIngestionResult",
+    "DEFAULT_CHAT_TEXT_SOURCE_DISPLAY_NAME",
+    "MVP_CHAT_TEXT_MAX_CHARS",
     "DocumentIngestionError",
     "DocumentIngestionOrchestrator",
     "DocumentIngestionResult",

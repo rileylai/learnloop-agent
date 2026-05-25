@@ -39,3 +39,15 @@ class YouTubeIngestionRequest(BaseModel):
         min_length=1,
         description="Absolute YouTube video URL to ingest transcript from.",
     )
+
+
+class ChatTextIngestionRequest(BaseModel):
+    chat_text: str = Field(
+        min_length=1,
+        description="Pasted chat text to ingest.",
+    )
+    source_display_name: str = Field(
+        default="Chat text",
+        min_length=1,
+        description="Display name shown in source metadata.",
+    )

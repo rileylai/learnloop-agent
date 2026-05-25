@@ -7,6 +7,7 @@ from src.app.schemas.notion_index import (
 )
 from src.app.schemas.qa import QACitation, QARequest, QAResponse
 from src.app.schemas.source_ingest import (
+    ChatTextIngestionRequest,
     SourceDocumentCreateRequest,
     SourceDocumentCreateResponse,
     YouTubeIngestionRequest,
@@ -22,6 +23,7 @@ __all__ = [
     "NotionPageIndexResponse",
     "QARequest",
     "QAResponse",
+    "ChatTextIngestionRequest",
     "SourceDocumentCreateRequest",
     "SourceDocumentCreateResponse",
     "YouTubeIngestionRequest",

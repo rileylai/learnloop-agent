@@ -276,6 +276,49 @@ Notes:
 - This endpoint does not perform Notion write operations.
 - MVP is transcript-only; no speech-to-text fallback for videos without transcript.
 
+### POST `/api/ingest/chat-text`
+Ingest pasted chat text and create one source document.
+
+Request:
+
+```json
+{
+  "chat_text": "Meeting notes about retrieval quality and attention concepts.",
+  "source_display_name": "chat-2026-05-25"
+}
+```
+
+Success response `200`:
+
+```json
+{
+  "workflow_run_id": 406,
+  "status": "succeeded",
+  "source_document_id": 6,
+  "source_type": "chat_text",
+  "source_display_name": "chat-2026-05-25",
+  "content_hash": "cab93f7304657fce4ff3be8f36489039bc384c2d8f559550f8940af8601c7094"
+}
+```
+
+Failure response example `400` (over MVP length limit):
+
+```json
+{
+  "detail": {
+    "error_code": "INVALID_ARGUMENT",
+    "message": "chat_text exceeds MVP length limit (10000 chars)",
+    "failure_reason": "UNKNOWN_ERROR",
+    "workflow_run_id": null
+  }
+}
+```
+
+Notes:
+- Route must call orchestrator only.
+- This endpoint does not perform Notion write operations.
+- MVP chat text length limit is `10000` characters.
+
 ### POST `/api/ingest/image-ocr`
 Ingest multiple screenshots, run OCR in upload order, and create one source document.
 
