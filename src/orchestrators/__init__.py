@@ -37,6 +37,12 @@ from src.orchestrators.source_document_orchestrator import (
     SourceDocumentOrchestrator,
     SourceDocumentWorkflowError,
 )
+from src.orchestrators.supplement_proposal_schema import (
+    SupplementProposalSchema,
+    SupplementProposalSourceSchema,
+    SupplementProposalValidationError,
+    parse_supplement_proposal_json,
+)
 from src.orchestrators.url_ingestion_orchestrator import (
     URLIngestionError,
     URLIngestionOrchestrator,
@@ -74,6 +80,10 @@ __all__ = [
     "SourceDocumentCreateResult",
     "SourceDocumentOrchestrator",
     "SourceDocumentWorkflowError",
+    "SupplementProposalSchema",
+    "SupplementProposalSourceSchema",
+    "SupplementProposalValidationError",
+    "parse_supplement_proposal_json",
     "URLIngestionError",
     "URLIngestionOrchestrator",
     "URLIngestionResult",
