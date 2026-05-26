@@ -37,6 +37,13 @@ from src.orchestrators.source_document_orchestrator import (
     SourceDocumentOrchestrator,
     SourceDocumentWorkflowError,
 )
+from src.orchestrators.supplement_propose_orchestrator import (
+    DEFAULT_SUPPLEMENT_MODEL,
+    DEFAULT_SUPPLEMENT_PROVIDER_NAME,
+    SupplementProposeError,
+    SupplementProposeOrchestrator,
+    SupplementProposeResult,
+)
 from src.orchestrators.supplement_proposal_schema import (
     SupplementProposalSchema,
     SupplementProposalSourceSchema,
@@ -80,6 +87,11 @@ __all__ = [
     "SourceDocumentCreateResult",
     "SourceDocumentOrchestrator",
     "SourceDocumentWorkflowError",
+    "DEFAULT_SUPPLEMENT_MODEL",
+    "DEFAULT_SUPPLEMENT_PROVIDER_NAME",
+    "SupplementProposeError",
+    "SupplementProposeOrchestrator",
+    "SupplementProposeResult",
     "SupplementProposalSchema",
     "SupplementProposalSourceSchema",
     "SupplementProposalValidationError",

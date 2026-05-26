@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Optional
+
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -40,3 +42,6 @@ class SourceDocumentRepository:
         self._session.commit()
         self._session.refresh(source_document)
         return source_document
+
+    def get_source_document_by_id(self, source_document_id: int) -> Optional[SourceDocument]:
+        return self._session.get(SourceDocument, source_document_id)

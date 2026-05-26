@@ -13,6 +13,10 @@ from src.app.schemas.source_ingest import (
     YouTubeIngestionRequest,
     URLIngestionRequest,
 )
+from src.app.schemas.supplement import (
+    SupplementProposeRequest,
+    SupplementProposeResponse,
+)
 
 __all__ = [
     "QACitation",
@@ -26,6 +30,8 @@ __all__ = [
     "ChatTextIngestionRequest",
     "SourceDocumentCreateRequest",
     "SourceDocumentCreateResponse",
+    "SupplementProposeRequest",
+    "SupplementProposeResponse",
     "YouTubeIngestionRequest",
     "URLIngestionRequest",
 ]

@@ -358,6 +358,78 @@ Notes:
 - This endpoint does not perform Notion write operations.
 - Uploaded image order must be preserved in OCR text concatenation.
 
+## Supplement Proposal API
+
+### POST `/api/supplement/propose`
+Generate one supplement proposal from a source document and create one `pending` change request.
+
+Request:
+
+```json
+{
+  "source_document_id": 6,
+  "provider_name": "openai",
+  "model": "gpt-4o-mini",
+  "target_notion_page_id": null
+}
+```
+
+Success response `200`:
+
+```json
+{
+  "workflow_run_id": 501,
+  "status": "succeeded",
+  "change_request_id": 21,
+  "change_request_status": "pending",
+  "source_document_id": 6,
+  "duplicate_detected": false,
+  "duplicate_notion_path": null,
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "token_input": 120,
+  "token_output": 90
+}
+```
+
+Success response `200` (duplicate knowledge path):
+
+```json
+{
+  "workflow_run_id": 502,
+  "status": "succeeded",
+  "change_request_id": 22,
+  "change_request_status": "pending",
+  "source_document_id": 7,
+  "duplicate_detected": true,
+  "duplicate_notion_path": "Knowledge/NLP/Week5/Attention",
+  "provider": null,
+  "model": null,
+  "token_input": null,
+  "token_output": null
+}
+```
+
+Failure response example `502` (invalid LLM proposal JSON):
+
+```json
+{
+  "detail": {
+    "error_code": "LLM_OUTPUT_INVALID",
+    "message": "LLM output is not valid JSON",
+    "failure_reason": "LLM_OUTPUT_INVALID",
+    "workflow_run_id": 503
+  }
+}
+```
+
+Notes:
+- Route must call orchestrator only.
+- Orchestrator must call `ProviderRouter` for proposal generation and deterministic schema validation.
+- Orchestrator creates one `change_requests` row with `status=pending`.
+- This endpoint does not perform Notion write operations.
+- Duplicate detection uses production chunk citations and stores a citation-first pending proposal instead of rewriting duplicated content.
+
 ## QA API
 
 ### POST `/api/qa`

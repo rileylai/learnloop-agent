@@ -3,7 +3,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI, Request
 
-from src.app.api import notion_index_router, qa_router, source_ingest_router
+from src.app.api import notion_index_router, qa_router, source_ingest_router, supplement_router
 from src.app.config import get_settings
 from src.observability.logger import configure_logging, get_logger
 
@@ -15,6 +15,7 @@ app = FastAPI(title="LearnLoop Agent")
 app.include_router(notion_index_router)
 app.include_router(qa_router)
 app.include_router(source_ingest_router)
+app.include_router(supplement_router)
 
 
 @app.middleware("http")

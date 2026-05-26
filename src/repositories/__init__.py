@@ -1,3 +1,4 @@
+from src.repositories.change_request_repository import ChangeRequestRepository
 from src.repositories.chunk_repository import (
     ChunkBlockMappingError,
     ChunkRepository,
@@ -11,6 +12,7 @@ from src.repositories.source_document_repository import SourceDocumentRepository
 from src.repositories.workflow_run_repository import WorkflowRunRepository
 
 __all__ = [
+    "ChangeRequestRepository",
     "ChunkBlockMappingError",
     "ChunkRepository",
     "ChunkRepositoryError",

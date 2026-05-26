@@ -1,0 +1,46 @@
+from __future__ import annotations
+
+from typing import Optional
+
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from src.db.models import ChangeRequest
+
+
+class ChangeRequestRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def _allocate_change_request_id_for_sqlite(self) -> int:
+        max_id_in_db = int(self._session.query(func.max(ChangeRequest.id)).scalar() or 0)
+        max_id_in_identity_map = 0
+        for instance in self._session.identity_map.values():
+            if isinstance(instance, ChangeRequest) and instance.id is not None:
+                max_id_in_identity_map = max(max_id_in_identity_map, int(instance.id))
+        return max(max_id_in_db, max_id_in_identity_map) + 1
+
+    def create_change_request(
+        self,
+        *,
+        source_document_id: Optional[int],
+        target_notion_page_id: Optional[int],
+        status: str,
+        proposal_json: str,
+        failure_reason: Optional[str] = None,
+    ) -> ChangeRequest:
+        change_request = ChangeRequest(
+            source_document_id=source_document_id,
+            target_notion_page_id=target_notion_page_id,
+            status=status,
+            proposal_json=proposal_json,
+            failure_reason=failure_reason,
+        )
+
+        if self._session.bind is not None and self._session.bind.dialect.name == "sqlite":
+            change_request.id = self._allocate_change_request_id_for_sqlite()
+
+        self._session.add(change_request)
+        self._session.commit()
+        self._session.refresh(change_request)
+        return change_request
