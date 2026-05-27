@@ -430,6 +430,117 @@ Notes:
 - This endpoint does not perform Notion write operations.
 - Duplicate detection uses production chunk citations and stores a citation-first pending proposal instead of rewriting duplicated content.
 
+### POST `/api/supplement/accept`
+Accept one pending change request.
+
+Request:
+
+```json
+{
+  "change_request_id": 21,
+  "reviewer": "reviewer-a"
+}
+```
+
+Success response `200`:
+
+```json
+{
+  "workflow_run_id": 511,
+  "status": "succeeded",
+  "change_request_id": 21,
+  "change_request_status": "accepted",
+  "review_action": "accept",
+  "reviewer": "reviewer-a",
+  "reason": null
+}
+```
+
+Failure response example `409` (invalid state transition):
+
+```json
+{
+  "detail": {
+    "error_code": "INVALID_STATE_TRANSITION",
+    "message": "Only pending change requests can be reviewed: current_status=accepted",
+    "failure_reason": "UNKNOWN_ERROR",
+    "workflow_run_id": 512
+  }
+}
+```
+
+### POST `/api/supplement/reject`
+Reject one pending change request.
+
+Request:
+
+```json
+{
+  "change_request_id": 22,
+  "reviewer": "reviewer-b",
+  "reason": "Out of scope for this page."
+}
+```
+
+Success response `200`:
+
+```json
+{
+  "workflow_run_id": 513,
+  "status": "succeeded",
+  "change_request_id": 22,
+  "change_request_status": "rejected",
+  "review_action": "reject",
+  "reviewer": "reviewer-b",
+  "reason": "Out of scope for this page."
+}
+```
+
+### POST `/api/supplement/edit-later`
+Keep one pending change request in pending state for later review.
+
+Request:
+
+```json
+{
+  "change_request_id": 23,
+  "reviewer": "reviewer-c",
+  "reason": "Need more context before final decision."
+}
+```
+
+Success response `200`:
+
+```json
+{
+  "workflow_run_id": 514,
+  "status": "succeeded",
+  "change_request_id": 23,
+  "change_request_status": "pending",
+  "review_action": "edit_later",
+  "reviewer": "reviewer-c",
+  "reason": "Need more context before final decision."
+}
+```
+
+Failure response example `404` (change request not found):
+
+```json
+{
+  "detail": {
+    "error_code": "CHANGE_REQUEST_NOT_FOUND",
+    "message": "Change request is not found: change_request_id=99999",
+    "failure_reason": "CHANGE_REQUEST_NOT_FOUND",
+    "workflow_run_id": 515
+  }
+}
+```
+
+Notes:
+- Routes must call orchestrator only.
+- Review endpoints enforce legal transitions for pending change requests.
+- Reject path performs no Notion write operations in Step 29.
+
 ## QA API
 
 ### POST `/api/qa`

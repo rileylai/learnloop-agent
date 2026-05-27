@@ -119,6 +119,26 @@ def _seed_duplicate_reference_chunk(session: Session, *, chunk_text: str, notion
     session.commit()
 
 
+def _seed_change_request(
+    session: Session,
+    *,
+    change_request_id: int,
+    status: str = "pending",
+    proposal_json: str = '{"title":"Draft proposal"}',
+) -> None:
+    session.add(
+        ChangeRequest(
+            id=change_request_id,
+            source_document_id=None,
+            target_notion_page_id=None,
+            status=status,
+            proposal_json=proposal_json,
+            failure_reason=None,
+        )
+    )
+    session.commit()
+
+
 def test_supplement_propose_api_creates_pending_change_request() -> None:
     session_factory = _build_session_factory()
     seed_session = session_factory()
@@ -338,5 +358,235 @@ def test_supplement_propose_api_returns_llm_output_invalid() -> None:
             assert verify_session.query(ChangeRequest).count() == 0
         finally:
             verify_session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_supplement_accept_api_transitions_pending_to_accepted() -> None:
+    session_factory = _build_session_factory()
+    seed_session = session_factory()
+    try:
+        _seed_change_request(seed_session, change_request_id=11, status="pending")
+    finally:
+        seed_session.close()
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db_session] = _db_override
+
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/supplement/accept",
+            json={"change_request_id": 11, "reviewer": "reviewer-a"},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "succeeded"
+        assert payload["change_request_id"] == 11
+        assert payload["change_request_status"] == "accepted"
+        assert payload["review_action"] == "accept"
+        assert payload["reviewer"] == "reviewer-a"
+        assert payload["reason"] is None
+
+        verify_session = session_factory()
+        try:
+            change_request = verify_session.get(ChangeRequest, 11)
+            assert change_request is not None
+            assert change_request.status == "accepted"
+
+            workflow_run = verify_session.get(WorkflowRun, payload["workflow_run_id"])
+            assert workflow_run is not None
+            assert workflow_run.workflow_type == "supplement"
+            assert workflow_run.status == "succeeded"
+            assert workflow_run.failure_reason is None
+        finally:
+            verify_session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_supplement_reject_api_transitions_pending_to_rejected_without_notion_write() -> None:
+    session_factory = _build_session_factory()
+    seed_session = session_factory()
+    try:
+        _seed_change_request(seed_session, change_request_id=12, status="pending")
+        _seed_duplicate_reference_chunk(
+            seed_session,
+            chunk_text="Existing notion text",
+            notion_path="Knowledge/NLP/Week5/Existing",
+        )
+    finally:
+        seed_session.close()
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db_session] = _db_override
+
+    try:
+        client = TestClient(app)
+        before_session = session_factory()
+        try:
+            before_page_count = before_session.query(NotionPage).count()
+            before_block_count = before_session.query(NotionBlock).count()
+            before_chunk_count = before_session.query(KnowledgeChunk).count()
+        finally:
+            before_session.close()
+
+        response = client.post(
+            "/api/supplement/reject",
+            json={
+                "change_request_id": 12,
+                "reviewer": "reviewer-b",
+                "reason": "Out of scope for current note.",
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "succeeded"
+        assert payload["change_request_status"] == "rejected"
+        assert payload["review_action"] == "reject"
+        assert payload["reason"] == "Out of scope for current note."
+
+        verify_session = session_factory()
+        try:
+            change_request = verify_session.get(ChangeRequest, 12)
+            assert change_request is not None
+            assert change_request.status == "rejected"
+
+            # Step 29 reject path must not perform Notion writes.
+            assert verify_session.query(NotionPage).count() == before_page_count
+            assert verify_session.query(NotionBlock).count() == before_block_count
+            assert verify_session.query(KnowledgeChunk).count() == before_chunk_count
+        finally:
+            verify_session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_supplement_edit_later_api_keeps_pending_status() -> None:
+    session_factory = _build_session_factory()
+    seed_session = session_factory()
+    try:
+        _seed_change_request(seed_session, change_request_id=13, status="pending")
+    finally:
+        seed_session.close()
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db_session] = _db_override
+
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/supplement/edit-later",
+            json={
+                "change_request_id": 13,
+                "reviewer": "reviewer-c",
+                "reason": "Need more examples before final decision.",
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "succeeded"
+        assert payload["change_request_status"] == "pending"
+        assert payload["review_action"] == "edit_later"
+        assert payload["reason"] == "Need more examples before final decision."
+
+        verify_session = session_factory()
+        try:
+            change_request = verify_session.get(ChangeRequest, 13)
+            assert change_request is not None
+            assert change_request.status == "pending"
+        finally:
+            verify_session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_supplement_review_api_rejects_invalid_state_transition() -> None:
+    session_factory = _build_session_factory()
+    seed_session = session_factory()
+    try:
+        _seed_change_request(seed_session, change_request_id=14, status="accepted")
+    finally:
+        seed_session.close()
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db_session] = _db_override
+
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/supplement/reject",
+            json={
+                "change_request_id": 14,
+                "reason": "Should fail because already accepted.",
+            },
+        )
+        assert response.status_code == 409
+        detail = response.json()["detail"]
+        assert detail["error_code"] == "INVALID_STATE_TRANSITION"
+        assert detail["failure_reason"] == "UNKNOWN_ERROR"
+        assert detail["workflow_run_id"] is not None
+
+        verify_session = session_factory()
+        try:
+            workflow_run = verify_session.get(WorkflowRun, detail["workflow_run_id"])
+            assert workflow_run is not None
+            assert workflow_run.workflow_type == "supplement"
+            assert workflow_run.status == "failed"
+            assert workflow_run.failure_reason == "UNKNOWN_ERROR"
+        finally:
+            verify_session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_supplement_review_api_returns_change_request_not_found() -> None:
+    session_factory = _build_session_factory()
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db_session] = _db_override
+
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/supplement/accept",
+            json={"change_request_id": 99999},
+        )
+        assert response.status_code == 404
+        detail = response.json()["detail"]
+        assert detail["error_code"] == "CHANGE_REQUEST_NOT_FOUND"
+        assert detail["failure_reason"] == "CHANGE_REQUEST_NOT_FOUND"
+        assert detail["workflow_run_id"] is not None
     finally:
         app.dependency_overrides.clear()

@@ -4,11 +4,20 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from src.app.dependencies import get_provider_router
-from src.app.schemas import SupplementProposeRequest, SupplementProposeResponse
+from src.app.schemas import (
+    SupplementAcceptRequest,
+    SupplementEditLaterRequest,
+    SupplementProposeRequest,
+    SupplementProposeResponse,
+    SupplementRejectRequest,
+    SupplementReviewResponse,
+)
 from src.db.session import get_db_session
 from src.orchestrators import (
     SupplementProposeError,
     SupplementProposeOrchestrator,
+    SupplementReviewError,
+    SupplementReviewOrchestrator,
 )
 from src.providers import ProviderRouter
 from src.repositories import (
@@ -34,6 +43,16 @@ def _build_supplement_propose_orchestrator(
         duplicate_checker=DuplicateKnowledgeChecker(
             chunk_repository=ChunkRepository(db_session),
         ),
+        workflow_run_service=WorkflowRunService(WorkflowRunRepository(db_session)),
+    )
+
+
+def _build_supplement_review_orchestrator(
+    *,
+    db_session: Session,
+) -> SupplementReviewOrchestrator:
+    return SupplementReviewOrchestrator(
+        change_request_repository=ChangeRequestRepository(db_session),
         workflow_run_service=WorkflowRunService(WorkflowRunRepository(db_session)),
     )
 
@@ -82,4 +101,117 @@ async def propose_supplement_change_request(
         model=result.model,
         token_input=result.token_input,
         token_output=result.token_output,
+    )
+
+
+@router.post("/api/supplement/accept", response_model=SupplementReviewResponse)
+async def accept_supplement_change_request(
+    payload: SupplementAcceptRequest,
+    request: Request,
+    db_session: Session = Depends(get_db_session),
+) -> SupplementReviewResponse:
+    orchestrator = _build_supplement_review_orchestrator(db_session=db_session)
+    request_workflow_id = str(getattr(request.state, "workflow_id", ""))
+
+    try:
+        result = await orchestrator.accept_change_request(
+            change_request_id=payload.change_request_id,
+            reviewer=payload.reviewer,
+            request_workflow_id=request_workflow_id,
+        )
+    except SupplementReviewError as exc:
+        raise HTTPException(
+            status_code=exc.http_status_code,
+            detail={
+                "error_code": exc.error_code,
+                "message": exc.message,
+                "failure_reason": exc.failure_reason,
+                "workflow_run_id": exc.workflow_run_id,
+            },
+        ) from exc
+
+    return SupplementReviewResponse(
+        workflow_run_id=result.workflow_run_id,
+        status=result.status,
+        change_request_id=result.change_request_id,
+        change_request_status=result.change_request_status,
+        review_action=result.review_action,
+        reviewer=result.reviewer,
+        reason=result.reason,
+    )
+
+
+@router.post("/api/supplement/reject", response_model=SupplementReviewResponse)
+async def reject_supplement_change_request(
+    payload: SupplementRejectRequest,
+    request: Request,
+    db_session: Session = Depends(get_db_session),
+) -> SupplementReviewResponse:
+    orchestrator = _build_supplement_review_orchestrator(db_session=db_session)
+    request_workflow_id = str(getattr(request.state, "workflow_id", ""))
+
+    try:
+        result = await orchestrator.reject_change_request(
+            change_request_id=payload.change_request_id,
+            reviewer=payload.reviewer,
+            reason=payload.reason,
+            request_workflow_id=request_workflow_id,
+        )
+    except SupplementReviewError as exc:
+        raise HTTPException(
+            status_code=exc.http_status_code,
+            detail={
+                "error_code": exc.error_code,
+                "message": exc.message,
+                "failure_reason": exc.failure_reason,
+                "workflow_run_id": exc.workflow_run_id,
+            },
+        ) from exc
+
+    return SupplementReviewResponse(
+        workflow_run_id=result.workflow_run_id,
+        status=result.status,
+        change_request_id=result.change_request_id,
+        change_request_status=result.change_request_status,
+        review_action=result.review_action,
+        reviewer=result.reviewer,
+        reason=result.reason,
+    )
+
+
+@router.post("/api/supplement/edit-later", response_model=SupplementReviewResponse)
+async def edit_later_supplement_change_request(
+    payload: SupplementEditLaterRequest,
+    request: Request,
+    db_session: Session = Depends(get_db_session),
+) -> SupplementReviewResponse:
+    orchestrator = _build_supplement_review_orchestrator(db_session=db_session)
+    request_workflow_id = str(getattr(request.state, "workflow_id", ""))
+
+    try:
+        result = await orchestrator.mark_edit_later(
+            change_request_id=payload.change_request_id,
+            reviewer=payload.reviewer,
+            reason=payload.reason,
+            request_workflow_id=request_workflow_id,
+        )
+    except SupplementReviewError as exc:
+        raise HTTPException(
+            status_code=exc.http_status_code,
+            detail={
+                "error_code": exc.error_code,
+                "message": exc.message,
+                "failure_reason": exc.failure_reason,
+                "workflow_run_id": exc.workflow_run_id,
+            },
+        ) from exc
+
+    return SupplementReviewResponse(
+        workflow_run_id=result.workflow_run_id,
+        status=result.status,
+        change_request_id=result.change_request_id,
+        change_request_status=result.change_request_status,
+        review_action=result.review_action,
+        reviewer=result.reviewer,
+        reason=result.reason,
     )

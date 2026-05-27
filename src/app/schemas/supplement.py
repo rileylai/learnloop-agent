@@ -41,3 +41,54 @@ class SupplementProposeResponse(BaseModel):
     model: Optional[str] = None
     token_input: Optional[int] = None
     token_output: Optional[int] = None
+
+
+class SupplementAcceptRequest(BaseModel):
+    change_request_id: int = Field(
+        ge=1,
+        description="Change request id to accept.",
+    )
+    reviewer: Optional[str] = Field(
+        default=None,
+        description="Optional reviewer id or name.",
+    )
+
+
+class SupplementRejectRequest(BaseModel):
+    change_request_id: int = Field(
+        ge=1,
+        description="Change request id to reject.",
+    )
+    reviewer: Optional[str] = Field(
+        default=None,
+        description="Optional reviewer id or name.",
+    )
+    reason: str = Field(
+        min_length=1,
+        description="Reject reason recorded for audit and workflow metadata.",
+    )
+
+
+class SupplementEditLaterRequest(BaseModel):
+    change_request_id: int = Field(
+        ge=1,
+        description="Change request id to keep pending for later editing/review.",
+    )
+    reviewer: Optional[str] = Field(
+        default=None,
+        description="Optional reviewer id or name.",
+    )
+    reason: Optional[str] = Field(
+        default=None,
+        description="Optional note describing why this request is deferred.",
+    )
+
+
+class SupplementReviewResponse(BaseModel):
+    workflow_run_id: int
+    status: str
+    change_request_id: int
+    change_request_status: str
+    review_action: str
+    reviewer: Optional[str] = None
+    reason: Optional[str] = None

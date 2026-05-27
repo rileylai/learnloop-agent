@@ -463,6 +463,7 @@ Design notes:
 | POST | `/api/supplement/propose` | Create supplement change request. |
 | POST | `/api/supplement/accept` | Accept change request, append to `AI Supplement Zone`, and trigger immediate page re-index. |
 | POST | `/api/supplement/reject` | Reject change request and keep audit/eval record. |
+| POST | `/api/supplement/edit-later` | Keep change request in pending state for later review. |
 
 ### 13.4 QA API
 | Method | Endpoint | Description |

@@ -34,3 +34,24 @@ Failure path:
 State notes:
 - New proposals are saved as `pending` change requests.
 - Proposal generation does not write to Notion.
+
+## Supplement Review Workflow (Step 29)
+
+```text
+POST /api/supplement/accept|reject|edit-later
+-> Validate request payload
+-> Start workflow_run (workflow_type=supplement)
+-> Load change request
+-> Enforce legal transition from pending state
+-> Update change request status
+-> Mark workflow succeeded
+```
+
+Legal transitions:
+- `pending -> accepted`
+- `pending -> rejected`
+- `pending -> pending` (edit-later)
+
+Rules:
+- Reject stores decision reason in workflow metadata and keeps Notion unchanged.
+- Review endpoints do not call Notion write adapters in Step 29.

@@ -44,3 +44,23 @@ class ChangeRequestRepository:
         self._session.commit()
         self._session.refresh(change_request)
         return change_request
+
+    def get_change_request_by_id(self, change_request_id: int) -> Optional[ChangeRequest]:
+        return self._session.get(ChangeRequest, change_request_id)
+
+    def update_change_request_status(
+        self,
+        change_request_id: int,
+        *,
+        status: str,
+        failure_reason: Optional[str] = None,
+    ) -> Optional[ChangeRequest]:
+        change_request = self.get_change_request_by_id(change_request_id)
+        if change_request is None:
+            return None
+
+        change_request.status = status
+        change_request.failure_reason = failure_reason
+        self._session.commit()
+        self._session.refresh(change_request)
+        return change_request

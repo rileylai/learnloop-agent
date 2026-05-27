@@ -14,8 +14,12 @@ from src.app.schemas.source_ingest import (
     URLIngestionRequest,
 )
 from src.app.schemas.supplement import (
+    SupplementAcceptRequest,
+    SupplementEditLaterRequest,
     SupplementProposeRequest,
     SupplementProposeResponse,
+    SupplementRejectRequest,
+    SupplementReviewResponse,
 )
 
 __all__ = [
@@ -30,8 +34,12 @@ __all__ = [
     "ChatTextIngestionRequest",
     "SourceDocumentCreateRequest",
     "SourceDocumentCreateResponse",
+    "SupplementAcceptRequest",
+    "SupplementEditLaterRequest",
     "SupplementProposeRequest",
     "SupplementProposeResponse",
+    "SupplementRejectRequest",
+    "SupplementReviewResponse",
     "YouTubeIngestionRequest",
     "URLIngestionRequest",
 ]
