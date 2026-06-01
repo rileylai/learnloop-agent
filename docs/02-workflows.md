@@ -55,3 +55,20 @@ Legal transitions:
 Rules:
 - Reject stores decision reason in workflow metadata and keeps Notion unchanged.
 - Review endpoints do not call Notion write adapters in Step 29.
+
+## Safe Append Tooling Workflow (Step 30)
+
+```text
+NotionWriterTool (local tool adapter)
+-> Validate append arguments (page_id/change_request_id/topic/source/summary/concepts/notes)
+-> Build append target under AI Supplement Zone
+-> Apply idempotency key per page/change request
+-> Append fixed supplement lines only
+-> Return append metadata (target path, block count, idempotent replay flag)
+```
+
+Rules:
+- The tool exposes append-only behavior; there is no update or delete operation.
+- The append target must stay under `AI Supplement Zone`.
+- Existing page content stays unchanged; only new supplement entries are appended.
+- Idempotency prevents duplicate append entries on retry with the same idempotency key.

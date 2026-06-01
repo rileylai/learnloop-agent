@@ -541,6 +541,11 @@ Notes:
 - Review endpoints enforce legal transitions for pending change requests.
 - Reject path performs no Notion write operations in Step 29.
 
+Step 30 note:
+- Step 30 introduces `NotionWriterTool` as a local append-only tool adapter.
+- API contracts in this document are unchanged in Step 30.
+- Wiring accepted review -> append -> immediate page re-index is handled in Step 31.
+
 ## QA API
 
 ### POST `/api/qa`

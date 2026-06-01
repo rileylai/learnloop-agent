@@ -7,7 +7,9 @@ from src.providers import OpenAIClient, ProviderRouter
 from src.tools import (
     ImageOCRTool,
     InMemoryNotionReaderClient,
+    InMemoryNotionWriterClient,
     NotionReaderTool,
+    NotionWriterTool,
     PDFParserTool,
     PyPDFParserClient,
     TesseractImageOCRParserClient,
@@ -23,6 +25,7 @@ from src.tools import (
 def get_tool_registry() -> ToolRegistry:
     registry = ToolRegistry()
     registry.register_tool(NotionReaderTool(InMemoryNotionReaderClient(pages={})))
+    registry.register_tool(NotionWriterTool(InMemoryNotionWriterClient(pages={})))
     registry.register_tool(PDFParserTool(PyPDFParserClient()))
     registry.register_tool(URLArticleParserTool(TrafilaturaURLArticleParserClient()))
     registry.register_tool(YouTubeTranscriptTool(YouTubeTranscriptAPIClient()))
