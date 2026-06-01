@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+from typing import Dict
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from src.app.dependencies import get_provider_router
+from src.app.dependencies import get_provider_router, get_tool_registry
 from src.app.main import app
 from src.db.base import Base
 from src.db.models import (
@@ -20,6 +21,16 @@ from src.db.models import (
 )
 from src.db.session import get_db_session
 from src.providers import LLMProvider, LLMRequest, LLMResponse, ProviderRouter
+from src.tools import (
+    InMemoryNotionPageSnapshot,
+    InMemoryNotionWriterClient,
+    NotionBlockNode,
+    NotionPageTree,
+    NotionReaderClient,
+    NotionReaderTool,
+    NotionWriterTool,
+    ToolRegistry,
+)
 
 
 class _FakeProposalProvider(LLMProvider):
@@ -39,6 +50,65 @@ class _FakeProposalProvider(LLMProvider):
             token_input=120,
             token_output=90,
         )
+
+
+class _SnapshotBackedNotionReaderClient(NotionReaderClient):
+    def __init__(self, pages: Dict[str, InMemoryNotionPageSnapshot]) -> None:
+        self._pages = pages
+
+    def fetch_page_tree(self, page_id: str) -> NotionPageTree | None:
+        snapshot = self._pages.get(page_id)
+        if snapshot is None:
+            return None
+
+        blocks = [
+            NotionBlockNode(
+                block_id=f"{snapshot.page_id}-orig-{index}",
+                block_type="paragraph",
+                content_text=text,
+                block_path=f"{snapshot.notion_path}/Original/{index}",
+            )
+            for index, text in enumerate(snapshot.original_blocks, start=1)
+        ]
+        for entry in snapshot.ai_supplement_entries:
+            blocks.append(
+                NotionBlockNode(
+                    block_id=f"{snapshot.page_id}-ai-{entry.change_request_id}-title",
+                    block_type="heading_3",
+                    content_text=entry.topic_title,
+                    block_path=entry.target_path,
+                )
+            )
+            blocks.extend(
+                NotionBlockNode(
+                    block_id=(
+                        f"{snapshot.page_id}-ai-{entry.change_request_id}"
+                        f"-line-{line_index}"
+                    ),
+                    block_type="paragraph",
+                    content_text=line,
+                    block_path=f"{entry.target_path}/line-{line_index}",
+                )
+                for line_index, line in enumerate(entry.section_lines, start=1)
+            )
+
+        return NotionPageTree(
+            page_id=snapshot.page_id,
+            title=snapshot.title,
+            notion_path=snapshot.notion_path,
+            blocks=blocks,
+        )
+
+
+def _build_review_tool_registry(
+    snapshot_pages: Dict[str, InMemoryNotionPageSnapshot],
+) -> ToolRegistry:
+    registry = ToolRegistry()
+    registry.register_tool(
+        NotionReaderTool(_SnapshotBackedNotionReaderClient(snapshot_pages))
+    )
+    registry.register_tool(NotionWriterTool(InMemoryNotionWriterClient(snapshot_pages)))
+    return registry
 
 
 def _build_session_factory():
@@ -119,18 +189,38 @@ def _seed_duplicate_reference_chunk(session: Session, *, chunk_text: str, notion
     session.commit()
 
 
+def _seed_notion_page(
+    session: Session,
+    *,
+    page_db_id: int,
+    notion_page_id: str,
+    title: str,
+    notion_path: str,
+) -> None:
+    session.add(
+        NotionPage(
+            id=page_db_id,
+            notion_page_id=notion_page_id,
+            title=title,
+            notion_path=notion_path,
+        )
+    )
+    session.commit()
+
+
 def _seed_change_request(
     session: Session,
     *,
     change_request_id: int,
     status: str = "pending",
+    target_notion_page_id: int | None = None,
     proposal_json: str = '{"title":"Draft proposal"}',
 ) -> None:
     session.add(
         ChangeRequest(
             id=change_request_id,
             source_document_id=None,
-            target_notion_page_id=None,
+            target_notion_page_id=target_notion_page_id,
             status=status,
             proposal_json=proposal_json,
             failure_reason=None,
@@ -362,11 +452,46 @@ def test_supplement_propose_api_returns_llm_output_invalid() -> None:
         app.dependency_overrides.clear()
 
 
-def test_supplement_accept_api_transitions_pending_to_accepted() -> None:
+def test_supplement_accept_api_appends_and_reindexes_before_accepting() -> None:
     session_factory = _build_session_factory()
     seed_session = session_factory()
+    snapshot_pages = {
+        "page-accept-1": InMemoryNotionPageSnapshot(
+            page_id="page-accept-1",
+            title="NLP Week 5",
+            notion_path="Knowledge/NLP/Week5",
+            original_blocks=[
+                "Attention aligns query and key vectors.",
+            ],
+        )
+    }
     try:
-        _seed_change_request(seed_session, change_request_id=11, status="pending")
+        _seed_notion_page(
+            seed_session,
+            page_db_id=101,
+            notion_page_id="page-accept-1",
+            title="NLP Week 5",
+            notion_path="Knowledge/NLP/Week5",
+        )
+        _seed_change_request(
+            seed_session,
+            change_request_id=11,
+            status="pending",
+            target_notion_page_id=101,
+            proposal_json=json.dumps(
+                {
+                    "title": "Positional Encoding Supplement",
+                    "target_path": "Knowledge/NLP/Week5/AI Supplement Zone/Positional Encoding Supplement",
+                    "source": {
+                        "source_type": "pdf",
+                        "source_display_name": "week5-attention.pdf",
+                    },
+                    "summary": "Adds concise positional encoding notes for Week 5.",
+                    "concepts": ["positional encoding", "length generalization"],
+                    "notes": ["Compare sinusoidal and learned embeddings."],
+                }
+            ),
+        )
     finally:
         seed_session.close()
 
@@ -377,7 +502,11 @@ def test_supplement_accept_api_transitions_pending_to_accepted() -> None:
         finally:
             session.close()
 
+    def _tool_registry_override() -> ToolRegistry:
+        return _build_review_tool_registry(snapshot_pages)
+
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
         client = TestClient(app)
@@ -406,6 +535,117 @@ def test_supplement_accept_api_transitions_pending_to_accepted() -> None:
             assert workflow_run.workflow_type == "supplement"
             assert workflow_run.status == "succeeded"
             assert workflow_run.failure_reason is None
+
+            indexing_runs = (
+                verify_session.query(WorkflowRun)
+                .filter(WorkflowRun.workflow_type == "indexing")
+                .all()
+            )
+            assert len(indexing_runs) == 1
+            assert indexing_runs[0].status == "succeeded"
+            assert indexing_runs[0].failure_reason is None
+            indexing_metadata = json.loads(indexing_runs[0].metadata_json or "{}")
+            assert indexing_metadata["sync_mode"] == "auto_after_accept"
+
+            page = (
+                verify_session.query(NotionPage)
+                .filter(NotionPage.notion_page_id == "page-accept-1")
+                .one_or_none()
+            )
+            assert page is not None
+            blocks = (
+                verify_session.query(NotionBlock)
+                .filter(NotionBlock.notion_page_id == page.id)
+                .all()
+            )
+            assert len(blocks) >= 5
+            assert any(
+                "Summary: Adds concise positional encoding notes for Week 5."
+                in (block.content_text or "")
+                for block in blocks
+            )
+
+            chunks = (
+                verify_session.query(KnowledgeChunk)
+                .filter(KnowledgeChunk.source_kind == "notion")
+                .all()
+            )
+            assert len(chunks) >= 1
+            assert any(
+                "Summary: Adds concise positional encoding notes for Week 5."
+                in chunk.chunk_text
+                for chunk in chunks
+            )
+        finally:
+            verify_session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_supplement_accept_api_requires_target_page_for_safe_append() -> None:
+    session_factory = _build_session_factory()
+    seed_session = session_factory()
+    try:
+        _seed_change_request(
+            seed_session,
+            change_request_id=111,
+            status="pending",
+            target_notion_page_id=None,
+            proposal_json=json.dumps(
+                {
+                    "title": "Missing Target Page",
+                    "target_path": "Knowledge/NLP/Week5/AI Supplement Zone/Missing Target Page",
+                    "source": {
+                        "source_type": "chat_text",
+                        "source_display_name": "chat-source",
+                    },
+                    "summary": "Should fail before write because target page is missing.",
+                    "concepts": ["safety check"],
+                    "notes": ["target_notion_page_id is required for accept append."],
+                }
+            ),
+        )
+    finally:
+        seed_session.close()
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _tool_registry_override() -> ToolRegistry:
+        return _build_review_tool_registry({})
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_tool_registry] = _tool_registry_override
+
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/supplement/accept",
+            json={"change_request_id": 111, "reviewer": "reviewer-a"},
+        )
+
+        assert response.status_code == 409
+        detail = response.json()["detail"]
+        assert detail["error_code"] == "WRITE_POLICY_VIOLATION"
+        assert detail["failure_reason"] == "WRITE_POLICY_VIOLATION"
+        assert detail["workflow_run_id"] is not None
+
+        verify_session = session_factory()
+        try:
+            change_request = verify_session.get(ChangeRequest, 111)
+            assert change_request is not None
+            assert change_request.status == "pending"
+
+            indexing_runs = (
+                verify_session.query(WorkflowRun)
+                .filter(WorkflowRun.workflow_type == "indexing")
+                .all()
+            )
+            assert len(indexing_runs) == 0
         finally:
             verify_session.close()
     finally:
@@ -432,7 +672,11 @@ def test_supplement_reject_api_transitions_pending_to_rejected_without_notion_wr
         finally:
             session.close()
 
+    def _tool_registry_override() -> ToolRegistry:
+        return _build_review_tool_registry({})
+
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
         client = TestClient(app)
@@ -490,7 +734,11 @@ def test_supplement_edit_later_api_keeps_pending_status() -> None:
         finally:
             session.close()
 
+    def _tool_registry_override() -> ToolRegistry:
+        return _build_review_tool_registry({})
+
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
         client = TestClient(app)
@@ -535,7 +783,11 @@ def test_supplement_review_api_rejects_invalid_state_transition() -> None:
         finally:
             session.close()
 
+    def _tool_registry_override() -> ToolRegistry:
+        return _build_review_tool_registry({})
+
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
         client = TestClient(app)
@@ -575,7 +827,11 @@ def test_supplement_review_api_returns_change_request_not_found() -> None:
         finally:
             session.close()
 
+    def _tool_registry_override() -> ToolRegistry:
+        return _build_review_tool_registry({})
+
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
         client = TestClient(app)

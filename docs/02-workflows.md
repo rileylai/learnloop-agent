@@ -72,3 +72,27 @@ Rules:
 - The append target must stay under `AI Supplement Zone`.
 - Existing page content stays unchanged; only new supplement entries are appended.
 - Idempotency prevents duplicate append entries on retry with the same idempotency key.
+
+## Accept + Append + Re-index Workflow (Step 31)
+
+```text
+POST /api/supplement/accept
+-> Validate request payload
+-> Start workflow_run (workflow_type=supplement)
+-> Load change request
+-> Enforce legal transition from pending state
+-> Validate accepted write preconditions (target page + proposal payload)
+-> Append to AI Supplement Zone through NotionWriterTool
+-> Trigger immediate page re-index (sync_mode=auto_after_accept)
+-> Update change request status to accepted
+-> Mark workflow succeeded
+```
+
+Failure path:
+- If target page is missing, fail closed with `WRITE_POLICY_VIOLATION`.
+- If append fails or re-index fails, mark workflow failed and keep change request `pending` for safe retry.
+
+Rules:
+- Accept path must follow `Change Request -> Human Accept -> Append to AI Supplement Zone`.
+- Accepted status is committed only after append and re-index both succeed.
+- Reject and edit-later paths keep Step 29 behavior and do not call Notion write adapters.

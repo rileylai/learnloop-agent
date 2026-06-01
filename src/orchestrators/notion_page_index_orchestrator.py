@@ -27,6 +27,9 @@ from src.services import STANDARD_FAILURE_REASONS, WorkflowRunService
 from src.tools import ToolContext, ToolRegistry
 
 NOTION_READER_TOOL_NAME = "notion_reader"
+SYNC_MODE_MANUAL = "manual"
+SYNC_MODE_AUTO_AFTER_ACCEPT = "auto_after_accept"
+ALLOWED_SYNC_MODES = {SYNC_MODE_MANUAL, SYNC_MODE_AUTO_AFTER_ACCEPT}
 
 TOOL_ERROR_TO_HTTP_STATUS: Dict[str, int] = {
     "INVALID_ARGUMENT": HTTPStatus.BAD_REQUEST,
@@ -107,6 +110,7 @@ class NotionPageIndexOrchestrator:
         *,
         page_id: str,
         request_workflow_id: str,
+        sync_mode: str = SYNC_MODE_MANUAL,
     ) -> NotionPageIndexResult:
         normalized_page_id = page_id.strip()
         if not normalized_page_id:
@@ -116,12 +120,23 @@ class NotionPageIndexOrchestrator:
                 http_status_code=HTTPStatus.BAD_REQUEST,
                 failure_reason="UNKNOWN_ERROR",
             )
+        normalized_sync_mode = sync_mode.strip().lower()
+        if normalized_sync_mode not in ALLOWED_SYNC_MODES:
+            raise NotionPageIndexError(
+                error_code="INVALID_ARGUMENT",
+                message=(
+                    "sync_mode must be one of: "
+                    f"{', '.join(sorted(ALLOWED_SYNC_MODES))}"
+                ),
+                http_status_code=HTTPStatus.BAD_REQUEST,
+                failure_reason="UNKNOWN_ERROR",
+            )
 
         workflow_run = self._workflow_run_service.start_workflow(
             workflow_type="indexing",
             metadata_json=json.dumps(
                 {
-                    "sync_mode": "manual",
+                    "sync_mode": normalized_sync_mode,
                     "operation": "index_page",
                     "page_id": normalized_page_id,
                     "request_workflow_id": request_workflow_id,
@@ -140,6 +155,7 @@ class NotionPageIndexOrchestrator:
                 metadata_json=json.dumps(
                     {
                         "operation": "index_page",
+                        "sync_mode": normalized_sync_mode,
                         "page_id": normalized_page_id,
                         "indexed_block_count": snapshot.indexed_block_count,
                         "indexed_chunk_count": snapshot.indexed_chunk_count,
@@ -154,6 +170,7 @@ class NotionPageIndexOrchestrator:
                 metadata_json=json.dumps(
                     {
                         "operation": "index_page",
+                        "sync_mode": normalized_sync_mode,
                         "page_id": normalized_page_id,
                         "error_code": exc.error_code,
                     },

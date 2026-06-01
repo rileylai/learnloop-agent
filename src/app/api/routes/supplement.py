@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
-from src.app.dependencies import get_provider_router
+from src.app.dependencies import get_provider_router, get_tool_registry
 from src.app.schemas import (
     SupplementAcceptRequest,
     SupplementEditLaterRequest,
@@ -14,6 +14,7 @@ from src.app.schemas import (
 )
 from src.db.session import get_db_session
 from src.orchestrators import (
+    NotionPageIndexOrchestrator,
     SupplementProposeError,
     SupplementProposeOrchestrator,
     SupplementReviewError,
@@ -23,10 +24,13 @@ from src.providers import ProviderRouter
 from src.repositories import (
     ChangeRequestRepository,
     ChunkRepository,
+    NotionBlockRepository,
+    NotionPageRepository,
     SourceDocumentRepository,
     WorkflowRunRepository,
 )
 from src.services import DuplicateKnowledgeChecker, WorkflowRunService
+from src.tools import ToolRegistry
 
 router = APIRouter()
 
@@ -50,9 +54,20 @@ def _build_supplement_propose_orchestrator(
 def _build_supplement_review_orchestrator(
     *,
     db_session: Session,
+    tool_registry: ToolRegistry,
 ) -> SupplementReviewOrchestrator:
+    page_index_orchestrator = NotionPageIndexOrchestrator(
+        tool_registry=tool_registry,
+        notion_page_repository=NotionPageRepository(db_session),
+        notion_block_repository=NotionBlockRepository(db_session),
+        workflow_run_service=WorkflowRunService(WorkflowRunRepository(db_session)),
+        chunk_repository=ChunkRepository(db_session),
+    )
     return SupplementReviewOrchestrator(
         change_request_repository=ChangeRequestRepository(db_session),
+        notion_page_repository=NotionPageRepository(db_session),
+        tool_registry=tool_registry,
+        page_index_orchestrator=page_index_orchestrator,
         workflow_run_service=WorkflowRunService(WorkflowRunRepository(db_session)),
     )
 
@@ -109,8 +124,12 @@ async def accept_supplement_change_request(
     payload: SupplementAcceptRequest,
     request: Request,
     db_session: Session = Depends(get_db_session),
+    tool_registry: ToolRegistry = Depends(get_tool_registry),
 ) -> SupplementReviewResponse:
-    orchestrator = _build_supplement_review_orchestrator(db_session=db_session)
+    orchestrator = _build_supplement_review_orchestrator(
+        db_session=db_session,
+        tool_registry=tool_registry,
+    )
     request_workflow_id = str(getattr(request.state, "workflow_id", ""))
 
     try:
@@ -146,8 +165,12 @@ async def reject_supplement_change_request(
     payload: SupplementRejectRequest,
     request: Request,
     db_session: Session = Depends(get_db_session),
+    tool_registry: ToolRegistry = Depends(get_tool_registry),
 ) -> SupplementReviewResponse:
-    orchestrator = _build_supplement_review_orchestrator(db_session=db_session)
+    orchestrator = _build_supplement_review_orchestrator(
+        db_session=db_session,
+        tool_registry=tool_registry,
+    )
     request_workflow_id = str(getattr(request.state, "workflow_id", ""))
 
     try:
@@ -184,8 +207,12 @@ async def edit_later_supplement_change_request(
     payload: SupplementEditLaterRequest,
     request: Request,
     db_session: Session = Depends(get_db_session),
+    tool_registry: ToolRegistry = Depends(get_tool_registry),
 ) -> SupplementReviewResponse:
-    orchestrator = _build_supplement_review_orchestrator(db_session=db_session)
+    orchestrator = _build_supplement_review_orchestrator(
+        db_session=db_session,
+        tool_registry=tool_registry,
+    )
     request_workflow_id = str(getattr(request.state, "workflow_id", ""))
 
     try:

@@ -24,6 +24,9 @@ class NotionPageRepository:
             .one_or_none()
         )
 
+    def get_by_id(self, page_db_id: int) -> Optional[NotionPage]:
+        return self._session.get(NotionPage, page_db_id)
+
     def upsert_page_snapshot(
         self,
         *,

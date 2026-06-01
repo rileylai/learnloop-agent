@@ -456,6 +456,19 @@ Success response `200`:
 }
 ```
 
+Failure response example `409` (write policy violation):
+
+```json
+{
+  "detail": {
+    "error_code": "WRITE_POLICY_VIOLATION",
+    "message": "Accepted change request must include target_notion_page_id before Notion append",
+    "failure_reason": "WRITE_POLICY_VIOLATION",
+    "workflow_run_id": 516
+  }
+}
+```
+
 Failure response example `409` (invalid state transition):
 
 ```json
@@ -539,12 +552,16 @@ Failure response example `404` (change request not found):
 Notes:
 - Routes must call orchestrator only.
 - Review endpoints enforce legal transitions for pending change requests.
-- Reject path performs no Notion write operations in Step 29.
+- Accept path performs Step 31 follow-up workflow:
+  - append accepted content to `AI Supplement Zone` through `NotionWriterTool`
+  - trigger immediate page re-index with `sync_mode=auto_after_accept`
+  - update change request status to `accepted` only after append + re-index succeed
+- If append/re-index fails, accept workflow fails closed and change request stays `pending` for safe retry.
+- Reject path performs no Notion write operations.
 
-Step 30 note:
+Step 30-31 notes:
 - Step 30 introduces `NotionWriterTool` as a local append-only tool adapter.
-- API contracts in this document are unchanged in Step 30.
-- Wiring accepted review -> append -> immediate page re-index is handled in Step 31.
+- Step 31 wires accepted review -> append -> immediate page re-index.
 
 ## QA API
 

@@ -3,10 +3,20 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from http import HTTPStatus
-from typing import Optional
+from typing import Any, Dict, Optional
 
-from src.repositories import ChangeRequestRepository
+from src.orchestrators.notion_page_index_orchestrator import (
+    SYNC_MODE_AUTO_AFTER_ACCEPT,
+    NotionPageIndexError,
+    NotionPageIndexOrchestrator,
+)
+from src.orchestrators.supplement_proposal_schema import (
+    SupplementProposalValidationError,
+    parse_supplement_proposal_json,
+)
+from src.repositories import ChangeRequestRepository, NotionPageRepository
 from src.services import STANDARD_FAILURE_REASONS, WorkflowRunService
+from src.tools import ToolContext, ToolRegistry
 
 CHANGE_REQUEST_STATUS_PENDING = "pending"
 CHANGE_REQUEST_STATUS_ACCEPTED = "accepted"
@@ -14,6 +24,7 @@ CHANGE_REQUEST_STATUS_REJECTED = "rejected"
 REVIEW_ACTION_ACCEPT = "accept"
 REVIEW_ACTION_REJECT = "reject"
 REVIEW_ACTION_EDIT_LATER = "edit_later"
+NOTION_WRITER_TOOL_NAME = "notion_writer"
 
 
 @dataclass
@@ -50,9 +61,15 @@ class SupplementReviewOrchestrator:
         self,
         *,
         change_request_repository: ChangeRequestRepository,
+        notion_page_repository: NotionPageRepository,
+        tool_registry: ToolRegistry,
+        page_index_orchestrator: NotionPageIndexOrchestrator,
         workflow_run_service: WorkflowRunService,
     ) -> None:
         self._change_request_repository = change_request_repository
+        self._notion_page_repository = notion_page_repository
+        self._tool_registry = tool_registry
+        self._page_index_orchestrator = page_index_orchestrator
         self._workflow_run_service = workflow_run_service
 
     async def accept_change_request(
@@ -62,7 +79,7 @@ class SupplementReviewOrchestrator:
         reviewer: Optional[str],
         request_workflow_id: str,
     ) -> SupplementReviewResult:
-        return self._execute_review_action(
+        return await self._execute_review_action(
             change_request_id=change_request_id,
             review_action=REVIEW_ACTION_ACCEPT,
             reviewer=reviewer,
@@ -85,7 +102,7 @@ class SupplementReviewOrchestrator:
                 message="reason must not be empty",
                 http_status_code=HTTPStatus.BAD_REQUEST,
             )
-        return self._execute_review_action(
+        return await self._execute_review_action(
             change_request_id=change_request_id,
             review_action=REVIEW_ACTION_REJECT,
             reviewer=reviewer,
@@ -107,7 +124,7 @@ class SupplementReviewOrchestrator:
             if candidate:
                 normalized_reason = candidate
 
-        return self._execute_review_action(
+        return await self._execute_review_action(
             change_request_id=change_request_id,
             review_action=REVIEW_ACTION_EDIT_LATER,
             reviewer=reviewer,
@@ -115,7 +132,7 @@ class SupplementReviewOrchestrator:
             request_workflow_id=request_workflow_id,
         )
 
-    def _execute_review_action(
+    async def _execute_review_action(
         self,
         *,
         change_request_id: int,
@@ -172,6 +189,14 @@ class SupplementReviewOrchestrator:
                 review_action=review_action,
                 current_status=current_status,
             )
+            follow_up_metadata: Dict[str, Any] = {}
+            if review_action == REVIEW_ACTION_ACCEPT:
+                follow_up_metadata = await self._append_and_reindex_after_accept(
+                    change_request_id=change_request.id,
+                    change_request_proposal_json=change_request.proposal_json,
+                    target_notion_page_db_id=change_request.target_notion_page_id,
+                    request_workflow_id=request_workflow_id,
+                )
 
             if next_status != current_status:
                 updated = self._change_request_repository.update_change_request_status(
@@ -201,6 +226,7 @@ class SupplementReviewOrchestrator:
                         "change_request_status": change_request.status,
                         "reviewer": normalized_reviewer,
                         "reason": reason,
+                        "follow_up": follow_up_metadata or None,
                     },
                     sort_keys=True,
                 ),
@@ -243,6 +269,150 @@ class SupplementReviewOrchestrator:
                 failure_reason="UNKNOWN_ERROR",
                 workflow_run_id=workflow_run.id,
             ) from exc
+
+    async def _append_and_reindex_after_accept(
+        self,
+        *,
+        change_request_id: int,
+        change_request_proposal_json: str,
+        target_notion_page_db_id: Optional[int],
+        request_workflow_id: str,
+    ) -> Dict[str, Any]:
+        if target_notion_page_db_id is None:
+            raise SupplementReviewError(
+                error_code="WRITE_POLICY_VIOLATION",
+                message=(
+                    "Accepted change request must include target_notion_page_id before "
+                    "Notion append"
+                ),
+                http_status_code=HTTPStatus.CONFLICT,
+                failure_reason="WRITE_POLICY_VIOLATION",
+            )
+
+        notion_page = self._notion_page_repository.get_by_id(target_notion_page_db_id)
+        if notion_page is None:
+            raise SupplementReviewError(
+                error_code="NOTION_PAGE_NOT_FOUND",
+                message=(
+                    "Target Notion page is not found: "
+                    f"target_notion_page_id={target_notion_page_db_id}"
+                ),
+                http_status_code=HTTPStatus.NOT_FOUND,
+                failure_reason="NOTION_PAGE_NOT_FOUND",
+            )
+
+        try:
+            proposal = parse_supplement_proposal_json(change_request_proposal_json)
+        except SupplementProposalValidationError as exc:
+            raise SupplementReviewError(
+                error_code="INVALID_PROPOSAL_PAYLOAD",
+                message=f"Stored proposal_json is invalid: {exc.message}",
+                http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                failure_reason="UNKNOWN_ERROR",
+            ) from exc
+
+        append_result = await self._append_to_ai_supplement_zone(
+            page_id=notion_page.notion_page_id,
+            change_request_id=change_request_id,
+            request_workflow_id=request_workflow_id,
+            topic_title=proposal.title,
+            source_display_name=proposal.source.source_display_name,
+            summary=proposal.summary,
+            concepts=proposal.concepts,
+            notes=proposal.notes,
+        )
+
+        try:
+            reindex_result = await self._page_index_orchestrator.index_page(
+                page_id=notion_page.notion_page_id,
+                request_workflow_id=request_workflow_id,
+                sync_mode=SYNC_MODE_AUTO_AFTER_ACCEPT,
+            )
+        except NotionPageIndexError as exc:
+            raise SupplementReviewError(
+                error_code="PAGE_REINDEX_FAILED",
+                message=f"Failed to re-index appended page: {exc.message}",
+                http_status_code=exc.http_status_code,
+                failure_reason=self._normalize_failure_reason(exc.failure_reason),
+            ) from exc
+
+        return {
+            "append_result": append_result,
+            "reindex_result": {
+                "workflow_run_id": reindex_result.workflow_run_id,
+                "status": reindex_result.status,
+                "page_id": reindex_result.notion_page_id,
+                "indexed_block_count": reindex_result.indexed_block_count,
+            },
+        }
+
+    async def _append_to_ai_supplement_zone(
+        self,
+        *,
+        page_id: str,
+        change_request_id: int,
+        request_workflow_id: str,
+        topic_title: str,
+        source_display_name: str,
+        summary: str,
+        concepts: list[str],
+        notes: list[str],
+    ) -> Dict[str, Any]:
+        tool_result = await self._tool_registry.call_tool(
+            NOTION_WRITER_TOOL_NAME,
+            context=ToolContext(
+                workflow_id=request_workflow_id,
+                metadata={
+                    "operation": "accept_append",
+                    "change_request_id": change_request_id,
+                    "page_id": page_id,
+                },
+            ),
+            arguments={
+                "page_id": page_id,
+                "change_request_id": change_request_id,
+                "topic_title": topic_title,
+                "source_display_name": source_display_name,
+                "summary": summary,
+                "concepts": concepts,
+                "notes": notes,
+                "idempotency_key": f"change-request-{change_request_id}",
+            },
+        )
+        if tool_result.is_error:
+            error_code = "UNKNOWN_ERROR"
+            error_message = "Notion writer failed"
+            if tool_result.error is not None:
+                error_code = tool_result.error.code
+                error_message = tool_result.error.message
+            raise SupplementReviewError(
+                error_code=error_code,
+                message=error_message,
+                http_status_code=self._http_status_for_tool_error(error_code),
+                failure_reason=self._normalize_failure_reason(error_code),
+            )
+        structured_content = tool_result.structured_content or {}
+        return {
+            "page_id": structured_content.get("page_id", page_id),
+            "change_request_id": structured_content.get(
+                "change_request_id", change_request_id
+            ),
+            "target_path": structured_content.get("target_path"),
+            "appended_block_count": structured_content.get("appended_block_count"),
+            "created_date_group": structured_content.get("created_date_group"),
+            "idempotent_replay": structured_content.get("idempotent_replay"),
+            "section_lines": structured_content.get("section_lines"),
+        }
+
+    def _http_status_for_tool_error(self, error_code: str) -> int:
+        normalized_error_code = error_code.strip().upper()
+        if normalized_error_code == "INVALID_ARGUMENT":
+            return HTTPStatus.BAD_REQUEST
+        if normalized_error_code == "NOTION_PAGE_NOT_FOUND":
+            return HTTPStatus.NOT_FOUND
+        if normalized_error_code == "WRITE_POLICY_VIOLATION":
+            return HTTPStatus.CONFLICT
+        return HTTPStatus.INTERNAL_SERVER_ERROR
 
     def _resolve_next_status(self, *, review_action: str, current_status: str) -> str:
         if current_status != CHANGE_REQUEST_STATUS_PENDING:
