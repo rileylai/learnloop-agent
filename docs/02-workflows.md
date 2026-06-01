@@ -96,3 +96,24 @@ Rules:
 - Accept path must follow `Change Request -> Human Accept -> Append to AI Supplement Zone`.
 - Accepted status is committed only after append and re-index both succeed.
 - Reject and edit-later paths keep Step 29 behavior and do not call Notion write adapters.
+
+## Telegram Entrypoint Workflow (Step 32)
+
+```text
+POST /api/telegram/webhook
+-> Validate webhook payload
+-> Start workflow_run (workflow_type=telegram)
+-> Parse command from message text
+-> Build deterministic reply text for /help or /health
+-> Send reply through ToolRegistry -> TelegramBotTool
+-> Mark workflow succeeded
+```
+
+Failure path:
+- If Telegram bot token is not configured, fail with `TELEGRAM_NOT_CONFIGURED`.
+- If Telegram API send fails, fail with `TELEGRAM_SEND_FAILED`.
+
+Rules:
+- API route calls orchestrator only.
+- Route and orchestrator do not call Telegram API SDK/client directly.
+- Bot gateway keeps no ingestion/QA/review business logic in Step 32.

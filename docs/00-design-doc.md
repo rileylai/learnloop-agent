@@ -476,6 +476,11 @@ Design notes:
 | GET | `/health` | Health check endpoint. |
 | GET | `/metrics` | Metrics endpoint. |
 
+### 13.6 Telegram APIs
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/api/telegram/webhook` | Handle Telegram webhook update and send command reply. |
+
 Production-RAG invariant:
 - `pending` and `rejected` change requests are never used in production RAG.
 

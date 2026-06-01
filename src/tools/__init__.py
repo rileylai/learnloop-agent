@@ -42,6 +42,17 @@ from src.tools.registry import (
     ToolRegistry,
     ToolRegistryError,
 )
+from src.tools.telegram_bot_tool import (
+    DisabledTelegramBotClient,
+    InMemoryTelegramBotClient,
+    TelegramBotClient,
+    TelegramBotClientError,
+    TelegramBotNotConfiguredError,
+    TelegramBotSendError,
+    TelegramBotTool,
+    TelegramHTTPBotClient,
+    TelegramSentMessage,
+)
 from src.tools.url_article_parser_tool import (
     ParsedURLArticle,
     TrafilaturaURLArticleParserClient,
@@ -96,6 +107,15 @@ __all__ = [
     "YouTubeTranscriptParserClient",
     "YouTubeTranscriptParserClientError",
     "YouTubeTranscriptTool",
+    "DisabledTelegramBotClient",
+    "InMemoryTelegramBotClient",
+    "TelegramBotClient",
+    "TelegramBotClientError",
+    "TelegramBotNotConfiguredError",
+    "TelegramBotSendError",
+    "TelegramBotTool",
+    "TelegramHTTPBotClient",
+    "TelegramSentMessage",
     "ToolAlreadyRegisteredError",
     "ToolContext",
     "ToolError",

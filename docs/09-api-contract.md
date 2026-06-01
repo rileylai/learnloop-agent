@@ -639,3 +639,70 @@ Notes:
 - Route must call orchestrator only.
 - Orchestrator retrieves production chunks and calls `ProviderRouter`.
 - `pending` and `rejected` content remains excluded by production retrieval policy.
+
+## Telegram Gateway API
+
+### POST `/api/telegram/webhook`
+Handle one Telegram webhook update and reply to `/help` or `/health`.
+
+Request:
+
+```json
+{
+  "update_id": 1001,
+  "message": {
+    "message_id": 11,
+    "chat": {
+      "id": 555
+    },
+    "text": "/help"
+  }
+}
+```
+
+Success response `200`:
+
+```json
+{
+  "workflow_run_id": 601,
+  "status": "succeeded",
+  "handled": true,
+  "command": "help",
+  "reply_text": "Available commands: /help, /health",
+  "telegram_message_id": 1,
+  "skipped_reason": null
+}
+```
+
+Skipped response `200` (no text message):
+
+```json
+{
+  "workflow_run_id": 602,
+  "status": "succeeded",
+  "handled": false,
+  "command": null,
+  "reply_text": null,
+  "telegram_message_id": null,
+  "skipped_reason": "NO_TEXT_MESSAGE"
+}
+```
+
+Failure response example `503` (Telegram bot token not configured):
+
+```json
+{
+  "detail": {
+    "error_code": "TELEGRAM_NOT_CONFIGURED",
+    "message": "Telegram bot token is not configured. Set TELEGRAM_BOT_TOKEN.",
+    "failure_reason": "UNKNOWN_ERROR",
+    "workflow_run_id": 603
+  }
+}
+```
+
+Notes:
+- Route must call orchestrator only.
+- Orchestrator sends reply through `ToolRegistry` -> `TelegramBotTool`.
+- Route and orchestrator do not call Telegram API directly.
+- Step 32 keeps bot gateway scope minimal: command routing and reply only.

@@ -23,6 +23,7 @@ class Settings(BaseModel):
     redis_url: Optional[str] = None
     notion_token: Optional[str] = None
     openai_api_key: Optional[str] = None
+    telegram_bot_token: Optional[str] = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -33,6 +34,7 @@ class Settings(BaseModel):
             redis_url=_read_optional_env("REDIS_URL"),
             notion_token=_read_optional_env("NOTION_TOKEN"),
             openai_api_key=_read_optional_env("OPENAI_API_KEY"),
+            telegram_bot_token=_read_optional_env("TELEGRAM_BOT_TOKEN"),
         )
 
 

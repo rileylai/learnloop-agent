@@ -21,6 +21,12 @@ from src.app.schemas.supplement import (
     SupplementRejectRequest,
     SupplementReviewResponse,
 )
+from src.app.schemas.telegram import (
+    TelegramChatPayload,
+    TelegramMessagePayload,
+    TelegramWebhookRequest,
+    TelegramWebhookResponse,
+)
 
 __all__ = [
     "QACitation",
@@ -42,4 +48,8 @@ __all__ = [
     "SupplementReviewResponse",
     "YouTubeIngestionRequest",
     "URLIngestionRequest",
+    "TelegramChatPayload",
+    "TelegramMessagePayload",
+    "TelegramWebhookRequest",
+    "TelegramWebhookResponse",
 ]

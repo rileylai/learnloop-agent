@@ -58,6 +58,11 @@ from src.orchestrators.supplement_proposal_schema import (
     SupplementProposalValidationError,
     parse_supplement_proposal_json,
 )
+from src.orchestrators.telegram_gateway_orchestrator import (
+    TelegramGatewayError,
+    TelegramGatewayOrchestrator,
+    TelegramGatewayResult,
+)
 from src.orchestrators.url_ingestion_orchestrator import (
     URLIngestionError,
     URLIngestionOrchestrator,
@@ -110,6 +115,9 @@ __all__ = [
     "SupplementProposalSourceSchema",
     "SupplementProposalValidationError",
     "parse_supplement_proposal_json",
+    "TelegramGatewayError",
+    "TelegramGatewayOrchestrator",
+    "TelegramGatewayResult",
     "URLIngestionError",
     "URLIngestionOrchestrator",
     "URLIngestionResult",
