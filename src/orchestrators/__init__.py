@@ -63,6 +63,13 @@ from src.orchestrators.telegram_gateway_orchestrator import (
     TelegramGatewayOrchestrator,
     TelegramGatewayResult,
 )
+from src.orchestrators.telegram_ingestion_orchestrator import (
+    TelegramDocumentAttachment,
+    TelegramIngestionCommandResult,
+    TelegramIngestionError,
+    TelegramIngestionOrchestrator,
+    TelegramPhotoAttachment,
+)
 from src.orchestrators.url_ingestion_orchestrator import (
     URLIngestionError,
     URLIngestionOrchestrator,
@@ -118,6 +125,11 @@ __all__ = [
     "TelegramGatewayError",
     "TelegramGatewayOrchestrator",
     "TelegramGatewayResult",
+    "TelegramDocumentAttachment",
+    "TelegramIngestionCommandResult",
+    "TelegramIngestionError",
+    "TelegramIngestionOrchestrator",
+    "TelegramPhotoAttachment",
     "URLIngestionError",
     "URLIngestionOrchestrator",
     "URLIngestionResult",

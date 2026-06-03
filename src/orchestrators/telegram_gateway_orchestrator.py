@@ -3,8 +3,14 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from http import HTTPStatus
-from typing import Any, Dict, Optional
+from typing import Optional
 
+from src.orchestrators.telegram_ingestion_orchestrator import (
+    TelegramDocumentAttachment,
+    TelegramIngestionError,
+    TelegramIngestionOrchestrator,
+    TelegramPhotoAttachment,
+)
 from src.services import STANDARD_FAILURE_REASONS, WorkflowRunService
 from src.tools import ToolContext, ToolRegistry
 
@@ -20,6 +26,9 @@ class TelegramGatewayResult:
     reply_text: Optional[str]
     telegram_message_id: Optional[int]
     skipped_reason: Optional[str]
+    source_document_id: Optional[int]
+    change_request_id: Optional[int]
+    source_type: Optional[str]
 
 
 class TelegramGatewayError(Exception):
@@ -46,9 +55,11 @@ class TelegramGatewayOrchestrator:
         *,
         tool_registry: ToolRegistry,
         workflow_run_service: WorkflowRunService,
+        telegram_ingestion_orchestrator: Optional[TelegramIngestionOrchestrator] = None,
     ) -> None:
         self._tool_registry = tool_registry
         self._workflow_run_service = workflow_run_service
+        self._telegram_ingestion_orchestrator = telegram_ingestion_orchestrator
 
     async def handle_webhook(
         self,
@@ -56,6 +67,9 @@ class TelegramGatewayOrchestrator:
         update_id: Optional[int],
         chat_id: Optional[str],
         text: Optional[str],
+        caption: Optional[str],
+        document: Optional[TelegramDocumentAttachment],
+        photos: list[TelegramPhotoAttachment],
         request_workflow_id: str,
     ) -> TelegramGatewayResult:
         workflow_run = self._workflow_run_service.start_workflow(
@@ -66,6 +80,8 @@ class TelegramGatewayOrchestrator:
                     "update_id": update_id,
                     "chat_id": chat_id,
                     "request_workflow_id": request_workflow_id,
+                    "has_document": document is not None,
+                    "photo_count": len(photos),
                 },
                 sort_keys=True,
             ),
@@ -73,8 +89,12 @@ class TelegramGatewayOrchestrator:
 
         try:
             normalized_text = (text or "").strip()
+            normalized_caption = (caption or "").strip()
+            normalized_input_text = normalized_text or normalized_caption
             normalized_chat_id = (chat_id or "").strip()
-            if not normalized_chat_id or not normalized_text:
+            has_media = (document is not None) or bool(photos)
+
+            if not normalized_chat_id or (not normalized_input_text and not has_media):
                 skipped_reason = "NO_TEXT_MESSAGE"
                 self._workflow_run_service.mark_workflow_succeeded(
                     workflow_run.id,
@@ -95,10 +115,41 @@ class TelegramGatewayOrchestrator:
                     reply_text=None,
                     telegram_message_id=None,
                     skipped_reason=skipped_reason,
+                    source_document_id=None,
+                    change_request_id=None,
+                    source_type=None,
                 )
 
-            command = self._parse_command(normalized_text)
-            reply_text = self._build_reply_for_command(command)
+            command = self._parse_command(normalized_input_text)
+            source_document_id: Optional[int] = None
+            change_request_id: Optional[int] = None
+            source_type: Optional[str] = None
+            if command == "health":
+                reply_text = self._build_reply_for_command(command)
+            elif command == "help":
+                reply_text = self._build_reply_for_command(command)
+            elif command == "ingest" or (has_media and command == "unknown"):
+                if self._telegram_ingestion_orchestrator is None:
+                    raise TelegramGatewayError(
+                        error_code="TELEGRAM_INGESTION_NOT_CONFIGURED",
+                        message="Telegram ingestion orchestrator is not configured",
+                        http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                        failure_reason="UNKNOWN_ERROR",
+                    )
+                command = "ingest"
+                ingestion_result = await self._telegram_ingestion_orchestrator.handle_ingest_command(
+                    chat_id=normalized_chat_id,
+                    document=document,
+                    photos=photos,
+                    request_workflow_id=request_workflow_id,
+                )
+                reply_text = ingestion_result.reply_text
+                source_document_id = ingestion_result.source_document_id
+                change_request_id = ingestion_result.change_request_id
+                source_type = ingestion_result.source_type
+            else:
+                reply_text = self._build_reply_for_command(command)
+
             tool_result = await self._tool_registry.call_tool(
                 TELEGRAM_BOT_TOOL_NAME,
                 context=ToolContext(
@@ -142,6 +193,9 @@ class TelegramGatewayOrchestrator:
                         "command": command,
                         "chat_id": normalized_chat_id,
                         "telegram_message_id": telegram_message_id,
+                        "source_document_id": source_document_id,
+                        "change_request_id": change_request_id,
+                        "source_type": source_type,
                     },
                     sort_keys=True,
                 ),
@@ -155,7 +209,23 @@ class TelegramGatewayOrchestrator:
                 reply_text=reply_text,
                 telegram_message_id=telegram_message_id,
                 skipped_reason=None,
+                source_document_id=source_document_id,
+                change_request_id=change_request_id,
+                source_type=source_type,
             )
+        except TelegramIngestionError as exc:
+            self._mark_failed_workflow(
+                workflow_run_id=workflow_run.id,
+                failure_reason=exc.failure_reason,
+                error_code=exc.error_code,
+            )
+            raise TelegramGatewayError(
+                error_code=exc.error_code,
+                message=exc.message,
+                http_status_code=exc.http_status_code,
+                failure_reason=self._normalize_failure_reason(exc.failure_reason),
+                workflow_run_id=workflow_run.id,
+            ) from exc
         except TelegramGatewayError as exc:
             self._mark_failed_workflow(
                 workflow_run_id=workflow_run.id,
@@ -195,7 +265,7 @@ class TelegramGatewayOrchestrator:
         if command == "health":
             return "LearnLoop Agent status: ok"
         if command == "help":
-            return "Available commands: /help, /health"
+            return "Available commands: /help, /health, /ingest"
         return "Unsupported command. Use /help."
 
     def _normalize_failure_reason(self, failure_reason: str) -> str:

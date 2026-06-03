@@ -117,3 +117,28 @@ Rules:
 - API route calls orchestrator only.
 - Route and orchestrator do not call Telegram API SDK/client directly.
 - Bot gateway keeps no ingestion/QA/review business logic in Step 32.
+
+## Telegram Ingestion Workflow (Step 33)
+
+```text
+POST /api/telegram/webhook
+-> Parse /ingest command or media upload intent
+-> Download Telegram file bytes through ToolRegistry -> TelegramBotTool (download_file)
+-> Route to ingestion orchestrator:
+   - PDF document -> DocumentIngestionOrchestrator
+   - screenshot batch -> ImageOCRIngestionOrchestrator
+-> Create pending change request through SupplementProposeOrchestrator
+-> Send ingestion summary reply through ToolRegistry -> TelegramBotTool (send_message)
+-> Mark workflow succeeded
+```
+
+Failure path:
+- If Telegram file download fails, fail with `TELEGRAM_FILE_DOWNLOAD_FAILED`.
+- If PDF/OCR parsing fails, reuse deterministic ingestion failures (`PDF_PARSE_FAILED`, `OCR_FAILED`).
+- If proposal generation fails, reuse supplement proposal deterministic failures (`LLM_OUTPUT_INVALID`, `PROVIDER_NOT_FOUND`, `LLM_PROVIDER_ERROR`).
+
+Rules:
+- Route and gateway orchestrator still call Telegram only through `ToolRegistry`.
+- PDF and screenshot ingestion reuse existing ingestion/propose orchestrators; no duplicate business logic in API route.
+- Screenshot batch upload creates one `source_documents` row with `source_type=screenshot`.
+- Step 33 still follows safe write policy: create `pending` change request only; no Notion append in this workflow.

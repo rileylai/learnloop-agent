@@ -643,9 +643,9 @@ Notes:
 ## Telegram Gateway API
 
 ### POST `/api/telegram/webhook`
-Handle one Telegram webhook update and reply to `/help` or `/health`.
+Handle one Telegram webhook update for `/help`, `/health`, and `/ingest`.
 
-Request:
+Request example (`/help`):
 
 ```json
 {
@@ -668,9 +668,49 @@ Success response `200`:
   "status": "succeeded",
   "handled": true,
   "command": "help",
-  "reply_text": "Available commands: /help, /health",
+  "reply_text": "Available commands: /help, /health, /ingest",
   "telegram_message_id": 1,
-  "skipped_reason": null
+  "skipped_reason": null,
+  "source_document_id": null,
+  "change_request_id": null,
+  "source_type": null
+}
+```
+
+Request example (`/ingest` + PDF):
+
+```json
+{
+  "update_id": 1004,
+  "message": {
+    "message_id": 14,
+    "chat": {
+      "id": 555
+    },
+    "caption": "/ingest",
+    "document": {
+      "file_id": "pdf-file-1",
+      "file_name": "lesson.pdf",
+      "mime_type": "application/pdf"
+    }
+  }
+}
+```
+
+Success response `200` (`/ingest`):
+
+```json
+{
+  "workflow_run_id": 604,
+  "status": "succeeded",
+  "handled": true,
+  "command": "ingest",
+  "reply_text": "Ingestion succeeded (source_type=pdf, source_document_id=12, change_request_id=34, status=pending).",
+  "telegram_message_id": 2,
+  "skipped_reason": null,
+  "source_document_id": 12,
+  "change_request_id": 34,
+  "source_type": "pdf"
 }
 ```
 
@@ -684,7 +724,10 @@ Skipped response `200` (no text message):
   "command": null,
   "reply_text": null,
   "telegram_message_id": null,
-  "skipped_reason": "NO_TEXT_MESSAGE"
+  "skipped_reason": "NO_TEXT_MESSAGE",
+  "source_document_id": null,
+  "change_request_id": null,
+  "source_type": null
 }
 ```
 
@@ -703,6 +746,8 @@ Failure response example `503` (Telegram bot token not configured):
 
 Notes:
 - Route must call orchestrator only.
-- Orchestrator sends reply through `ToolRegistry` -> `TelegramBotTool`.
+- Orchestrator sends reply through `ToolRegistry` -> `TelegramBotTool` (`send_message`).
+- `/ingest` downloads Telegram files through `ToolRegistry` -> `TelegramBotTool` (`download_file`).
 - Route and orchestrator do not call Telegram API directly.
-- Step 32 keeps bot gateway scope minimal: command routing and reply only.
+- Screenshot ingestion accepts multiple photo items and creates one screenshot-batch source document.
+- `/ingest` creates `pending` change requests only; Notion append remains in accept workflow.

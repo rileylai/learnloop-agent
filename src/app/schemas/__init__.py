@@ -23,7 +23,9 @@ from src.app.schemas.supplement import (
 )
 from src.app.schemas.telegram import (
     TelegramChatPayload,
+    TelegramDocumentPayload,
     TelegramMessagePayload,
+    TelegramPhotoPayload,
     TelegramWebhookRequest,
     TelegramWebhookResponse,
 )
@@ -49,7 +51,9 @@ __all__ = [
     "YouTubeIngestionRequest",
     "URLIngestionRequest",
     "TelegramChatPayload",
+    "TelegramDocumentPayload",
     "TelegramMessagePayload",
+    "TelegramPhotoPayload",
     "TelegramWebhookRequest",
     "TelegramWebhookResponse",
 ]

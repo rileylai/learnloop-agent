@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import base64
 import json
+import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 from urllib import error, request
+from urllib.parse import quote
 
 from src.tools.base import Tool
 from src.tools.models import ToolContext, ToolResult, ToolSpec
@@ -21,6 +24,10 @@ class TelegramBotSendError(TelegramBotClientError):
     pass
 
 
+class TelegramBotFileDownloadError(TelegramBotClientError):
+    pass
+
+
 @dataclass
 class TelegramSentMessage:
     chat_id: str
@@ -28,8 +35,18 @@ class TelegramSentMessage:
     message_id: int
 
 
+@dataclass
+class TelegramDownloadedFile:
+    file_id: str
+    file_name: str
+    file_bytes: bytes
+
+
 class TelegramBotClient:
     def send_message(self, *, chat_id: str, text: str) -> TelegramSentMessage:
+        raise NotImplementedError
+
+    def download_file(self, *, file_id: str) -> TelegramDownloadedFile:
         raise NotImplementedError
 
 
@@ -41,10 +58,17 @@ class DisabledTelegramBotClient(TelegramBotClient):
             "Telegram bot token is not configured. Set TELEGRAM_BOT_TOKEN."
         )
 
+    def download_file(self, *, file_id: str) -> TelegramDownloadedFile:
+        _ = file_id
+        raise TelegramBotNotConfiguredError(
+            "Telegram bot token is not configured. Set TELEGRAM_BOT_TOKEN."
+        )
+
 
 class InMemoryTelegramBotClient(TelegramBotClient):
     def __init__(self) -> None:
         self._sent_messages: List[TelegramSentMessage] = []
+        self._files: Dict[str, TelegramDownloadedFile] = {}
 
     def send_message(self, *, chat_id: str, text: str) -> TelegramSentMessage:
         message = TelegramSentMessage(
@@ -57,6 +81,36 @@ class InMemoryTelegramBotClient(TelegramBotClient):
 
     def list_sent_messages(self) -> List[TelegramSentMessage]:
         return list(self._sent_messages)
+
+    def add_file(
+        self,
+        *,
+        file_id: str,
+        file_bytes: bytes,
+        file_name: Optional[str] = None,
+    ) -> None:
+        normalized_file_id = file_id.strip()
+        if not normalized_file_id:
+            raise ValueError("file_id must not be empty")
+        if not file_bytes:
+            raise ValueError("file_bytes must not be empty")
+        normalized_file_name = (file_name or "").strip() or f"{normalized_file_id}.bin"
+        self._files[normalized_file_id] = TelegramDownloadedFile(
+            file_id=normalized_file_id,
+            file_name=normalized_file_name,
+            file_bytes=file_bytes,
+        )
+
+    def download_file(self, *, file_id: str) -> TelegramDownloadedFile:
+        normalized_file_id = file_id.strip()
+        if not normalized_file_id:
+            raise TelegramBotFileDownloadError("file_id is required")
+        downloaded = self._files.get(normalized_file_id)
+        if downloaded is None:
+            raise TelegramBotFileDownloadError(
+                f"Telegram file is not found: file_id={normalized_file_id}"
+            )
+        return downloaded
 
 
 class TelegramHTTPBotClient(TelegramBotClient):
@@ -124,6 +178,87 @@ class TelegramHTTPBotClient(TelegramBotClient):
             message_id=message_id,
         )
 
+    def download_file(self, *, file_id: str) -> TelegramDownloadedFile:
+        normalized_file_id = file_id.strip()
+        if not normalized_file_id:
+            raise TelegramBotFileDownloadError("file_id is required")
+
+        try:
+            get_file_result = self._post_json_method(
+                method_name="getFile",
+                payload={"file_id": normalized_file_id},
+            )
+        except TelegramBotSendError as exc:
+            raise TelegramBotFileDownloadError(str(exc)) from exc
+
+        file_path = str(get_file_result.get("file_path", "")).strip()
+        if not file_path:
+            raise TelegramBotFileDownloadError("Telegram getFile response missing file_path")
+
+        encoded_file_path = quote(file_path, safe="/")
+        file_url = f"https://api.telegram.org/file/bot{self._bot_token}/{encoded_file_path}"
+        try:
+            with request.urlopen(file_url, timeout=self._timeout_seconds) as response:
+                file_bytes = response.read()
+        except error.URLError as exc:
+            raise TelegramBotFileDownloadError(
+                f"Telegram file download failed: {exc}"
+            ) from exc
+
+        if not file_bytes:
+            raise TelegramBotFileDownloadError(
+                f"Downloaded Telegram file is empty: file_id={normalized_file_id}"
+            )
+
+        file_name = os.path.basename(file_path.strip("/")) or f"{normalized_file_id}.bin"
+        return TelegramDownloadedFile(
+            file_id=normalized_file_id,
+            file_name=file_name,
+            file_bytes=file_bytes,
+        )
+
+    def _post_json_method(
+        self,
+        *,
+        method_name: str,
+        payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        req = request.Request(
+            url=f"https://api.telegram.org/bot{self._bot_token}/{method_name}",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with request.urlopen(req, timeout=self._timeout_seconds) as response:
+                response_body = response.read().decode("utf-8")
+        except error.URLError as exc:
+            raise TelegramBotSendError(
+                f"Telegram request failed: {exc}"
+            ) from exc
+
+        try:
+            parsed = json.loads(response_body)
+        except json.JSONDecodeError as exc:
+            raise TelegramBotSendError(
+                "Telegram response is not valid JSON"
+            ) from exc
+
+        if not isinstance(parsed, dict) or not parsed.get("ok"):
+            description = ""
+            if isinstance(parsed, dict):
+                description = str(parsed.get("description", "")).strip()
+            if description:
+                raise TelegramBotSendError(
+                    f"Telegram {method_name} failed: {description}"
+                )
+            raise TelegramBotSendError(f"Telegram {method_name} failed")
+
+        result = parsed.get("result")
+        if not isinstance(result, dict):
+            raise TelegramBotSendError("Telegram response missing result object")
+        return result
+
 
 class TelegramBotTool(Tool):
     @property
@@ -133,21 +268,17 @@ class TelegramBotTool(Tool):
             description="Send Telegram messages through the bot API adapter.",
             input_schema={
                 "type": "object",
-                "required": ["chat_id", "text"],
                 "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["send_message", "download_file"],
+                    },
                     "chat_id": {"type": "string"},
                     "text": {"type": "string"},
+                    "file_id": {"type": "string"},
                 },
             },
-            output_schema={
-                "type": "object",
-                "required": ["chat_id", "text", "message_id"],
-                "properties": {
-                    "chat_id": {"type": "string"},
-                    "text": {"type": "string"},
-                    "message_id": {"type": "integer"},
-                },
-            },
+            output_schema={"type": "object"},
         )
 
     def __init__(self, telegram_client: TelegramBotClient) -> None:
@@ -155,9 +286,19 @@ class TelegramBotTool(Tool):
 
     async def run(self, context: ToolContext, arguments: Dict[str, Any]) -> ToolResult:
         _ = context
+        action = str(arguments.get("action", "send_message")).strip().lower()
+        if action == "send_message":
+            return self._run_send_message(arguments)
+        if action == "download_file":
+            return self._run_download_file(arguments)
+        return ToolResult.failure(
+            code="INVALID_ARGUMENT",
+            message=f"Unsupported telegram_bot action: {action}",
+        )
+
+    def _run_send_message(self, arguments: Dict[str, Any]) -> ToolResult:
         chat_id = str(arguments.get("chat_id", "")).strip()
         text = str(arguments.get("text", "")).strip()
-
         if not chat_id:
             return ToolResult.failure(
                 code="INVALID_ARGUMENT",
@@ -184,5 +325,36 @@ class TelegramBotTool(Tool):
                 "chat_id": sent.chat_id,
                 "text": sent.text,
                 "message_id": sent.message_id,
+            },
+        )
+
+    def _run_download_file(self, arguments: Dict[str, Any]) -> ToolResult:
+        file_id = str(arguments.get("file_id", "")).strip()
+        if not file_id:
+            return ToolResult.failure(
+                code="INVALID_ARGUMENT",
+                message="file_id is required",
+            )
+
+        try:
+            downloaded = self._telegram_client.download_file(file_id=file_id)
+        except TelegramBotNotConfiguredError as exc:
+            return ToolResult.failure(code="TELEGRAM_NOT_CONFIGURED", message=str(exc))
+        except TelegramBotFileDownloadError as exc:
+            return ToolResult.failure(
+                code="TELEGRAM_FILE_DOWNLOAD_FAILED",
+                message=str(exc),
+            )
+        except TelegramBotClientError as exc:
+            return ToolResult.failure(code="UNKNOWN_ERROR", message=str(exc))
+
+        encoded = base64.b64encode(downloaded.file_bytes).decode("ascii")
+        return ToolResult.success(
+            content=f"downloaded telegram file file_id={downloaded.file_id}",
+            structured_content={
+                "file_id": downloaded.file_id,
+                "file_name": downloaded.file_name,
+                "file_size_bytes": len(downloaded.file_bytes),
+                "file_bytes_base64": encoded,
             },
         )
