@@ -142,3 +142,29 @@ Rules:
 - PDF and screenshot ingestion reuse existing ingestion/propose orchestrators; no duplicate business logic in API route.
 - Screenshot batch upload creates one `source_documents` row with `source_type=screenshot`.
 - Step 33 still follows safe write policy: create `pending` change request only; no Notion append in this workflow.
+
+## Telegram QA Workflow (Step 34)
+
+```text
+POST /api/telegram/webhook
+-> Parse /ask command and optional --page / --section scope flags
+-> Delegate to TelegramQAOrchestrator
+-> Reuse QAOrchestrator for production chunk retrieval and grounded answer generation
+-> Format answer with deterministic Notion path citations
+-> Send reply through ToolRegistry -> TelegramBotTool (send_message)
+-> Mark workflow succeeded
+```
+
+Failure path:
+- Invalid scope flags fail with `INVALID_ARGUMENT`.
+- Missing providers and provider failures reuse QA workflow failures
+  (`PROVIDER_NOT_FOUND`, `LLM_PROVIDER_ERROR`, `LLM_OUTPUT_INVALID`).
+- The Telegram gateway workflow fails when delegated QA fails.
+
+Rules:
+- Scope syntax is
+  `/ask [--page <page_id>] [--section <notion/path>] <question>`.
+- `/ask` without a question returns a usage reply and does not start a QA workflow.
+- Telegram QA reuses `QAOrchestrator`; the gateway contains no retrieval or provider logic.
+- Production retrieval remains Notion-only and keeps pending/rejected proposals excluded.
+- Telegram workflow metadata records citation count only, not question text or citation paths.

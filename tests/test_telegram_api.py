@@ -95,6 +95,22 @@ class _FakeProposalProvider(LLMProvider):
         )
 
 
+class _FakeQAProvider(LLMProvider):
+    @property
+    def name(self) -> str:
+        return "openai"
+
+    async def generate(self, request: LLMRequest) -> LLMResponse:
+        _ = request
+        return LLMResponse(
+            provider="openai",
+            model="gpt-4o-mini",
+            output_text="Attention aligns query and key to weight values.",
+            token_input=25,
+            token_output=10,
+        )
+
+
 def _build_session_factory():
     engine = create_engine(
         "sqlite+pysqlite://",
@@ -113,6 +129,72 @@ def _build_session_factory():
         ],
     )
     return sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+
+def _seed_qa_chunks(session: Session) -> None:
+    nlp_page = NotionPage(
+        id=1,
+        notion_page_id="page-nlp-week5",
+        title="NLP Week 5",
+        notion_path="Knowledge/NLP/Week5",
+    )
+    ml_page = NotionPage(
+        id=2,
+        notion_page_id="page-ml-week2",
+        title="ML Week 2",
+        notion_path="Knowledge/ML/Week2",
+    )
+    session.add_all([nlp_page, ml_page])
+    session.flush()
+
+    nlp_block = NotionBlock(
+        id=1,
+        notion_block_id="blk-nlp-attention",
+        notion_page_id=nlp_page.id,
+        parent_block_id=None,
+        block_type="paragraph",
+        content_text="Attention uses query key value vectors",
+        block_path="Knowledge/NLP/Week5/Attention",
+        block_order=0,
+    )
+    ml_block = NotionBlock(
+        id=2,
+        notion_block_id="blk-ml-attention",
+        notion_page_id=ml_page.id,
+        parent_block_id=None,
+        block_type="paragraph",
+        content_text="Attention can operate over image patches",
+        block_path="Knowledge/ML/Week2/Vision Attention",
+        block_order=0,
+    )
+    session.add_all([nlp_block, ml_block])
+    session.flush()
+
+    session.add_all(
+        [
+            KnowledgeChunk(
+                id=1,
+                source_document_id=None,
+                notion_block_id=nlp_block.id,
+                chunk_index=0,
+                chunk_text="Attention uses query key value vectors",
+                notion_path="Knowledge/NLP/Week5/Attention",
+                embedding_text=None,
+                source_kind="notion",
+            ),
+            KnowledgeChunk(
+                id=2,
+                source_document_id=None,
+                notion_block_id=ml_block.id,
+                chunk_index=0,
+                chunk_text="Attention can operate over image patches",
+                notion_path="Knowledge/ML/Week2/Vision Attention",
+                embedding_text=None,
+                source_kind="notion",
+            ),
+        ]
+    )
+    session.commit()
 
 
 def test_telegram_webhook_help_command_sends_reply() -> None:
@@ -153,7 +235,7 @@ def test_telegram_webhook_help_command_sends_reply() -> None:
         assert payload["status"] == "succeeded"
         assert payload["handled"] is True
         assert payload["command"] == "help"
-        assert payload["reply_text"] == "Available commands: /help, /health, /ingest"
+        assert payload["reply_text"] == "Available commands: /help, /health, /ingest, /ask"
         assert payload["telegram_message_id"] == 1
         assert payload["skipped_reason"] is None
         assert payload["source_document_id"] is None
@@ -163,7 +245,7 @@ def test_telegram_webhook_help_command_sends_reply() -> None:
         sent_messages = telegram_client.list_sent_messages()
         assert len(sent_messages) == 1
         assert sent_messages[0].chat_id == "555"
-        assert sent_messages[0].text == "Available commands: /help, /health, /ingest"
+        assert sent_messages[0].text == "Available commands: /help, /health, /ingest, /ask"
 
         verify_session: Session = session_factory()
         try:
@@ -273,6 +355,197 @@ def test_telegram_webhook_returns_service_unavailable_when_not_configured() -> N
             assert workflow_run.workflow_type == "telegram"
             assert workflow_run.status == "failed"
             assert workflow_run.failure_reason == "UNKNOWN_ERROR"
+        finally:
+            verify_session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_telegram_webhook_ask_returns_answer_with_scoped_notion_citation() -> None:
+    session_factory = _build_session_factory()
+    seed_session = session_factory()
+    try:
+        _seed_qa_chunks(seed_session)
+    finally:
+        seed_session.close()
+    telegram_client = InMemoryTelegramBotClient()
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _tool_registry_override() -> ToolRegistry:
+        registry = ToolRegistry()
+        registry.register_tool(TelegramBotTool(telegram_client))
+        return registry
+
+    def _provider_router_override() -> ProviderRouter:
+        router = ProviderRouter()
+        router.register_provider(_FakeQAProvider())
+        return router
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_tool_registry] = _tool_registry_override
+    app.dependency_overrides[get_provider_router] = _provider_router_override
+
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 1004,
+                "message": {
+                    "message_id": 14,
+                    "chat": {"id": 777},
+                    "text": (
+                        "/ask --section Knowledge/NLP/Week5/Attention "
+                        "Explain attention"
+                    ),
+                },
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "succeeded"
+        assert payload["handled"] is True
+        assert payload["command"] == "ask"
+        assert payload["qa_workflow_run_id"] is not None
+        assert payload["insufficient_info"] is False
+        assert payload["citations"] == ["Knowledge/NLP/Week5/Attention"]
+        assert payload["source_document_id"] is None
+        assert payload["change_request_id"] is None
+        assert "Attention aligns query and key" in payload["reply_text"]
+        assert "Notion citations:" in payload["reply_text"]
+        assert "- Knowledge/NLP/Week5/Attention" in payload["reply_text"]
+        assert "Knowledge/ML/Week2/Vision Attention" not in payload["reply_text"]
+
+        sent_messages = telegram_client.list_sent_messages()
+        assert len(sent_messages) == 1
+        assert sent_messages[0].chat_id == "777"
+        assert sent_messages[0].text == payload["reply_text"]
+
+        verify_session: Session = session_factory()
+        try:
+            workflow_runs = verify_session.query(WorkflowRun).all()
+            assert any(row.workflow_type == "qa" for row in workflow_runs)
+            telegram_run = next(
+                row for row in workflow_runs if row.id == payload["workflow_run_id"]
+            )
+            metadata = json.loads(telegram_run.metadata_json or "{}")
+            assert metadata["command"] == "ask"
+            assert metadata["qa_workflow_run_id"] == payload["qa_workflow_run_id"]
+            assert metadata["citation_count"] == 1
+            assert "citations" not in metadata
+        finally:
+            verify_session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_telegram_webhook_ask_without_question_returns_usage_reply() -> None:
+    session_factory = _build_session_factory()
+    telegram_client = InMemoryTelegramBotClient()
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _tool_registry_override() -> ToolRegistry:
+        registry = ToolRegistry()
+        registry.register_tool(TelegramBotTool(telegram_client))
+        return registry
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_tool_registry] = _tool_registry_override
+
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 1005,
+                "message": {
+                    "message_id": 15,
+                    "chat": {"id": 777},
+                    "text": "/ask --page page-nlp-week5",
+                },
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["command"] == "ask"
+        assert payload["qa_workflow_run_id"] is None
+        assert payload["insufficient_info"] is None
+        assert payload["citations"] == []
+        assert payload["reply_text"].startswith("Usage: /ask")
+        assert len(telegram_client.list_sent_messages()) == 1
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_telegram_webhook_ask_maps_qa_provider_failure() -> None:
+    session_factory = _build_session_factory()
+    seed_session = session_factory()
+    try:
+        _seed_qa_chunks(seed_session)
+    finally:
+        seed_session.close()
+    telegram_client = InMemoryTelegramBotClient()
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _tool_registry_override() -> ToolRegistry:
+        registry = ToolRegistry()
+        registry.register_tool(TelegramBotTool(telegram_client))
+        return registry
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_tool_registry] = _tool_registry_override
+
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 1006,
+                "message": {
+                    "message_id": 16,
+                    "chat": {"id": 777},
+                    "text": "/ask Explain attention",
+                },
+            },
+        )
+
+        assert response.status_code == 500
+        detail = response.json()["detail"]
+        assert detail["error_code"] == "PROVIDER_NOT_FOUND"
+        assert detail["failure_reason"] == "UNKNOWN_ERROR"
+        assert detail["workflow_run_id"] is not None
+        assert telegram_client.list_sent_messages() == []
+
+        verify_session: Session = session_factory()
+        try:
+            workflow_runs = verify_session.query(WorkflowRun).all()
+            qa_run = next(row for row in workflow_runs if row.workflow_type == "qa")
+            telegram_run = next(
+                row for row in workflow_runs if row.workflow_type == "telegram"
+            )
+            assert qa_run.status == "failed"
+            assert telegram_run.status == "failed"
+            assert detail["workflow_run_id"] == telegram_run.id
         finally:
             verify_session.close()
     finally:

@@ -643,7 +643,7 @@ Notes:
 ## Telegram Gateway API
 
 ### POST `/api/telegram/webhook`
-Handle one Telegram webhook update for `/help`, `/health`, and `/ingest`.
+Handle one Telegram webhook update for `/help`, `/health`, `/ingest`, and `/ask`.
 
 Request example (`/help`):
 
@@ -668,12 +668,15 @@ Success response `200`:
   "status": "succeeded",
   "handled": true,
   "command": "help",
-  "reply_text": "Available commands: /help, /health, /ingest",
+  "reply_text": "Available commands: /help, /health, /ingest, /ask",
   "telegram_message_id": 1,
   "skipped_reason": null,
   "source_document_id": null,
   "change_request_id": null,
-  "source_type": null
+  "source_type": null,
+  "qa_workflow_run_id": null,
+  "insufficient_info": null,
+  "citations": []
 }
 ```
 
@@ -710,7 +713,47 @@ Success response `200` (`/ingest`):
   "skipped_reason": null,
   "source_document_id": 12,
   "change_request_id": 34,
-  "source_type": "pdf"
+  "source_type": "pdf",
+  "qa_workflow_run_id": null,
+  "insufficient_info": null,
+  "citations": []
+}
+```
+
+Request example (`/ask` with section scope):
+
+```json
+{
+  "update_id": 1005,
+  "message": {
+    "message_id": 15,
+    "chat": {
+      "id": 555
+    },
+    "text": "/ask --section Knowledge/NLP/Week5/Attention Explain attention"
+  }
+}
+```
+
+Success response `200` (`/ask`):
+
+```json
+{
+  "workflow_run_id": 605,
+  "status": "succeeded",
+  "handled": true,
+  "command": "ask",
+  "reply_text": "Attention aligns query and key to weight values.\n\nNotion citations:\n- Knowledge/NLP/Week5/Attention",
+  "telegram_message_id": 3,
+  "skipped_reason": null,
+  "source_document_id": null,
+  "change_request_id": null,
+  "source_type": null,
+  "qa_workflow_run_id": 606,
+  "insufficient_info": false,
+  "citations": [
+    "Knowledge/NLP/Week5/Attention"
+  ]
 }
 ```
 
@@ -727,7 +770,10 @@ Skipped response `200` (no text message):
   "skipped_reason": "NO_TEXT_MESSAGE",
   "source_document_id": null,
   "change_request_id": null,
-  "source_type": null
+  "source_type": null,
+  "qa_workflow_run_id": null,
+  "insufficient_info": null,
+  "citations": []
 }
 ```
 
@@ -748,6 +794,12 @@ Notes:
 - Route must call orchestrator only.
 - Orchestrator sends reply through `ToolRegistry` -> `TelegramBotTool` (`send_message`).
 - `/ingest` downloads Telegram files through `ToolRegistry` -> `TelegramBotTool` (`download_file`).
+- `/ask` syntax is
+  `/ask [--page <page_id>] [--section <notion/path>] <question>`.
+- `/ask` delegates to the existing QA orchestrator and returns Notion path citations.
+- Scope flags can be repeated. Inline forms such as `--page=page-id` and
+  `--section=Knowledge/NLP/Week5` are also accepted.
 - Route and orchestrator do not call Telegram API directly.
 - Screenshot ingestion accepts multiple photo items and creates one screenshot-batch source document.
 - `/ingest` creates `pending` change requests only; Notion append remains in accept workflow.
+- Telegram QA uses production Notion chunks only; pending and rejected proposals remain excluded.

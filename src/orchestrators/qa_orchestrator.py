@@ -19,6 +19,9 @@ from src.services import STANDARD_FAILURE_REASONS, WorkflowRunService
 INSUFFICIENT_INFO_ANSWER = (
     "I do not have enough information in production notes to answer safely."
 )
+DEFAULT_QA_TOP_K = 5
+DEFAULT_QA_PROVIDER_NAME = "openai"
+DEFAULT_QA_MODEL = "gpt-4o-mini"
 
 
 @dataclass

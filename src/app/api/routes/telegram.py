@@ -9,12 +9,14 @@ from src.db.session import get_db_session
 from src.orchestrators import (
     DocumentIngestionOrchestrator,
     ImageOCRIngestionOrchestrator,
+    QAOrchestrator,
     SupplementProposeOrchestrator,
     TelegramDocumentAttachment,
     TelegramGatewayError,
     TelegramGatewayOrchestrator,
     TelegramIngestionOrchestrator,
     TelegramPhotoAttachment,
+    TelegramQAOrchestrator,
 )
 from src.providers import ProviderRouter
 from src.repositories import (
@@ -23,6 +25,7 @@ from src.repositories import (
     SourceDocumentRepository,
     WorkflowRunRepository,
 )
+from src.rag import ProductionChunkRetriever
 from src.services import DuplicateKnowledgeChecker, WorkflowRunService
 from src.tools import ToolRegistry
 
@@ -59,11 +62,21 @@ def _build_telegram_gateway_orchestrator(
             workflow_run_service=workflow_run_service,
         ),
     )
+    telegram_qa_orchestrator = TelegramQAOrchestrator(
+        qa_orchestrator=QAOrchestrator(
+            retriever=ProductionChunkRetriever(
+                chunk_repository=ChunkRepository(db_session),
+            ),
+            provider_router=provider_router,
+            workflow_run_service=workflow_run_service,
+        )
+    )
 
     return TelegramGatewayOrchestrator(
         tool_registry=tool_registry,
         workflow_run_service=workflow_run_service,
         telegram_ingestion_orchestrator=telegram_ingestion_orchestrator,
+        telegram_qa_orchestrator=telegram_qa_orchestrator,
     )
 
 
@@ -135,4 +148,7 @@ async def handle_telegram_webhook(
         source_document_id=result.source_document_id,
         change_request_id=result.change_request_id,
         source_type=result.source_type,
+        qa_workflow_run_id=result.qa_workflow_run_id,
+        insufficient_info=result.insufficient_info,
+        citations=result.citations,
     )

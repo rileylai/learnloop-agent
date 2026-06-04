@@ -164,7 +164,7 @@ Sync statements:
 | FR-015 | Auto re-index after accept | Accepted append triggers immediate page re-index job. |
 | FR-016 | No direct overwrite | Never overwrite original notes directly. |
 | FR-017 | QA with citation | RAG QA returns Notion path citation. |
-| FR-018 | Scope query support | Support note-scoped query like `/ask nlp week5`. |
+| FR-018 | Scope query support | Support note-scoped Telegram QA with explicit `/ask --page` and `/ask --section` flags. |
 | FR-019 | Audit logging | Log workflow and decision events. |
 | FR-020 | Production-RAG exclusion | `pending` and `rejected` change requests are excluded from production RAG. |
 
@@ -479,7 +479,7 @@ Design notes:
 ### 13.6 Telegram APIs
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/api/telegram/webhook` | Handle Telegram webhook update for `/help`, `/health`, and `/ingest` (PDF/screenshot ingestion entry). |
+| POST | `/api/telegram/webhook` | Handle Telegram webhook update for `/help`, `/health`, `/ingest`, and scoped `/ask` QA. |
 
 Production-RAG invariant:
 - `pending` and `rejected` change requests are never used in production RAG.

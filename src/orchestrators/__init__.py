@@ -70,6 +70,12 @@ from src.orchestrators.telegram_ingestion_orchestrator import (
     TelegramIngestionOrchestrator,
     TelegramPhotoAttachment,
 )
+from src.orchestrators.telegram_qa_orchestrator import (
+    ASK_USAGE_REPLY,
+    TelegramQACommandResult,
+    TelegramQAError,
+    TelegramQAOrchestrator,
+)
 from src.orchestrators.url_ingestion_orchestrator import (
     URLIngestionError,
     URLIngestionOrchestrator,
@@ -130,6 +136,10 @@ __all__ = [
     "TelegramIngestionError",
     "TelegramIngestionOrchestrator",
     "TelegramPhotoAttachment",
+    "ASK_USAGE_REPLY",
+    "TelegramQACommandResult",
+    "TelegramQAError",
+    "TelegramQAOrchestrator",
     "URLIngestionError",
     "URLIngestionOrchestrator",
     "URLIngestionResult",

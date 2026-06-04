@@ -50,3 +50,6 @@ class TelegramWebhookResponse(BaseModel):
     source_document_id: Optional[int] = None
     change_request_id: Optional[int] = None
     source_type: Optional[str] = None
+    qa_workflow_run_id: Optional[int] = None
+    insufficient_info: Optional[bool] = None
+    citations: List[str] = Field(default_factory=list)
