@@ -9,19 +9,24 @@ from src.db.session import get_db_session
 from src.orchestrators import (
     DocumentIngestionOrchestrator,
     ImageOCRIngestionOrchestrator,
+    NotionPageIndexOrchestrator,
     QAOrchestrator,
     SupplementProposeOrchestrator,
+    SupplementReviewOrchestrator,
     TelegramDocumentAttachment,
     TelegramGatewayError,
     TelegramGatewayOrchestrator,
     TelegramIngestionOrchestrator,
     TelegramPhotoAttachment,
     TelegramQAOrchestrator,
+    TelegramReviewOrchestrator,
 )
 from src.providers import ProviderRouter
 from src.repositories import (
     ChangeRequestRepository,
     ChunkRepository,
+    NotionBlockRepository,
+    NotionPageRepository,
     SourceDocumentRepository,
     WorkflowRunRepository,
 )
@@ -71,12 +76,28 @@ def _build_telegram_gateway_orchestrator(
             workflow_run_service=workflow_run_service,
         )
     )
+    telegram_review_orchestrator = TelegramReviewOrchestrator(
+        supplement_review_orchestrator=SupplementReviewOrchestrator(
+            change_request_repository=ChangeRequestRepository(db_session),
+            notion_page_repository=NotionPageRepository(db_session),
+            tool_registry=tool_registry,
+            page_index_orchestrator=NotionPageIndexOrchestrator(
+                tool_registry=tool_registry,
+                notion_page_repository=NotionPageRepository(db_session),
+                notion_block_repository=NotionBlockRepository(db_session),
+                workflow_run_service=workflow_run_service,
+                chunk_repository=ChunkRepository(db_session),
+            ),
+            workflow_run_service=workflow_run_service,
+        )
+    )
 
     return TelegramGatewayOrchestrator(
         tool_registry=tool_registry,
         workflow_run_service=workflow_run_service,
         telegram_ingestion_orchestrator=telegram_ingestion_orchestrator,
         telegram_qa_orchestrator=telegram_qa_orchestrator,
+        telegram_review_orchestrator=telegram_review_orchestrator,
     )
 
 
@@ -151,4 +172,7 @@ async def handle_telegram_webhook(
         qa_workflow_run_id=result.qa_workflow_run_id,
         insufficient_info=result.insufficient_info,
         citations=result.citations,
+        review_workflow_run_id=result.review_workflow_run_id,
+        review_action=result.review_action,
+        change_request_status=result.change_request_status,
     )

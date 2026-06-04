@@ -53,3 +53,6 @@ class TelegramWebhookResponse(BaseModel):
     qa_workflow_run_id: Optional[int] = None
     insufficient_info: Optional[bool] = None
     citations: List[str] = Field(default_factory=list)
+    review_workflow_run_id: Optional[int] = None
+    review_action: Optional[str] = None
+    change_request_status: Optional[str] = None

@@ -25,7 +25,14 @@ from src.tools import (
     DisabledTelegramBotClient,
     ImageOCRParserClient,
     ImageOCRTool,
+    InMemoryNotionPageSnapshot,
+    InMemoryNotionWriterClient,
     InMemoryTelegramBotClient,
+    NotionBlockNode,
+    NotionPageTree,
+    NotionReaderClient,
+    NotionReaderTool,
+    NotionWriterTool,
     OCRImageInput,
     PDFParserClient,
     PDFParserClientError,
@@ -111,6 +118,54 @@ class _FakeQAProvider(LLMProvider):
         )
 
 
+class _SnapshotBackedNotionReaderClient(NotionReaderClient):
+    def __init__(self, pages: dict[str, InMemoryNotionPageSnapshot]) -> None:
+        self._pages = pages
+
+    def fetch_page_tree(self, page_id: str) -> NotionPageTree | None:
+        snapshot = self._pages.get(page_id)
+        if snapshot is None:
+            return None
+
+        blocks = [
+            NotionBlockNode(
+                block_id=f"{snapshot.page_id}-orig-{index}",
+                block_type="paragraph",
+                content_text=text,
+                block_path=f"{snapshot.notion_path}/Original/{index}",
+            )
+            for index, text in enumerate(snapshot.original_blocks, start=1)
+        ]
+        for entry in snapshot.ai_supplement_entries:
+            blocks.append(
+                NotionBlockNode(
+                    block_id=f"{snapshot.page_id}-ai-{entry.change_request_id}-title",
+                    block_type="heading_3",
+                    content_text=entry.topic_title,
+                    block_path=entry.target_path,
+                )
+            )
+            blocks.extend(
+                NotionBlockNode(
+                    block_id=(
+                        f"{snapshot.page_id}-ai-{entry.change_request_id}"
+                        f"-line-{line_index}"
+                    ),
+                    block_type="paragraph",
+                    content_text=line,
+                    block_path=f"{entry.target_path}/line-{line_index}",
+                )
+                for line_index, line in enumerate(entry.section_lines, start=1)
+            )
+
+        return NotionPageTree(
+            page_id=snapshot.page_id,
+            title=snapshot.title,
+            notion_path=snapshot.notion_path,
+            blocks=blocks,
+        )
+
+
 def _build_session_factory():
     engine = create_engine(
         "sqlite+pysqlite://",
@@ -129,6 +184,61 @@ def _build_session_factory():
         ],
     )
     return sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+
+def _build_review_tool_registry(
+    *,
+    snapshot_pages: dict[str, InMemoryNotionPageSnapshot],
+    telegram_client: InMemoryTelegramBotClient,
+) -> tuple[ToolRegistry, InMemoryNotionWriterClient]:
+    writer_client = InMemoryNotionWriterClient(snapshot_pages)
+    registry = ToolRegistry()
+    registry.register_tool(TelegramBotTool(telegram_client))
+    registry.register_tool(
+        NotionReaderTool(_SnapshotBackedNotionReaderClient(snapshot_pages))
+    )
+    registry.register_tool(NotionWriterTool(writer_client))
+    return registry, writer_client
+
+
+def _seed_notion_page(
+    session: Session,
+    *,
+    page_db_id: int,
+    notion_page_id: str,
+    title: str,
+    notion_path: str,
+) -> None:
+    session.add(
+        NotionPage(
+            id=page_db_id,
+            notion_page_id=notion_page_id,
+            title=title,
+            notion_path=notion_path,
+        )
+    )
+    session.commit()
+
+
+def _seed_change_request(
+    session: Session,
+    *,
+    change_request_id: int,
+    status: str = "pending",
+    target_notion_page_id: int | None = None,
+    proposal_json: str = '{"title":"Draft proposal"}',
+) -> None:
+    session.add(
+        ChangeRequest(
+            id=change_request_id,
+            source_document_id=None,
+            target_notion_page_id=target_notion_page_id,
+            status=status,
+            proposal_json=proposal_json,
+            failure_reason=None,
+        )
+    )
+    session.commit()
 
 
 def _seed_qa_chunks(session: Session) -> None:
@@ -235,7 +345,9 @@ def test_telegram_webhook_help_command_sends_reply() -> None:
         assert payload["status"] == "succeeded"
         assert payload["handled"] is True
         assert payload["command"] == "help"
-        assert payload["reply_text"] == "Available commands: /help, /health, /ingest, /ask"
+        assert payload["reply_text"] == (
+            "Available commands: /help, /health, /ingest, /ask, /accept, /reject"
+        )
         assert payload["telegram_message_id"] == 1
         assert payload["skipped_reason"] is None
         assert payload["source_document_id"] is None
@@ -245,7 +357,9 @@ def test_telegram_webhook_help_command_sends_reply() -> None:
         sent_messages = telegram_client.list_sent_messages()
         assert len(sent_messages) == 1
         assert sent_messages[0].chat_id == "555"
-        assert sent_messages[0].text == "Available commands: /help, /health, /ingest, /ask"
+        assert sent_messages[0].text == (
+            "Available commands: /help, /health, /ingest, /ask, /accept, /reject"
+        )
 
         verify_session: Session = session_factory()
         try:
@@ -546,6 +660,369 @@ def test_telegram_webhook_ask_maps_qa_provider_failure() -> None:
             assert qa_run.status == "failed"
             assert telegram_run.status == "failed"
             assert detail["workflow_run_id"] == telegram_run.id
+        finally:
+            verify_session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_telegram_webhook_accept_appends_and_reindexes_before_replying() -> None:
+    session_factory = _build_session_factory()
+    snapshot_pages = {
+        "page-telegram-accept": InMemoryNotionPageSnapshot(
+            page_id="page-telegram-accept",
+            title="NLP Week 5",
+            notion_path="Knowledge/NLP/Week5",
+            original_blocks=["Original attention note remains unchanged."],
+        )
+    }
+    seed_session = session_factory()
+    try:
+        _seed_notion_page(
+            seed_session,
+            page_db_id=101,
+            notion_page_id="page-telegram-accept",
+            title="NLP Week 5",
+            notion_path="Knowledge/NLP/Week5",
+        )
+        _seed_change_request(
+            seed_session,
+            change_request_id=31,
+            target_notion_page_id=101,
+            proposal_json=json.dumps(
+                {
+                    "title": "Telegram Accept Supplement",
+                    "target_path": (
+                        "Knowledge/NLP/Week5/AI Supplement Zone/"
+                        "Telegram Accept Supplement"
+                    ),
+                    "source": {
+                        "source_type": "chat_text",
+                        "source_display_name": "telegram-review-source",
+                    },
+                    "summary": "Accepted safely from Telegram review.",
+                    "concepts": ["human review", "safe append"],
+                    "notes": ["Re-index immediately after append."],
+                }
+            ),
+        )
+    finally:
+        seed_session.close()
+
+    telegram_client = InMemoryTelegramBotClient()
+    registry, writer_client = _build_review_tool_registry(
+        snapshot_pages=snapshot_pages,
+        telegram_client=telegram_client,
+    )
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _tool_registry_override() -> ToolRegistry:
+        return registry
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_tool_registry] = _tool_registry_override
+
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 3001,
+                "message": {
+                    "message_id": 31,
+                    "chat": {"id": 2468},
+                    "text": "/accept 31",
+                },
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "succeeded"
+        assert payload["command"] == "accept"
+        assert payload["change_request_id"] == 31
+        assert payload["change_request_status"] == "accepted"
+        assert payload["review_action"] == "accept"
+        assert payload["review_workflow_run_id"] is not None
+        assert "Appended to AI Supplement Zone" in payload["reply_text"]
+        assert "page re-index completed" in payload["reply_text"]
+
+        assert snapshot_pages["page-telegram-accept"].original_blocks == [
+            "Original attention note remains unchanged."
+        ]
+        assert len(snapshot_pages["page-telegram-accept"].ai_supplement_entries) == 1
+        operations = writer_client.list_operations(page_id="page-telegram-accept")
+        assert len(operations) == 1
+        assert operations[0].operation == "append_ai_supplement_zone"
+
+        verify_session: Session = session_factory()
+        try:
+            change_request = verify_session.get(ChangeRequest, 31)
+            assert change_request is not None
+            assert change_request.status == "accepted"
+
+            review_run = verify_session.get(
+                WorkflowRun,
+                payload["review_workflow_run_id"],
+            )
+            assert review_run is not None
+            review_metadata = json.loads(review_run.metadata_json or "{}")
+            assert review_metadata["review_action"] == "accept"
+            assert review_metadata["reviewer"] == "telegram-chat:2468"
+
+            indexing_runs = (
+                verify_session.query(WorkflowRun)
+                .filter(WorkflowRun.workflow_type == "indexing")
+                .all()
+            )
+            assert len(indexing_runs) == 1
+            indexing_metadata = json.loads(indexing_runs[0].metadata_json or "{}")
+            assert indexing_metadata["sync_mode"] == "auto_after_accept"
+
+            telegram_run = verify_session.get(WorkflowRun, payload["workflow_run_id"])
+            assert telegram_run is not None
+            gateway_metadata = json.loads(telegram_run.metadata_json or "{}")
+            assert gateway_metadata["review_action"] == "accept"
+            assert gateway_metadata["change_request_status"] == "accepted"
+            assert gateway_metadata["review_workflow_run_id"] == review_run.id
+            assert "reason" not in gateway_metadata
+        finally:
+            verify_session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_telegram_webhook_reject_updates_status_without_notion_write() -> None:
+    session_factory = _build_session_factory()
+    seed_session = session_factory()
+    try:
+        _seed_change_request(seed_session, change_request_id=32)
+    finally:
+        seed_session.close()
+
+    telegram_client = InMemoryTelegramBotClient()
+    registry, writer_client = _build_review_tool_registry(
+        snapshot_pages={},
+        telegram_client=telegram_client,
+    )
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _tool_registry_override() -> ToolRegistry:
+        return registry
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_tool_registry] = _tool_registry_override
+
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 3002,
+                "message": {
+                    "message_id": 32,
+                    "chat": {"id": 1357},
+                    "text": "/reject 32 Out of scope for this note",
+                },
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["command"] == "reject"
+        assert payload["change_request_id"] == 32
+        assert payload["change_request_status"] == "rejected"
+        assert payload["review_action"] == "reject"
+        assert payload["review_workflow_run_id"] is not None
+        assert "No Notion write was performed" in payload["reply_text"]
+        assert writer_client.list_operations() == []
+
+        verify_session: Session = session_factory()
+        try:
+            change_request = verify_session.get(ChangeRequest, 32)
+            assert change_request is not None
+            assert change_request.status == "rejected"
+            assert (
+                verify_session.query(WorkflowRun)
+                .filter(WorkflowRun.workflow_type == "indexing")
+                .count()
+                == 0
+            )
+
+            review_run = verify_session.get(
+                WorkflowRun,
+                payload["review_workflow_run_id"],
+            )
+            assert review_run is not None
+            review_metadata = json.loads(review_run.metadata_json or "{}")
+            assert review_metadata["reviewer"] == "telegram-chat:1357"
+            assert review_metadata["reason"] == "Out of scope for this note"
+
+            telegram_run = verify_session.get(WorkflowRun, payload["workflow_run_id"])
+            assert telegram_run is not None
+            gateway_metadata = json.loads(telegram_run.metadata_json or "{}")
+            assert gateway_metadata["review_action"] == "reject"
+            assert gateway_metadata["change_request_status"] == "rejected"
+            assert "reason" not in gateway_metadata
+        finally:
+            verify_session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_telegram_webhook_accept_fails_closed_without_target_page() -> None:
+    session_factory = _build_session_factory()
+    seed_session = session_factory()
+    try:
+        _seed_change_request(
+            seed_session,
+            change_request_id=33,
+            target_notion_page_id=None,
+            proposal_json=json.dumps(
+                {
+                    "title": "Missing Target",
+                    "target_path": "Knowledge/NLP/AI Supplement Zone/Missing Target",
+                    "source": {
+                        "source_type": "chat_text",
+                        "source_display_name": "telegram-review-source",
+                    },
+                    "summary": "Must stay pending without a target page.",
+                    "concepts": ["write safety"],
+                    "notes": ["Fail closed."],
+                }
+            ),
+        )
+    finally:
+        seed_session.close()
+
+    telegram_client = InMemoryTelegramBotClient()
+    registry, writer_client = _build_review_tool_registry(
+        snapshot_pages={},
+        telegram_client=telegram_client,
+    )
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _tool_registry_override() -> ToolRegistry:
+        return registry
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_tool_registry] = _tool_registry_override
+
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 3003,
+                "message": {
+                    "message_id": 33,
+                    "chat": {"id": 2468},
+                    "text": "/accept 33",
+                },
+            },
+        )
+
+        assert response.status_code == 409
+        detail = response.json()["detail"]
+        assert detail["error_code"] == "WRITE_POLICY_VIOLATION"
+        assert detail["failure_reason"] == "WRITE_POLICY_VIOLATION"
+        assert detail["workflow_run_id"] is not None
+        assert telegram_client.list_sent_messages() == []
+        assert writer_client.list_operations() == []
+
+        verify_session: Session = session_factory()
+        try:
+            change_request = verify_session.get(ChangeRequest, 33)
+            assert change_request is not None
+            assert change_request.status == "pending"
+            workflows = verify_session.query(WorkflowRun).all()
+            assert any(
+                row.workflow_type == "supplement"
+                and row.status == "failed"
+                and row.failure_reason == "WRITE_POLICY_VIOLATION"
+                for row in workflows
+            )
+            telegram_run = next(
+                row for row in workflows if row.workflow_type == "telegram"
+            )
+            assert telegram_run.id == detail["workflow_run_id"]
+            assert telegram_run.status == "failed"
+            assert telegram_run.failure_reason == "WRITE_POLICY_VIOLATION"
+            assert not any(row.workflow_type == "indexing" for row in workflows)
+        finally:
+            verify_session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_telegram_webhook_reject_without_reason_returns_usage_reply() -> None:
+    session_factory = _build_session_factory()
+    telegram_client = InMemoryTelegramBotClient()
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _tool_registry_override() -> ToolRegistry:
+        registry = ToolRegistry()
+        registry.register_tool(TelegramBotTool(telegram_client))
+        return registry
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_tool_registry] = _tool_registry_override
+
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 3004,
+                "message": {
+                    "message_id": 34,
+                    "chat": {"id": 1357},
+                    "text": "/reject 32",
+                },
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["command"] == "reject"
+        assert payload["reply_text"] == "Usage: /reject <change_request_id> <reason>"
+        assert payload["change_request_id"] is None
+        assert payload["change_request_status"] is None
+        assert payload["review_action"] == "reject"
+        assert payload["review_workflow_run_id"] is None
+
+        verify_session: Session = session_factory()
+        try:
+            assert (
+                verify_session.query(WorkflowRun)
+                .filter(WorkflowRun.workflow_type == "supplement")
+                .count()
+                == 0
+            )
         finally:
             verify_session.close()
     finally:

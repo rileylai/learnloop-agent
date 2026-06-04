@@ -479,7 +479,7 @@ Design notes:
 ### 13.6 Telegram APIs
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/api/telegram/webhook` | Handle Telegram webhook update for `/help`, `/health`, `/ingest`, and scoped `/ask` QA. |
+| POST | `/api/telegram/webhook` | Handle Telegram webhook update for `/help`, `/health`, `/ingest`, scoped `/ask` QA, and command-based accept/reject review. |
 
 Production-RAG invariant:
 - `pending` and `rejected` change requests are never used in production RAG.

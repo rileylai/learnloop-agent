@@ -168,3 +168,42 @@ Rules:
 - Telegram QA reuses `QAOrchestrator`; the gateway contains no retrieval or provider logic.
 - Production retrieval remains Notion-only and keeps pending/rejected proposals excluded.
 - Telegram workflow metadata records citation count only, not question text or citation paths.
+
+## Telegram Review Workflow (Step 35)
+
+```text
+POST /api/telegram/webhook
+-> Parse /accept or /reject command
+-> Delegate to TelegramReviewOrchestrator
+-> Reuse SupplementReviewOrchestrator
+-> For accept:
+   - validate pending state and write preconditions
+   - append through NotionWriterTool to AI Supplement Zone
+   - immediately re-index page
+   - mark change request accepted
+-> For reject:
+   - mark pending change request rejected
+   - perform no Notion write or re-index
+-> Send deterministic result reply through ToolRegistry -> TelegramBotTool
+-> Mark Telegram workflow succeeded
+```
+
+Failure path:
+- Invalid change request ids fail with `INVALID_ARGUMENT`.
+- Missing change requests and illegal transitions reuse review workflow failures
+  (`CHANGE_REQUEST_NOT_FOUND`, `INVALID_STATE_TRANSITION`).
+- Accept write-policy violations fail closed with `WRITE_POLICY_VIOLATION`;
+  the change request stays `pending` and no Telegram success reply is sent.
+
+Rules:
+- Command syntax is `/accept <change_request_id>` and
+  `/reject <change_request_id> <reason>`.
+- Telegram chat id is recorded as the deterministic reviewer identity.
+- Telegram review reuses `SupplementReviewOrchestrator`; the gateway contains
+  no state-transition or Notion write logic.
+- Accept follows `Change Request -> Human Accept -> Append to AI Supplement Zone`
+  and replies only after immediate page re-index succeeds.
+- Reject never calls Notion writer or page re-index.
+- Telegram gateway metadata records review action/status/workflow id only, not
+  the reject reason.
+- Inline review buttons remain deferred.

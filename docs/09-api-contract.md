@@ -643,7 +643,8 @@ Notes:
 ## Telegram Gateway API
 
 ### POST `/api/telegram/webhook`
-Handle one Telegram webhook update for `/help`, `/health`, `/ingest`, and `/ask`.
+Handle one Telegram webhook update for `/help`, `/health`, `/ingest`, `/ask`,
+`/accept`, and `/reject`.
 
 Request example (`/help`):
 
@@ -668,7 +669,7 @@ Success response `200`:
   "status": "succeeded",
   "handled": true,
   "command": "help",
-  "reply_text": "Available commands: /help, /health, /ingest, /ask",
+  "reply_text": "Available commands: /help, /health, /ingest, /ask, /accept, /reject",
   "telegram_message_id": 1,
   "skipped_reason": null,
   "source_document_id": null,
@@ -676,7 +677,10 @@ Success response `200`:
   "source_type": null,
   "qa_workflow_run_id": null,
   "insufficient_info": null,
-  "citations": []
+  "citations": [],
+  "review_workflow_run_id": null,
+  "review_action": null,
+  "change_request_status": null
 }
 ```
 
@@ -716,7 +720,10 @@ Success response `200` (`/ingest`):
   "source_type": "pdf",
   "qa_workflow_run_id": null,
   "insufficient_info": null,
-  "citations": []
+  "citations": [],
+  "review_workflow_run_id": null,
+  "review_action": null,
+  "change_request_status": null
 }
 ```
 
@@ -753,7 +760,86 @@ Success response `200` (`/ask`):
   "insufficient_info": false,
   "citations": [
     "Knowledge/NLP/Week5/Attention"
-  ]
+  ],
+  "review_workflow_run_id": null,
+  "review_action": null,
+  "change_request_status": null
+}
+```
+
+Request example (`/accept`):
+
+```json
+{
+  "update_id": 1006,
+  "message": {
+    "message_id": 16,
+    "chat": {
+      "id": 555
+    },
+    "text": "/accept 34"
+  }
+}
+```
+
+Success response `200` (`/accept`, after append + re-index):
+
+```json
+{
+  "workflow_run_id": 607,
+  "status": "succeeded",
+  "handled": true,
+  "command": "accept",
+  "reply_text": "Change request 34 accepted. Appended to AI Supplement Zone and page re-index completed.",
+  "telegram_message_id": 4,
+  "skipped_reason": null,
+  "source_document_id": null,
+  "change_request_id": 34,
+  "source_type": null,
+  "qa_workflow_run_id": null,
+  "insufficient_info": null,
+  "citations": [],
+  "review_workflow_run_id": 608,
+  "review_action": "accept",
+  "change_request_status": "accepted"
+}
+```
+
+Request example (`/reject`):
+
+```json
+{
+  "update_id": 1007,
+  "message": {
+    "message_id": 17,
+    "chat": {
+      "id": 555
+    },
+    "text": "/reject 35 Out of scope for this note"
+  }
+}
+```
+
+Success response `200` (`/reject`, no Notion write):
+
+```json
+{
+  "workflow_run_id": 609,
+  "status": "succeeded",
+  "handled": true,
+  "command": "reject",
+  "reply_text": "Change request 35 rejected. No Notion write was performed.",
+  "telegram_message_id": 5,
+  "skipped_reason": null,
+  "source_document_id": null,
+  "change_request_id": 35,
+  "source_type": null,
+  "qa_workflow_run_id": null,
+  "insufficient_info": null,
+  "citations": [],
+  "review_workflow_run_id": 610,
+  "review_action": "reject",
+  "change_request_status": "rejected"
 }
 ```
 
@@ -773,7 +859,10 @@ Skipped response `200` (no text message):
   "source_type": null,
   "qa_workflow_run_id": null,
   "insufficient_info": null,
-  "citations": []
+  "citations": [],
+  "review_workflow_run_id": null,
+  "review_action": null,
+  "change_request_status": null
 }
 ```
 
@@ -799,6 +888,12 @@ Notes:
 - `/ask` delegates to the existing QA orchestrator and returns Notion path citations.
 - Scope flags can be repeated. Inline forms such as `--page=page-id` and
   `--section=Knowledge/NLP/Week5` are also accepted.
+- `/accept <change_request_id>` delegates to the existing accept workflow and
+  replies only after append to `AI Supplement Zone` and immediate page re-index.
+- `/reject <change_request_id> <reason>` delegates to the existing reject
+  workflow and performs no Notion write or page re-index.
+- Telegram chat id becomes the deterministic reviewer identity.
+- Inline review buttons are deferred.
 - Route and orchestrator do not call Telegram API directly.
 - Screenshot ingestion accepts multiple photo items and creates one screenshot-batch source document.
 - `/ingest` creates `pending` change requests only; Notion append remains in accept workflow.

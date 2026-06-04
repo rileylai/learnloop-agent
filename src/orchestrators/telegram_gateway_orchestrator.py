@@ -15,6 +15,10 @@ from src.orchestrators.telegram_qa_orchestrator import (
     TelegramQAError,
     TelegramQAOrchestrator,
 )
+from src.orchestrators.telegram_review_orchestrator import (
+    TelegramReviewError,
+    TelegramReviewOrchestrator,
+)
 from src.services import STANDARD_FAILURE_REASONS, WorkflowRunService
 from src.tools import ToolContext, ToolRegistry
 
@@ -36,6 +40,9 @@ class TelegramGatewayResult:
     qa_workflow_run_id: Optional[int]
     insufficient_info: Optional[bool]
     citations: list[str]
+    review_workflow_run_id: Optional[int]
+    review_action: Optional[str]
+    change_request_status: Optional[str]
 
 
 class TelegramGatewayError(Exception):
@@ -64,11 +71,13 @@ class TelegramGatewayOrchestrator:
         workflow_run_service: WorkflowRunService,
         telegram_ingestion_orchestrator: Optional[TelegramIngestionOrchestrator] = None,
         telegram_qa_orchestrator: Optional[TelegramQAOrchestrator] = None,
+        telegram_review_orchestrator: Optional[TelegramReviewOrchestrator] = None,
     ) -> None:
         self._tool_registry = tool_registry
         self._workflow_run_service = workflow_run_service
         self._telegram_ingestion_orchestrator = telegram_ingestion_orchestrator
         self._telegram_qa_orchestrator = telegram_qa_orchestrator
+        self._telegram_review_orchestrator = telegram_review_orchestrator
 
     async def handle_webhook(
         self,
@@ -130,6 +139,9 @@ class TelegramGatewayOrchestrator:
                     qa_workflow_run_id=None,
                     insufficient_info=None,
                     citations=[],
+                    review_workflow_run_id=None,
+                    review_action=None,
+                    change_request_status=None,
                 )
 
             command = self._parse_command(normalized_input_text)
@@ -139,6 +151,9 @@ class TelegramGatewayOrchestrator:
             qa_workflow_run_id: Optional[int] = None
             insufficient_info: Optional[bool] = None
             citations: list[str] = []
+            review_workflow_run_id: Optional[int] = None
+            review_action: Optional[str] = None
+            change_request_status: Optional[str] = None
             if command == "health":
                 reply_text = self._build_reply_for_command(command)
             elif command == "help":
@@ -159,6 +174,25 @@ class TelegramGatewayOrchestrator:
                 qa_workflow_run_id = qa_result.qa_workflow_run_id
                 insufficient_info = qa_result.insufficient_info
                 citations = qa_result.citation_paths
+            elif command in {"accept", "reject"}:
+                if self._telegram_review_orchestrator is None:
+                    raise TelegramGatewayError(
+                        error_code="TELEGRAM_REVIEW_NOT_CONFIGURED",
+                        message="Telegram review orchestrator is not configured",
+                        http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                        failure_reason="UNKNOWN_ERROR",
+                    )
+                review_result = await self._telegram_review_orchestrator.handle_review_command(
+                    command=command,
+                    command_text=normalized_input_text,
+                    chat_id=normalized_chat_id,
+                    request_workflow_id=request_workflow_id,
+                )
+                reply_text = review_result.reply_text
+                review_workflow_run_id = review_result.review_workflow_run_id
+                change_request_id = review_result.change_request_id
+                change_request_status = review_result.change_request_status
+                review_action = review_result.review_action
             elif command == "ingest" or (has_media and command == "unknown"):
                 if self._telegram_ingestion_orchestrator is None:
                     raise TelegramGatewayError(
@@ -230,6 +264,9 @@ class TelegramGatewayOrchestrator:
                         "qa_workflow_run_id": qa_workflow_run_id,
                         "insufficient_info": insufficient_info,
                         "citation_count": len(citations),
+                        "review_workflow_run_id": review_workflow_run_id,
+                        "review_action": review_action,
+                        "change_request_status": change_request_status,
                     },
                     sort_keys=True,
                 ),
@@ -249,6 +286,9 @@ class TelegramGatewayOrchestrator:
                 qa_workflow_run_id=qa_workflow_run_id,
                 insufficient_info=insufficient_info,
                 citations=citations,
+                review_workflow_run_id=review_workflow_run_id,
+                review_action=review_action,
+                change_request_status=change_request_status,
             )
         except TelegramIngestionError as exc:
             self._mark_failed_workflow(
@@ -264,6 +304,19 @@ class TelegramGatewayOrchestrator:
                 workflow_run_id=workflow_run.id,
             ) from exc
         except TelegramQAError as exc:
+            self._mark_failed_workflow(
+                workflow_run_id=workflow_run.id,
+                failure_reason=exc.failure_reason,
+                error_code=exc.error_code,
+            )
+            raise TelegramGatewayError(
+                error_code=exc.error_code,
+                message=exc.message,
+                http_status_code=exc.http_status_code,
+                failure_reason=self._normalize_failure_reason(exc.failure_reason),
+                workflow_run_id=workflow_run.id,
+            ) from exc
+        except TelegramReviewError as exc:
             self._mark_failed_workflow(
                 workflow_run_id=workflow_run.id,
                 failure_reason=exc.failure_reason,
@@ -315,7 +368,7 @@ class TelegramGatewayOrchestrator:
         if command == "health":
             return "LearnLoop Agent status: ok"
         if command == "help":
-            return "Available commands: /help, /health, /ingest, /ask"
+            return "Available commands: /help, /health, /ingest, /ask, /accept, /reject"
         return "Unsupported command. Use /help."
 
     def _normalize_failure_reason(self, failure_reason: str) -> str:
