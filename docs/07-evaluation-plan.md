@@ -123,3 +123,31 @@ citation_accuracy: 1.000 (3/3)
 threshold: 1.000
 status: pass
 ```
+
+## Write Safety Evaluation
+
+`tests/evals/write_safety_eval.py` checks deterministic Notion write-safety
+invariants using the in-memory Notion writer client. It does not call real
+Notion.
+
+Checks:
+
+- Accepted append keeps original/manual blocks unchanged.
+- The only write operation is `append_ai_supplement_zone`.
+- The append target path stays under `AI Supplement Zone`.
+- Retry with the same change request is idempotent and creates no duplicate
+  supplement entry.
+- Write-policy violations fail closed with `WRITE_POLICY_VIOLATION` and no
+  append operation.
+
+Run:
+
+```bash
+uv run python tests/evals/write_safety_eval.py
+```
+
+Expected output includes:
+
+```text
+write_safety: pass (4/4)
+```
