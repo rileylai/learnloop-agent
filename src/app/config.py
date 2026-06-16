@@ -21,6 +21,7 @@ class Settings(BaseModel):
     log_level: str = Field(default="INFO")
     database_url: Optional[str] = None
     redis_url: Optional[str] = None
+    mock_notion_data_dir: Optional[str] = None
     notion_token: Optional[str] = None
     openai_api_key: Optional[str] = None
     telegram_bot_token: Optional[str] = None
@@ -32,6 +33,7 @@ class Settings(BaseModel):
             log_level=os.getenv("LOG_LEVEL", "INFO"),
             database_url=_read_optional_env("DATABASE_URL"),
             redis_url=_read_optional_env("REDIS_URL"),
+            mock_notion_data_dir=_read_optional_env("MOCK_NOTION_DATA_DIR"),
             notion_token=_read_optional_env("NOTION_TOKEN"),
             openai_api_key=_read_optional_env("OPENAI_API_KEY"),
             telegram_bot_token=_read_optional_env("TELEGRAM_BOT_TOKEN"),

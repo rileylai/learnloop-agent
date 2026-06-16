@@ -5,10 +5,12 @@ from functools import lru_cache
 from src.app.config import get_settings
 from src.providers import OpenAIClient, ProviderRouter
 from src.tools import (
+    DEFAULT_MOCK_NOTION_DATA_DIR,
     DisabledTelegramBotClient,
     ImageOCRTool,
     InMemoryNotionReaderClient,
     InMemoryNotionWriterClient,
+    JSONMockNotionReaderClient,
     NotionReaderTool,
     NotionWriterTool,
     PDFParserTool,
@@ -28,7 +30,16 @@ from src.tools import (
 def get_tool_registry() -> ToolRegistry:
     registry = ToolRegistry()
     settings = get_settings()
-    registry.register_tool(NotionReaderTool(InMemoryNotionReaderClient(pages={})))
+    notion_reader_client = InMemoryNotionReaderClient(pages={})
+    if settings.mock_notion_data_dir:
+        notion_reader_client = JSONMockNotionReaderClient.from_directory(
+            settings.mock_notion_data_dir
+        )
+    elif DEFAULT_MOCK_NOTION_DATA_DIR.is_dir():
+        notion_reader_client = JSONMockNotionReaderClient.from_directory(
+            DEFAULT_MOCK_NOTION_DATA_DIR
+        )
+    registry.register_tool(NotionReaderTool(notion_reader_client))
     registry.register_tool(NotionWriterTool(InMemoryNotionWriterClient(pages={})))
     registry.register_tool(PDFParserTool(PyPDFParserClient()))
     registry.register_tool(URLArticleParserTool(TrafilaturaURLArticleParserClient()))
