@@ -89,3 +89,37 @@ Expected output includes:
 ```text
 retrieval_hit_rate: 1.000 (3/3)
 ```
+
+## Citation Accuracy Evaluation
+
+`tests/evals/citation_accuracy_eval.py` measures whether deterministic QA
+citation paths match the expected source paths in the golden question set.
+
+The MVP Step 38 script uses the same synthetic in-memory SQLite fixture as the
+retrieval hit-rate eval. It retrieves production-safe Notion chunks, converts
+their `notion_path` values into unique citation paths, then compares those
+paths to each golden question's expected paths.
+
+Matching rules:
+
+- Compare citation paths against expected paths with exact string match.
+- Count one accurate citation result per golden question when at least one
+  expected path appears in the citation paths.
+- Compute `citation_accuracy = accurate_count / total_questions`.
+- Default threshold is `1.0`.
+- Keep citation sources scoped to `source_kind="notion"`.
+- Do not inspect or judge generated answer text.
+
+Run:
+
+```bash
+uv run python tests/evals/citation_accuracy_eval.py
+```
+
+Expected output includes:
+
+```text
+citation_accuracy: 1.000 (3/3)
+threshold: 1.000
+status: pass
+```
