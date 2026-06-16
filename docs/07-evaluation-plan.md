@@ -151,3 +151,35 @@ Expected output includes:
 ```text
 write_safety: pass (4/4)
 ```
+
+## Manual Sync Reconciliation Evaluation
+
+`tests/evals/manual_sync_eval.py` checks deterministic manual Notion sync
+reconciliation. It uses an in-memory Notion reader and SQLite database, then
+exercises the real indexing orchestrators, repositories, chunker, and production
+retriever path.
+
+The eval indexes a synthetic page that contains manual content and an accepted
+AI supplement under `AI Supplement Zone`. It then simulates the user manually
+deleting that AI supplement in Notion and runs manual incremental sync.
+
+Checks:
+
+- The AI supplement chunk is retrievable before manual sync.
+- After manual sync, the deleted AI supplement chunk is absent from production
+  retrieval and raw Notion chunks.
+- Manual note chunks from the same page remain retrievable.
+- Incremental sync completes with `sync_mode=manual` and page-level replacement
+  metadata.
+
+Run:
+
+```bash
+uv run python tests/evals/manual_sync_eval.py
+```
+
+Expected output includes:
+
+```text
+manual_sync_reconciliation: pass (4/4)
+```

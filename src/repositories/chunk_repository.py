@@ -106,6 +106,27 @@ class ChunkRepository:
             self._session.refresh(chunk)
         return inserted
 
+    def delete_page_chunks(self, *, notion_page_db_id: int) -> int:
+        page_block_ids = [
+            row.id
+            for row in self._session.query(NotionBlock.id)
+            .filter(NotionBlock.notion_page_id == notion_page_db_id)
+            .all()
+        ]
+        if not page_block_ids:
+            return 0
+
+        deleted_count = (
+            self._session.query(KnowledgeChunk)
+            .filter(
+                KnowledgeChunk.source_kind == "notion",
+                KnowledgeChunk.notion_block_id.in_(page_block_ids),
+            )
+            .delete(synchronize_session=False)
+        )
+        self._session.commit()
+        return int(deleted_count or 0)
+
     def list_production_chunks(
         self,
         *,

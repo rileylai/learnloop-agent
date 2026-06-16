@@ -250,6 +250,10 @@ class NotionPageIndexOrchestrator:
                     for block_payload in block_payloads
                 ],
             )
+            if self._chunk_repository is not None:
+                self._chunk_repository.delete_page_chunks(
+                    notion_page_db_id=notion_page.id,
+                )
             inserted_blocks = self._notion_block_repository.replace_page_blocks(
                 notion_page_db_id=notion_page.id,
                 root_blocks=[

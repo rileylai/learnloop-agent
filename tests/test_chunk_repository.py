@@ -160,6 +160,42 @@ def test_chunk_repository_upsert_keeps_other_page_chunks() -> None:
     assert all_chunks[1].chunk_text == "Chunk A1"
 
 
+def test_chunk_repository_delete_page_chunks_keeps_other_pages() -> None:
+    session = _build_test_session()
+    page_a_id, page_b_id = _seed_page_and_blocks(session)
+    repository = ChunkRepository(session)
+
+    repository.upsert_chunks(
+        notion_page_db_id=page_a_id,
+        chunks=[
+            NotionChunkUpsert(
+                chunk_index=0,
+                chunk_text="Chunk A1",
+                notion_path="Knowledge/PageA/A1",
+                notion_block_ids=["blk-a-1"],
+            )
+        ],
+    )
+    repository.upsert_chunks(
+        notion_page_db_id=page_b_id,
+        chunks=[
+            NotionChunkUpsert(
+                chunk_index=0,
+                chunk_text="Chunk B1",
+                notion_path="Knowledge/PageB/B1",
+                notion_block_ids=["blk-b-1"],
+            )
+        ],
+    )
+
+    deleted_count = repository.delete_page_chunks(notion_page_db_id=page_a_id)
+
+    assert deleted_count == 1
+    all_chunks = session.query(KnowledgeChunk).order_by(KnowledgeChunk.id.asc()).all()
+    assert len(all_chunks) == 1
+    assert all_chunks[0].chunk_text == "Chunk B1"
+
+
 def test_chunk_repository_upsert_raises_when_block_mapping_missing() -> None:
     session = _build_test_session()
     page_a_id, _ = _seed_page_and_blocks(session)
