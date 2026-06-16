@@ -58,3 +58,34 @@ uv run python tests/evals/golden_questions.py
 - Production-RAG exclusion: pending and rejected content is absent.
 
 No LLM-as-judge is used in MVP evaluation.
+
+## Retrieval Hit Rate Evaluation
+
+`tests/evals/retrieval_eval.py` measures whether each golden question's expected
+path appears in the top-k paths returned by `ProductionChunkRetriever`.
+
+The MVP Step 37 script uses a synthetic in-memory SQLite fixture built from the
+golden question set. This keeps the regression deterministic before public mock
+Notion data exists. It still exercises the real repository and retriever path:
+
+`Golden Questions -> Synthetic Notion chunks -> ChunkRepository -> ProductionChunkRetriever -> Hit-rate calculation`
+
+Matching rules:
+
+- Compare expected paths against retrieved top-k paths with exact string match.
+- Count one hit per golden question when at least one expected path appears.
+- Compute `hit_rate = hit_count / total_questions`.
+- Keep retrieval scoped to `source_kind="notion"`.
+- Exclude non-production source chunks from retrieved results.
+
+Run:
+
+```bash
+uv run python tests/evals/retrieval_eval.py
+```
+
+Expected output includes:
+
+```text
+retrieval_hit_rate: 1.000 (3/3)
+```
