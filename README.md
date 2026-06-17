@@ -1,104 +1,249 @@
 # LearnLoop Agent
 
-LearnLoop Agent is a local-first Notion knowledge agent that turns learning materials into reviewed AI supplements and answers questions using RAG over existing Notion notes.
+LearnLoop Agent is a local-first Notion knowledge agent.
+It reads existing Notion notes as knowledge, generates reviewable AI supplement
+proposals from new learning sources, and writes accepted content only into
+`AI Supplement Zone`.
 
-## 1. What problem this solves
+## What it does
 
-Students and self-learners often collect materials in many places, but notes become fragmented and hard to query.
-LearnLoop Agent helps convert new materials into structured, reviewable supplements while protecting existing notes.
-
-## 2. Core idea
-
-- Read existing Notion notes as knowledge.
-- Ingest new learning sources.
-- Generate AI supplement proposals.
-- Require human review.
-- Append accepted content to `AI Supplement Zone` only.
+- Index existing Notion notes as read-only knowledge.
+- Ingest PDF, URL, YouTube transcript, screenshot OCR, and chat text sources.
+- Generate AI supplement proposals from new sources.
+- Require human review before any write.
+- Append accepted content only under `AI Supplement Zone`.
 - Answer questions with RAG and Notion path citation.
 
-## 3. MVP features
-
-- Telegram-first ingestion.
-- PDF, URL, YouTube transcript, screenshot OCR, chat text ingestion.
-- Full indexing and page re-indexing.
-- Manual incremental sync for manual Notion edits.
-- AI supplement proposal + human accept/reject flow.
-- Append-only writes to `AI Supplement Zone`.
-- Auto page re-index after accepted append.
-- RAG QA with citation.
-
-## 4. Safety model
+## Safety model
 
 - Existing Notion content is read-only for direct agent editing.
-- No direct overwrite.
-- Pending/rejected proposals are excluded from production RAG.
-- All writes follow: `Change Request -> Human Accept -> Append to AI Supplement Zone`.
-
-## 5. Notion ownership model
-
-- Existing notes are read-only for direct agent editing.
 - Manual-created notes are read-only for direct agent editing.
 - Old AI supplement blocks are read-only for direct agent editing.
-- User manual merge/delete actions are valid.
-- Notion is the source of truth.
+- Pending and rejected change requests are excluded from production RAG.
+- All AI writes follow: `Change Request -> Human Accept -> Append to AI Supplement Zone`.
+- Notion remains the source of truth.
 
-## 6. AI Supplement Zone layout
-
-```text
-Original page/toggle/section
-└── AI Supplement Zone
-    └── YYYY-MM-DD
-        └── Topic title
-            - Source: ...
-            - Summary: ...
-            - Key Concepts: ...
-            - Notes: ...
-```
-
-## 7. Architecture overview
+## Architecture rule
 
 High-level flow:
-`API Route -> Orchestrator -> Service/Tool -> Repository -> External System`
 
-## 8. Tech stack
+```text
+API Route -> Orchestrator -> Service / Tool -> Repository -> External System
+```
 
-- Python + FastAPI (implementation starts in later steps)
-- PostgreSQL + pgvector
-- Redis + RQ via QueueClient interface
-- OpenAI provider interface
-- Official Notion API
-- Local-first Docker Compose runtime
+LLM flow:
 
-## 9. Current status
+```text
+API Route -> Orchestrator -> Provider Router -> Provider Adapter
+```
 
-This project is in repository foundation stage and is not ready for production yet.
-Backend logic is not implemented in this step.
+Tool flow:
 
-## 10. Local runtime model
+```text
+API Route -> Orchestrator -> Tool Registry -> Local Tool Adapter
+```
+
+## Local runtime
 
 - MVP is local-only.
-- The service works only when the local app/service is running.
-- Always-on cloud deployment is not part of MVP.
+- Docker Compose provides local PostgreSQL and Redis.
+- The bundled mock Notion pages under `mock_data/notion_pages/` are loaded
+  automatically for the demo flow.
+- The default demo path performs no real Notion write.
 
-## 11. Planned roadmap
+## Prerequisites
 
-- V1: local-first MVP with safe review and append workflow.
-- V2: cloud deployment and always-on operation.
+- Python 3.9+
+- [`uv`](https://docs.astral.sh/uv/)
+- Docker Desktop or Docker Engine with Compose
+- An OpenAI API key for the README QA demo
 
-## 12. Repository structure
+Notes:
+
+- `OPENAI_API_KEY` is required for `POST /api/qa`.
+- Without `OPENAI_API_KEY`, indexing still works but `/api/qa` returns `PROVIDER_NOT_FOUND`.
+- `NOTION_TOKEN` is not required for the mock demo flow.
+- `TELEGRAM_BOT_TOKEN` is not required for the mock demo flow.
+- Tesseract is only needed later for screenshot OCR, not for `/health` or mock QA.
+
+## Quick start
+
+### 1. Install Python dependencies
+
+```bash
+uv sync --dev
+```
+
+### 2. Prepare environment variables
+
+Copy the template:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` with the values you need for the local demo:
+
+```bash
+APP_ENV=local
+LOG_LEVEL=INFO
+DATABASE_URL=postgresql+psycopg://learnloop:learnloop@localhost:5432/learnloop
+REDIS_URL=redis://localhost:6379/0
+OPENAI_API_KEY=your-openai-api-key
+```
+
+Important:
+This project currently reads process environment variables directly.
+It does not auto-load `.env`, so load the file into your shell before running
+the API or Alembic commands:
+
+```bash
+set -a
+source .env
+set +a
+```
+
+Optional:
+
+- `MOCK_NOTION_DATA_DIR` if you want a different mock data directory.
+- `NOTION_TOKEN` only when you later switch from mock pages to the real Notion API.
+- `TELEGRAM_BOT_TOKEN` only for Telegram webhook testing.
+
+### 3. Start local services
+
+```bash
+docker compose up -d
+```
+
+This starts:
+
+- PostgreSQL with pgvector on `localhost:5432`
+- Redis on `localhost:6379`
+
+### 4. Run database migrations
+
+```bash
+uv run alembic upgrade head
+```
+
+### 5. Start the API
+
+```bash
+uv run uvicorn src.app.main:app --reload
+```
+
+### 6. Verify health
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+Expected response:
+
+```json
+{"status":"ok"}
+```
+
+## Mock demo flow
+
+The repo already includes synthetic, public-safe mock Notion pages:
+
+- `page-nlp-week5`
+- `page-rag-basics`
+- `page-iso-9001`
+
+These pages are read through the same `NotionReaderTool` boundary used by the
+real indexing flow, but without any real Notion access.
+
+### 1. Index one mock Notion page
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/notion/index/page \
+  -H "Content-Type: application/json" \
+  -d '{"page_id":"page-nlp-week5"}'
+```
+
+Expected behavior:
+
+- Response status is `200`
+- `page_title` is `NLP Week 5`
+- `notion_path` is `Knowledge/NLP/Week5`
+- `indexed_block_count` is greater than `0`
+
+### 2. Ask a mock QA question
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/qa \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What does positional encoding do?",
+    "page_ids": ["page-nlp-week5"],
+    "top_k": 5,
+    "provider_name": "openai",
+    "model": "gpt-4o-mini"
+  }'
+```
+
+Expected behavior:
+
+- Response status is `200`
+- `status` is `succeeded`
+- `insufficient_info` is `false`
+- `citations` includes a path under `Knowledge/NLP/Week5`
+- `provider` is `openai`
+
+The exact answer text can vary by model, but it should stay grounded in the
+indexed mock notes and accepted synthetic `AI Supplement Zone` content.
+
+### 3. Optional second QA example
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/notion/index/page \
+  -H "Content-Type: application/json" \
+  -d '{"page_id":"page-rag-basics"}'
+```
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/qa \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Why should a learning agent return citations?",
+    "page_ids": ["page-rag-basics"],
+    "top_k": 5,
+    "provider_name": "openai",
+    "model": "gpt-4o-mini"
+  }'
+```
+
+Expected behavior:
+
+- The answer explains citation discipline.
+- `citations` includes a path under `Knowledge/AI/RAG Basics`.
+
+## Current limits
+
+- MVP is local-only.
+- Telegram is the first user channel, but it is optional for the README demo.
+- No direct original-note editing.
+- No standalone MCP server in MVP.
+- No always-on cloud sync.
+- No reranker.
+- No LLM-as-judge.
+
+## Repository structure
 
 ```text
 AGENTS.md
 README.md
-DAILY_LOG.md
 docs/
+mock_data/
 src/
 tests/
-mock_data/
+dev_state/
 observability/
 ```
 
-## 13. Documentation map
+## Documentation map
 
 - `docs/00-design-doc.md`
 - `docs/01-architecture.md`
@@ -112,7 +257,8 @@ observability/
 - `docs/09-api-contract.md`
 - `docs/10-deployment.md`
 - `docs/11-coding-style.md`
+- `docs/12-github-collaboration-rules.md`
 
-## 14. License
+## License
 
-License will be added in a later step.
+See [LICENSE](LICENSE).
