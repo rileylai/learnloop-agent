@@ -268,7 +268,7 @@ class QAOrchestrator:
         except ProviderNotFoundError as exc:
             self._mark_failed_workflow(
                 workflow_run_id=workflow_run.id,
-                failure_reason="UNKNOWN_ERROR",
+                failure_reason="PROVIDER_NOT_FOUND",
                 error_code="PROVIDER_NOT_FOUND",
                 provider_name=normalized_provider_name,
                 model=normalized_model,
@@ -279,13 +279,13 @@ class QAOrchestrator:
                 error_code="PROVIDER_NOT_FOUND",
                 message=str(exc),
                 http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-                failure_reason="UNKNOWN_ERROR",
+                failure_reason="PROVIDER_NOT_FOUND",
                 workflow_run_id=workflow_run.id,
             ) from exc
         except (LLMClientError, ProviderRouterError) as exc:
             self._mark_failed_workflow(
                 workflow_run_id=workflow_run.id,
-                failure_reason="UNKNOWN_ERROR",
+                failure_reason="LLM_PROVIDER_ERROR",
                 error_code="LLM_PROVIDER_ERROR",
                 provider_name=normalized_provider_name,
                 model=normalized_model,
@@ -296,7 +296,7 @@ class QAOrchestrator:
                 error_code="LLM_PROVIDER_ERROR",
                 message=f"LLM provider request failed: {exc}",
                 http_status_code=HTTPStatus.BAD_GATEWAY,
-                failure_reason="UNKNOWN_ERROR",
+                failure_reason="LLM_PROVIDER_ERROR",
                 workflow_run_id=workflow_run.id,
             ) from exc
         except ValueError as exc:

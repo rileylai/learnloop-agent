@@ -467,6 +467,69 @@ def test_supplement_propose_api_returns_llm_output_invalid() -> None:
         app.dependency_overrides.clear()
 
 
+def test_supplement_propose_api_returns_provider_not_found_when_provider_missing() -> None:
+    session_factory = _build_session_factory()
+    seed_session = session_factory()
+    try:
+        _seed_source_document(
+            seed_session,
+            source_document_id=4,
+            source_type="chat_text",
+            source_display_name="chat-2026-06-17",
+            raw_text="Notes about residual connections and layer normalization.",
+        )
+    finally:
+        seed_session.close()
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _provider_router_override() -> ProviderRouter:
+        return ProviderRouter()
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_provider_router] = _provider_router_override
+
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/supplement/propose",
+            json={
+                "source_document_id": 4,
+                "provider_name": "openai",
+                "model": "gpt-4o-mini",
+            },
+        )
+
+        assert response.status_code == 500
+        detail = response.json()["detail"]
+        assert detail["error_code"] == "PROVIDER_NOT_FOUND"
+        assert detail["failure_reason"] == "PROVIDER_NOT_FOUND"
+        assert detail["workflow_run_id"] is not None
+
+        verify_session = session_factory()
+        try:
+            workflow_run = verify_session.get(WorkflowRun, detail["workflow_run_id"])
+            assert workflow_run is not None
+            assert workflow_run.workflow_type == "supplement"
+            assert workflow_run.status == "failed"
+            assert workflow_run.failure_reason == "PROVIDER_NOT_FOUND"
+            metadata = json.loads(workflow_run.metadata_json or "{}")
+            assert metadata["provider_name"] == "openai"
+            assert metadata["model"] == "gpt-4o-mini"
+            assert metadata["prompt_id"] == "supplement_proposal"
+            assert metadata["prompt_version"] == "supplement_proposal_v1"
+            assert verify_session.query(ChangeRequest).count() == 0
+        finally:
+            verify_session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_supplement_accept_api_appends_and_reindexes_before_accepting() -> None:
     session_factory = _build_session_factory()
     seed_session = session_factory()

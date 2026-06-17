@@ -12,7 +12,13 @@ from src.app.main import app
 from src.db.base import Base
 from src.db.models import KnowledgeChunk, NotionBlock, NotionPage, WorkflowRun
 from src.db.session import get_db_session
-from src.providers import LLMProvider, LLMRequest, LLMResponse, ProviderRouter
+from src.providers import (
+    LLMClientError,
+    LLMProvider,
+    LLMRequest,
+    LLMResponse,
+    ProviderRouter,
+)
 
 
 class FakeProvider(LLMProvider):
@@ -29,6 +35,16 @@ class FakeProvider(LLMProvider):
             token_input=25,
             token_output=10,
         )
+
+
+class FailingProvider(LLMProvider):
+    @property
+    def name(self) -> str:
+        return "openai"
+
+    async def generate(self, request: LLMRequest) -> LLMResponse:
+        _ = request
+        raise LLMClientError("upstream timeout")
 
 
 def _build_session_factory():
@@ -257,7 +273,7 @@ def test_qa_api_returns_provider_not_found_when_provider_missing() -> None:
         assert response.status_code == 500
         payload = response.json()["detail"]
         assert payload["error_code"] == "PROVIDER_NOT_FOUND"
-        assert payload["failure_reason"] == "UNKNOWN_ERROR"
+        assert payload["failure_reason"] == "PROVIDER_NOT_FOUND"
         assert payload["workflow_run_id"] is not None
 
         verify_session: Session = session_factory()
@@ -266,7 +282,66 @@ def test_qa_api_returns_provider_not_found_when_provider_missing() -> None:
             assert workflow_run is not None
             assert workflow_run.workflow_type == "qa"
             assert workflow_run.status == "failed"
-            assert workflow_run.failure_reason == "UNKNOWN_ERROR"
+            assert workflow_run.failure_reason == "PROVIDER_NOT_FOUND"
+            metadata = json.loads(workflow_run.metadata_json or "{}")
+            assert metadata["provider_name"] == "openai"
+            assert metadata["model"] == "gpt-4o-mini"
+            assert metadata["prompt_id"] == "qa_answer"
+            assert metadata["prompt_version"] == "qa_answer_v1"
+        finally:
+            verify_session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_qa_api_returns_llm_provider_error_when_provider_request_fails() -> None:
+    session_factory = _build_session_factory()
+    seed_session = session_factory()
+    try:
+        _seed_chunks(seed_session)
+    finally:
+        seed_session.close()
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _provider_router_override() -> ProviderRouter:
+        router = ProviderRouter()
+        router.register_provider(FailingProvider())
+        return router
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_provider_router] = _provider_router_override
+
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/qa",
+            json={
+                "query": "Explain attention in week5 notes",
+                "top_k": 3,
+                "provider_name": "openai",
+                "model": "gpt-4o-mini",
+            },
+        )
+
+        assert response.status_code == 502
+        payload = response.json()["detail"]
+        assert payload["error_code"] == "LLM_PROVIDER_ERROR"
+        assert payload["failure_reason"] == "LLM_PROVIDER_ERROR"
+        assert payload["workflow_run_id"] is not None
+
+        verify_session: Session = session_factory()
+        try:
+            workflow_run = verify_session.get(WorkflowRun, payload["workflow_run_id"])
+            assert workflow_run is not None
+            assert workflow_run.workflow_type == "qa"
+            assert workflow_run.status == "failed"
+            assert workflow_run.failure_reason == "LLM_PROVIDER_ERROR"
             metadata = json.loads(workflow_run.metadata_json or "{}")
             assert metadata["provider_name"] == "openai"
             assert metadata["model"] == "gpt-4o-mini"

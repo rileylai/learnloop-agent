@@ -459,7 +459,7 @@ def test_telegram_webhook_returns_service_unavailable_when_not_configured() -> N
         assert response.status_code == 503
         detail = response.json()["detail"]
         assert detail["error_code"] == "TELEGRAM_NOT_CONFIGURED"
-        assert detail["failure_reason"] == "UNKNOWN_ERROR"
+        assert detail["failure_reason"] == "TELEGRAM_NOT_CONFIGURED"
         assert detail["workflow_run_id"] is not None
 
         verify_session: Session = session_factory()
@@ -468,7 +468,7 @@ def test_telegram_webhook_returns_service_unavailable_when_not_configured() -> N
             assert workflow_run is not None
             assert workflow_run.workflow_type == "telegram"
             assert workflow_run.status == "failed"
-            assert workflow_run.failure_reason == "UNKNOWN_ERROR"
+            assert workflow_run.failure_reason == "TELEGRAM_NOT_CONFIGURED"
         finally:
             verify_session.close()
     finally:
@@ -646,7 +646,7 @@ def test_telegram_webhook_ask_maps_qa_provider_failure() -> None:
         assert response.status_code == 500
         detail = response.json()["detail"]
         assert detail["error_code"] == "PROVIDER_NOT_FOUND"
-        assert detail["failure_reason"] == "UNKNOWN_ERROR"
+        assert detail["failure_reason"] == "PROVIDER_NOT_FOUND"
         assert detail["workflow_run_id"] is not None
         assert telegram_client.list_sent_messages() == []
 
@@ -658,7 +658,9 @@ def test_telegram_webhook_ask_maps_qa_provider_failure() -> None:
                 row for row in workflow_runs if row.workflow_type == "telegram"
             )
             assert qa_run.status == "failed"
+            assert qa_run.failure_reason == "PROVIDER_NOT_FOUND"
             assert telegram_run.status == "failed"
+            assert telegram_run.failure_reason == "PROVIDER_NOT_FOUND"
             assert detail["workflow_run_id"] == telegram_run.id
         finally:
             verify_session.close()
@@ -1134,6 +1136,65 @@ def test_telegram_webhook_ingest_pdf_creates_pending_change_request() -> None:
             assert any(row.workflow_type == "telegram" for row in workflow_runs)
             assert any(row.workflow_type == "ingestion" for row in workflow_runs)
             assert any(row.workflow_type == "supplement" for row in workflow_runs)
+        finally:
+            verify_session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_telegram_webhook_ingest_pdf_returns_file_download_failed() -> None:
+    session_factory = _build_session_factory()
+    telegram_client = InMemoryTelegramBotClient()
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _tool_registry_override() -> ToolRegistry:
+        registry = ToolRegistry()
+        registry.register_tool(TelegramBotTool(telegram_client))
+        return registry
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_tool_registry] = _tool_registry_override
+
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 2002,
+                "message": {
+                    "message_id": 22,
+                    "chat": {"id": 12345},
+                    "caption": "/ingest",
+                    "document": {
+                        "file_id": "missing-pdf-file",
+                        "file_name": "lesson.pdf",
+                        "mime_type": "application/pdf",
+                    },
+                },
+            },
+        )
+
+        assert response.status_code == 502
+        detail = response.json()["detail"]
+        assert detail["error_code"] == "TELEGRAM_FILE_DOWNLOAD_FAILED"
+        assert detail["failure_reason"] == "TELEGRAM_FILE_DOWNLOAD_FAILED"
+        assert detail["workflow_run_id"] is not None
+
+        verify_session: Session = session_factory()
+        try:
+            workflow_run = verify_session.get(WorkflowRun, detail["workflow_run_id"])
+            assert workflow_run is not None
+            assert workflow_run.workflow_type == "telegram"
+            assert workflow_run.status == "failed"
+            assert workflow_run.failure_reason == "TELEGRAM_FILE_DOWNLOAD_FAILED"
+            assert verify_session.query(SourceDocument).count() == 0
+            assert verify_session.query(ChangeRequest).count() == 0
         finally:
             verify_session.close()
     finally:

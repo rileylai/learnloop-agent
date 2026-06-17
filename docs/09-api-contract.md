@@ -629,7 +629,7 @@ Failure response example `500` (provider not configured):
   "detail": {
     "error_code": "PROVIDER_NOT_FOUND",
     "message": "Provider is not registered: 'openai'",
-    "failure_reason": "UNKNOWN_ERROR",
+    "failure_reason": "PROVIDER_NOT_FOUND",
     "workflow_run_id": 303
   }
 }
@@ -873,7 +873,7 @@ Failure response example `503` (Telegram bot token not configured):
   "detail": {
     "error_code": "TELEGRAM_NOT_CONFIGURED",
     "message": "Telegram bot token is not configured. Set TELEGRAM_BOT_TOKEN.",
-    "failure_reason": "UNKNOWN_ERROR",
+    "failure_reason": "TELEGRAM_NOT_CONFIGURED",
     "workflow_run_id": 603
   }
 }
