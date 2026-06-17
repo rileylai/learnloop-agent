@@ -76,6 +76,13 @@ Provider client implementation (Step 18):
 - `src/providers/llm.py`: `BaseLLMClient`, `OpenAIClient`, and deterministic `LLMClientError`.
 - `OpenAIClient` uses transport injection for deterministic tests and stays behind the provider interface.
 
+Runtime prompt loading (Step 44):
+- `src/services/prompt_template_loader.py`: loads versioned prompt bundles from
+  `docs/prompts/*.md`.
+- Orchestrators receive the prompt loader as a service dependency.
+- Workflow metadata records `prompt_id` and `prompt_version` with provider/model
+  metadata for LLM-backed workflows.
+
 Tool boundary (Step 6.2):
 - `src/tools/models.py`: `ToolSpec`, `ToolContext`, `ToolResult`, `ToolError`.
 - `src/tools/base.py`: `Tool`.

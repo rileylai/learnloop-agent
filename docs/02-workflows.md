@@ -34,6 +34,8 @@ Failure path:
 State notes:
 - New proposals are saved as `pending` change requests.
 - Proposal generation does not write to Notion.
+- When the workflow reaches the LLM path, workflow metadata records
+  `provider_name`, `model`, `prompt_id`, and `prompt_version`.
 
 ## Supplement Review Workflow (Step 29)
 
@@ -168,6 +170,8 @@ Rules:
 - Telegram QA reuses `QAOrchestrator`; the gateway contains no retrieval or provider logic.
 - Production retrieval remains Notion-only and keeps pending/rejected proposals excluded.
 - Telegram workflow metadata records citation count only, not question text or citation paths.
+- The delegated QA workflow records `provider_name`, `model`, `prompt_id`, and
+  `prompt_version` in its own workflow metadata.
 
 ## Telegram Review Workflow (Step 35)
 

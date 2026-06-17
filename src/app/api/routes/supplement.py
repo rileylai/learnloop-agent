@@ -3,7 +3,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
-from src.app.dependencies import get_provider_router, get_tool_registry
+from src.app.dependencies import (
+    get_prompt_template_loader,
+    get_provider_router,
+    get_tool_registry,
+)
 from src.app.schemas import (
     SupplementAcceptRequest,
     SupplementEditLaterRequest,
@@ -29,7 +33,11 @@ from src.repositories import (
     SourceDocumentRepository,
     WorkflowRunRepository,
 )
-from src.services import DuplicateKnowledgeChecker, WorkflowRunService
+from src.services import (
+    DuplicateKnowledgeChecker,
+    PromptTemplateLoader,
+    WorkflowRunService,
+)
 from src.tools import ToolRegistry
 
 router = APIRouter()
@@ -39,9 +47,11 @@ def _build_supplement_propose_orchestrator(
     *,
     db_session: Session,
     provider_router: ProviderRouter,
+    prompt_template_loader: PromptTemplateLoader,
 ) -> SupplementProposeOrchestrator:
     return SupplementProposeOrchestrator(
         provider_router=provider_router,
+        prompt_template_loader=prompt_template_loader,
         source_document_repository=SourceDocumentRepository(db_session),
         change_request_repository=ChangeRequestRepository(db_session),
         duplicate_checker=DuplicateKnowledgeChecker(
@@ -78,10 +88,12 @@ async def propose_supplement_change_request(
     request: Request,
     db_session: Session = Depends(get_db_session),
     provider_router: ProviderRouter = Depends(get_provider_router),
+    prompt_template_loader: PromptTemplateLoader = Depends(get_prompt_template_loader),
 ) -> SupplementProposeResponse:
     orchestrator = _build_supplement_propose_orchestrator(
         db_session=db_session,
         provider_router=provider_router,
+        prompt_template_loader=prompt_template_loader,
     )
     request_workflow_id = str(getattr(request.state, "workflow_id", ""))
 

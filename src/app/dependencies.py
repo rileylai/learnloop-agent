@@ -4,6 +4,7 @@ from functools import lru_cache
 
 from src.app.config import get_settings
 from src.providers import OpenAIClient, ProviderRouter
+from src.services import PromptTemplateLoader
 from src.tools import (
     DEFAULT_MOCK_NOTION_DATA_DIR,
     DisabledTelegramBotClient,
@@ -62,3 +63,8 @@ def get_provider_router() -> ProviderRouter:
     if settings.openai_api_key:
         router.register_provider(OpenAIClient(api_key=settings.openai_api_key))
     return router
+
+
+@lru_cache(maxsize=1)
+def get_prompt_template_loader() -> PromptTemplateLoader:
+    return PromptTemplateLoader()

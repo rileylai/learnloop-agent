@@ -22,6 +22,9 @@ from src.repositories import ChangeRequestRepository, SourceDocumentRepository
 from src.services import (
     DuplicateKnowledgeChecker,
     DuplicateMatch,
+    PROMPT_ID_SUPPLEMENT_PROPOSAL,
+    PromptTemplateLoader,
+    PromptTemplateLoaderError,
     STANDARD_FAILURE_REASONS,
     WorkflowRunService,
 )
@@ -69,12 +72,14 @@ class SupplementProposeOrchestrator:
         self,
         *,
         provider_router: ProviderRouter,
+        prompt_template_loader: PromptTemplateLoader,
         source_document_repository: SourceDocumentRepository,
         change_request_repository: ChangeRequestRepository,
         duplicate_checker: DuplicateKnowledgeChecker,
         workflow_run_service: WorkflowRunService,
     ) -> None:
         self._provider_router = provider_router
+        self._prompt_template_loader = prompt_template_loader
         self._source_document_repository = source_document_repository
         self._change_request_repository = change_request_repository
         self._duplicate_checker = duplicate_checker
@@ -132,7 +137,11 @@ class SupplementProposeOrchestrator:
             ),
         )
 
+        prompt_id = PROMPT_ID_SUPPLEMENT_PROPOSAL
+        prompt_version: Optional[str] = None
         try:
+            prompt_bundle = self._prompt_template_loader.load_bundle(prompt_id)
+            prompt_version = prompt_bundle.version
             source_document = self._source_document_repository.get_source_document_by_id(
                 source_document_id
             )
@@ -153,6 +162,13 @@ class SupplementProposeOrchestrator:
             token_input = None
             token_output = None
             if duplicate_match is None:
+                system_message, user_message = prompt_bundle.render_messages(
+                    variables={
+                        "source_type": source_document.source_type,
+                        "source_display_name": source_document.source_display_name,
+                        "source_text": source_document.raw_text,
+                    }
+                )
                 llm_response = await self._provider_router.route(
                     normalized_provider_name,
                     LLMRequest(
@@ -160,18 +176,11 @@ class SupplementProposeOrchestrator:
                         messages=[
                             LLMMessage(
                                 role="system",
-                                content=(
-                                    "Return one strict JSON object for a supplement proposal. "
-                                    "No markdown. No extra keys."
-                                ),
+                                content=system_message,
                             ),
                             LLMMessage(
                                 role="user",
-                                content=self._build_llm_prompt(
-                                    source_type=source_document.source_type,
-                                    source_display_name=source_document.source_display_name,
-                                    source_text=source_document.raw_text,
-                                ),
+                                content=user_message,
                             ),
                         ],
                         temperature=0.2,
@@ -179,6 +188,10 @@ class SupplementProposeOrchestrator:
                         metadata={
                             "workflow_id": request_workflow_id,
                             "operation": "propose_change_request",
+                            "prompt_id": prompt_id,
+                            "prompt_version": prompt_version,
+                            "provider_name": normalized_provider_name,
+                            "model": normalized_model,
                         },
                     ),
                 )
@@ -228,8 +241,10 @@ class SupplementProposeOrchestrator:
                         "duplicate_notion_path": (
                             duplicate_match.notion_path if duplicate_match is not None else None
                         ),
-                        "provider_name": provider,
-                        "model": model_name,
+                        "provider_name": normalized_provider_name,
+                        "model": normalized_model,
+                        "prompt_id": prompt_id,
+                        "prompt_version": prompt_version,
                         "token_input": token_input,
                         "token_output": token_output,
                     },
@@ -257,6 +272,10 @@ class SupplementProposeOrchestrator:
                 workflow_run_id=workflow_run.id,
                 failure_reason=exc.failure_reason,
                 error_code=exc.error_code,
+                provider_name=normalized_provider_name,
+                model=normalized_model,
+                prompt_id=prompt_id,
+                prompt_version=prompt_version,
             )
             raise SupplementProposeError(
                 error_code=exc.error_code,
@@ -270,6 +289,10 @@ class SupplementProposeOrchestrator:
                 workflow_run_id=workflow_run.id,
                 failure_reason="LLM_OUTPUT_INVALID",
                 error_code="LLM_OUTPUT_INVALID",
+                provider_name=normalized_provider_name,
+                model=normalized_model,
+                prompt_id=prompt_id,
+                prompt_version=prompt_version,
             )
             raise SupplementProposeError(
                 error_code=exc.error_code,
@@ -283,6 +306,10 @@ class SupplementProposeOrchestrator:
                 workflow_run_id=workflow_run.id,
                 failure_reason="UNKNOWN_ERROR",
                 error_code="PROVIDER_NOT_FOUND",
+                provider_name=normalized_provider_name,
+                model=normalized_model,
+                prompt_id=prompt_id,
+                prompt_version=prompt_version,
             )
             raise SupplementProposeError(
                 error_code="PROVIDER_NOT_FOUND",
@@ -296,6 +323,10 @@ class SupplementProposeOrchestrator:
                 workflow_run_id=workflow_run.id,
                 failure_reason="UNKNOWN_ERROR",
                 error_code="LLM_PROVIDER_ERROR",
+                provider_name=normalized_provider_name,
+                model=normalized_model,
+                prompt_id=prompt_id,
+                prompt_version=prompt_version,
             )
             raise SupplementProposeError(
                 error_code="LLM_PROVIDER_ERROR",
@@ -309,6 +340,10 @@ class SupplementProposeOrchestrator:
                 workflow_run_id=workflow_run.id,
                 failure_reason="UNKNOWN_ERROR",
                 error_code="INVALID_ARGUMENT",
+                provider_name=normalized_provider_name,
+                model=normalized_model,
+                prompt_id=prompt_id,
+                prompt_version=prompt_version,
             )
             raise SupplementProposeError(
                 error_code="INVALID_ARGUMENT",
@@ -317,11 +352,32 @@ class SupplementProposeOrchestrator:
                 failure_reason="UNKNOWN_ERROR",
                 workflow_run_id=workflow_run.id,
             ) from exc
+        except PromptTemplateLoaderError as exc:
+            self._mark_failed_workflow(
+                workflow_run_id=workflow_run.id,
+                failure_reason="UNKNOWN_ERROR",
+                error_code="PROMPT_TEMPLATE_INVALID",
+                provider_name=normalized_provider_name,
+                model=normalized_model,
+                prompt_id=prompt_id,
+                prompt_version=prompt_version,
+            )
+            raise SupplementProposeError(
+                error_code="PROMPT_TEMPLATE_INVALID",
+                message=f"Prompt template load failed: {exc}",
+                http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                failure_reason="UNKNOWN_ERROR",
+                workflow_run_id=workflow_run.id,
+            ) from exc
         except Exception as exc:
             self._mark_failed_workflow(
                 workflow_run_id=workflow_run.id,
                 failure_reason="UNKNOWN_ERROR",
                 error_code="SUPPLEMENT_PROPOSAL_FAILED",
+                provider_name=normalized_provider_name,
+                model=normalized_model,
+                prompt_id=prompt_id,
+                prompt_version=prompt_version,
             )
             raise SupplementProposeError(
                 error_code="SUPPLEMENT_PROPOSAL_FAILED",
@@ -330,30 +386,6 @@ class SupplementProposeOrchestrator:
                 failure_reason="UNKNOWN_ERROR",
                 workflow_run_id=workflow_run.id,
             ) from exc
-
-    def _build_llm_prompt(
-        self,
-        *,
-        source_type: str,
-        source_display_name: str,
-        source_text: str,
-    ) -> str:
-        return (
-            "Create a supplement proposal JSON with fields: "
-            "title, target_path, source, summary, concepts, notes.\n"
-            "Field requirements:\n"
-            "- title: concise supplement title\n"
-            "- target_path: Notion path where supplement should be appended later\n"
-            "- source: object with source_type and source_display_name\n"
-            "- summary: concise grounded summary\n"
-            "- concepts: non-empty array of key concepts\n"
-            "- notes: array of practical notes\n"
-            "Use only facts grounded in source text.\n"
-            f"source_type={source_type}\n"
-            f"source_display_name={source_display_name}\n"
-            "source_text:\n"
-            f"{source_text}"
-        )
 
     def _validate_llm_output(
         self,
@@ -425,6 +457,10 @@ class SupplementProposeOrchestrator:
         workflow_run_id: int,
         failure_reason: str,
         error_code: str,
+        provider_name: str,
+        model: str,
+        prompt_id: str,
+        prompt_version: Optional[str],
     ) -> None:
         self._workflow_run_service.mark_workflow_failed(
             workflow_run_id,
@@ -433,6 +469,10 @@ class SupplementProposeOrchestrator:
                 {
                     "operation": "propose_change_request",
                     "error_code": error_code,
+                    "provider_name": provider_name,
+                    "model": model,
+                    "prompt_id": prompt_id,
+                    "prompt_version": prompt_version,
                 },
                 sort_keys=True,
             ),

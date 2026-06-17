@@ -315,6 +315,11 @@ def test_supplement_propose_api_creates_pending_change_request() -> None:
             assert workflow_run.workflow_type == "supplement"
             assert workflow_run.status == "succeeded"
             assert workflow_run.failure_reason is None
+            metadata = json.loads(workflow_run.metadata_json or "{}")
+            assert metadata["provider_name"] == "openai"
+            assert metadata["model"] == "gpt-4o-mini"
+            assert metadata["prompt_id"] == "supplement_proposal"
+            assert metadata["prompt_version"] == "supplement_proposal_v1"
 
             # Step 28 must not write to Notion.
             assert verify_session.query(NotionPage).count() == 0
@@ -388,6 +393,11 @@ def test_supplement_propose_api_uses_duplicate_reference_without_provider() -> N
             assert workflow_run.workflow_type == "supplement"
             assert workflow_run.status == "succeeded"
             assert workflow_run.failure_reason is None
+            metadata = json.loads(workflow_run.metadata_json or "{}")
+            assert metadata["provider_name"] == "openai"
+            assert metadata["model"] == "gpt-4o-mini"
+            assert metadata["prompt_id"] == "supplement_proposal"
+            assert metadata["prompt_version"] == "supplement_proposal_v1"
 
             # No Notion write should happen. Existing seeded rows remain unchanged.
             assert verify_session.query(NotionPage).count() == 1
@@ -445,6 +455,11 @@ def test_supplement_propose_api_returns_llm_output_invalid() -> None:
             assert workflow_run.workflow_type == "supplement"
             assert workflow_run.status == "failed"
             assert workflow_run.failure_reason == "LLM_OUTPUT_INVALID"
+            metadata = json.loads(workflow_run.metadata_json or "{}")
+            assert metadata["provider_name"] == "openai"
+            assert metadata["model"] == "gpt-4o-mini"
+            assert metadata["prompt_id"] == "supplement_proposal"
+            assert metadata["prompt_version"] == "supplement_proposal_v1"
             assert verify_session.query(ChangeRequest).count() == 0
         finally:
             verify_session.close()

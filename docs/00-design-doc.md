@@ -306,6 +306,7 @@ User asks question
 Checklist:
 - [ ] `pending` and `rejected` proposals are excluded.
 - [ ] Missing citations are handled safely.
+- [ ] Workflow metadata records provider name, model name, prompt id, and prompt version.
 
 ### 11.6 New Source Ingestion
 ```text
@@ -318,6 +319,7 @@ Receive source (PDF/URL/YouTube/OCR/chat)
 Checklist:
 - [ ] Source display format follows source type rule.
 - [ ] Chat text length limit is enforced.
+- [ ] Supplement proposal workflow metadata records provider name, model name, prompt id, and prompt version.
 
 ### 11.7 Human Review
 ```text
@@ -437,6 +439,12 @@ Design notes:
 | failure_reason | TEXT NULL | Failure taxonomy value. |
 | started_at | TIMESTAMPTZ | Start time. |
 | finished_at | TIMESTAMPTZ NULL | Finish time. |
+
+Metadata note:
+- LLM-backed workflows record `provider_name`, `model`, `prompt_id`, and
+  `prompt_version` inside workflow metadata JSON.
+- Prompt templates under `docs/prompts/*.md` are runtime inputs only when code
+  explicitly loads them.
 
 ## 13. Core APIs
 ### 13.1 Notion Index APIs

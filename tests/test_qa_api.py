@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -160,6 +162,11 @@ def test_qa_api_returns_grounded_answer_with_citations() -> None:
             assert workflow_run.workflow_type == "qa"
             assert workflow_run.status == "succeeded"
             assert workflow_run.failure_reason is None
+            metadata = json.loads(workflow_run.metadata_json or "{}")
+            assert metadata["provider_name"] == "openai"
+            assert metadata["model"] == "gpt-4o-mini"
+            assert metadata["prompt_id"] == "qa_answer"
+            assert metadata["prompt_version"] == "qa_answer_v1"
         finally:
             verify_session.close()
     finally:
@@ -260,6 +267,11 @@ def test_qa_api_returns_provider_not_found_when_provider_missing() -> None:
             assert workflow_run.workflow_type == "qa"
             assert workflow_run.status == "failed"
             assert workflow_run.failure_reason == "UNKNOWN_ERROR"
+            metadata = json.loads(workflow_run.metadata_json or "{}")
+            assert metadata["provider_name"] == "openai"
+            assert metadata["model"] == "gpt-4o-mini"
+            assert metadata["prompt_id"] == "qa_answer"
+            assert metadata["prompt_version"] == "qa_answer_v1"
         finally:
             verify_session.close()
     finally:

@@ -14,7 +14,13 @@ from src.providers import (
     ProviderRouterError,
 )
 from src.rag import ProductionChunkRetriever, RetrievedChunk
-from src.services import STANDARD_FAILURE_REASONS, WorkflowRunService
+from src.services import (
+    PROMPT_ID_QA_ANSWER,
+    PromptTemplateLoader,
+    PromptTemplateLoaderError,
+    STANDARD_FAILURE_REASONS,
+    WorkflowRunService,
+)
 
 INSUFFICIENT_INFO_ANSWER = (
     "I do not have enough information in production notes to answer safely."
@@ -69,10 +75,12 @@ class QAOrchestrator:
         *,
         retriever: ProductionChunkRetriever,
         provider_router: ProviderRouter,
+        prompt_template_loader: PromptTemplateLoader,
         workflow_run_service: WorkflowRunService,
     ) -> None:
         self._retriever = retriever
         self._provider_router = provider_router
+        self._prompt_template_loader = prompt_template_loader
         self._workflow_run_service = workflow_run_service
 
     async def answer_question(
@@ -125,7 +133,11 @@ class QAOrchestrator:
             ),
         )
 
+        prompt_id = PROMPT_ID_QA_ANSWER
+        prompt_version: Optional[str] = None
         try:
+            prompt_bundle = self._prompt_template_loader.load_bundle(prompt_id)
+            prompt_version = prompt_bundle.version
             retrieved_chunks = self._retriever.retrieve(
                 query_text=normalized_query,
                 top_k=top_k,
@@ -143,6 +155,10 @@ class QAOrchestrator:
                             "insufficient_info": True,
                             "retrieved_chunk_count": len(retrieved_chunks),
                             "citation_count": len(citations),
+                            "provider_name": normalized_provider_name,
+                            "model": normalized_model,
+                            "prompt_id": prompt_id,
+                            "prompt_version": prompt_version,
                         },
                         sort_keys=True,
                     ),
@@ -160,6 +176,13 @@ class QAOrchestrator:
                     token_output=None,
                 )
 
+            context_text = self._build_context_text(retrieved_chunks)
+            system_message, user_message = prompt_bundle.render_messages(
+                variables={
+                    "query": normalized_query,
+                    "context_text": context_text,
+                }
+            )
             llm_response = await self._provider_router.route(
                 normalized_provider_name,
                 LLMRequest(
@@ -167,22 +190,23 @@ class QAOrchestrator:
                     messages=[
                         LLMMessage(
                             role="system",
-                            content=(
-                                "Answer only from the provided context. "
-                                "If the context is insufficient, say so clearly."
-                            ),
+                            content=system_message,
                         ),
                         LLMMessage(
                             role="user",
-                            content=self._build_qa_prompt(
-                                query=normalized_query,
-                                retrieved_chunks=retrieved_chunks,
-                            ),
+                            content=user_message,
                         ),
                     ],
                     temperature=0.2,
                     max_tokens=500,
-                    metadata={"workflow_id": request_workflow_id, "operation": "qa_answer"},
+                    metadata={
+                        "workflow_id": request_workflow_id,
+                        "operation": "qa_answer",
+                        "prompt_id": prompt_id,
+                        "prompt_version": prompt_version,
+                        "provider_name": normalized_provider_name,
+                        "model": normalized_model,
+                    },
                 ),
             )
             answer_text = llm_response.output_text.strip()
@@ -202,8 +226,10 @@ class QAOrchestrator:
                         "insufficient_info": False,
                         "retrieved_chunk_count": len(retrieved_chunks),
                         "citation_count": len(citations),
-                        "provider_name": llm_response.provider,
-                        "model": llm_response.model,
+                        "provider_name": normalized_provider_name,
+                        "model": normalized_model,
+                        "prompt_id": prompt_id,
+                        "prompt_version": prompt_version,
                         "token_input": llm_response.token_input,
                         "token_output": llm_response.token_output,
                     },
@@ -227,6 +253,10 @@ class QAOrchestrator:
                 workflow_run_id=workflow_run.id,
                 failure_reason=exc.failure_reason,
                 error_code=exc.error_code,
+                provider_name=normalized_provider_name,
+                model=normalized_model,
+                prompt_id=prompt_id,
+                prompt_version=prompt_version,
             )
             raise QAOrchestratorError(
                 error_code=exc.error_code,
@@ -240,6 +270,10 @@ class QAOrchestrator:
                 workflow_run_id=workflow_run.id,
                 failure_reason="UNKNOWN_ERROR",
                 error_code="PROVIDER_NOT_FOUND",
+                provider_name=normalized_provider_name,
+                model=normalized_model,
+                prompt_id=prompt_id,
+                prompt_version=prompt_version,
             )
             raise QAOrchestratorError(
                 error_code="PROVIDER_NOT_FOUND",
@@ -253,6 +287,10 @@ class QAOrchestrator:
                 workflow_run_id=workflow_run.id,
                 failure_reason="UNKNOWN_ERROR",
                 error_code="LLM_PROVIDER_ERROR",
+                provider_name=normalized_provider_name,
+                model=normalized_model,
+                prompt_id=prompt_id,
+                prompt_version=prompt_version,
             )
             raise QAOrchestratorError(
                 error_code="LLM_PROVIDER_ERROR",
@@ -266,6 +304,10 @@ class QAOrchestrator:
                 workflow_run_id=workflow_run.id,
                 failure_reason="UNKNOWN_ERROR",
                 error_code="INVALID_ARGUMENT",
+                provider_name=normalized_provider_name,
+                model=normalized_model,
+                prompt_id=prompt_id,
+                prompt_version=prompt_version,
             )
             raise QAOrchestratorError(
                 error_code="INVALID_ARGUMENT",
@@ -274,11 +316,32 @@ class QAOrchestrator:
                 failure_reason="UNKNOWN_ERROR",
                 workflow_run_id=workflow_run.id,
             ) from exc
+        except PromptTemplateLoaderError as exc:
+            self._mark_failed_workflow(
+                workflow_run_id=workflow_run.id,
+                failure_reason="UNKNOWN_ERROR",
+                error_code="PROMPT_TEMPLATE_INVALID",
+                provider_name=normalized_provider_name,
+                model=normalized_model,
+                prompt_id=prompt_id,
+                prompt_version=prompt_version,
+            )
+            raise QAOrchestratorError(
+                error_code="PROMPT_TEMPLATE_INVALID",
+                message=f"Prompt template load failed: {exc}",
+                http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                failure_reason="UNKNOWN_ERROR",
+                workflow_run_id=workflow_run.id,
+            ) from exc
         except Exception as exc:
             self._mark_failed_workflow(
                 workflow_run_id=workflow_run.id,
                 failure_reason="UNKNOWN_ERROR",
                 error_code="QA_WORKFLOW_FAILED",
+                provider_name=normalized_provider_name,
+                model=normalized_model,
+                prompt_id=prompt_id,
+                prompt_version=prompt_version,
             )
             raise QAOrchestratorError(
                 error_code="QA_WORKFLOW_FAILED",
@@ -288,14 +351,13 @@ class QAOrchestrator:
                 workflow_run_id=workflow_run.id,
             ) from exc
 
-    def _build_qa_prompt(self, *, query: str, retrieved_chunks: List[RetrievedChunk]) -> str:
+    def _build_context_text(self, retrieved_chunks: List[RetrievedChunk]) -> str:
         context_lines = []
         for idx, chunk in enumerate(retrieved_chunks, start=1):
             context_lines.append(
                 f"[C{idx}] path={chunk.notion_path} score={chunk.score:.4f}\n{chunk.chunk_text}"
             )
-        context_text = "\n\n".join(context_lines)
-        return f"Question:\n{query}\n\nContext:\n{context_text}"
+        return "\n\n".join(context_lines)
 
     def _build_citations(self, retrieved_chunks: List[RetrievedChunk]) -> List[QACitationResult]:
         citations: List[QACitationResult] = []
@@ -320,6 +382,10 @@ class QAOrchestrator:
         workflow_run_id: int,
         failure_reason: str,
         error_code: str,
+        provider_name: str,
+        model: str,
+        prompt_id: str,
+        prompt_version: Optional[str],
     ) -> None:
         normalized_failure_reason = self._normalize_failure_reason(failure_reason)
         self._workflow_run_service.mark_workflow_failed(
@@ -329,6 +395,10 @@ class QAOrchestrator:
                 {
                     "operation": "qa_answer",
                     "error_code": error_code,
+                    "provider_name": provider_name,
+                    "model": model,
+                    "prompt_id": prompt_id,
+                    "prompt_version": prompt_version,
                 },
                 sort_keys=True,
             ),
