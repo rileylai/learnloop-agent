@@ -15,6 +15,7 @@ from src.providers import (
 )
 from src.rag import ProductionChunkRetriever, RetrievedChunk
 from src.services import (
+    CostTracker,
     PROMPT_ID_QA_ANSWER,
     PromptTemplateLoader,
     PromptTemplateLoaderError,
@@ -75,11 +76,13 @@ class QAOrchestrator:
         *,
         retriever: ProductionChunkRetriever,
         provider_router: ProviderRouter,
+        cost_tracker: CostTracker,
         prompt_template_loader: PromptTemplateLoader,
         workflow_run_service: WorkflowRunService,
     ) -> None:
         self._retriever = retriever
         self._provider_router = provider_router
+        self._cost_tracker = cost_tracker
         self._prompt_template_loader = prompt_template_loader
         self._workflow_run_service = workflow_run_service
 
@@ -135,6 +138,9 @@ class QAOrchestrator:
 
         prompt_id = PROMPT_ID_QA_ANSWER
         prompt_version: Optional[str] = None
+        llm_token_input: Optional[int] = None
+        llm_token_output: Optional[int] = None
+        estimated_cost: Optional[float] = None
         try:
             prompt_bundle = self._prompt_template_loader.load_bundle(prompt_id)
             prompt_version = prompt_bundle.version
@@ -159,6 +165,9 @@ class QAOrchestrator:
                             "model": normalized_model,
                             "prompt_id": prompt_id,
                             "prompt_version": prompt_version,
+                            "token_input": None,
+                            "token_output": None,
+                            "estimated_cost": None,
                         },
                         sort_keys=True,
                     ),
@@ -209,6 +218,14 @@ class QAOrchestrator:
                     },
                 ),
             )
+            llm_token_input = llm_response.token_input
+            llm_token_output = llm_response.token_output
+            estimated_cost = self._cost_tracker.estimate_llm_cost(
+                provider_name=llm_response.provider,
+                model=llm_response.model,
+                token_input=llm_token_input,
+                token_output=llm_token_output,
+            )
             answer_text = llm_response.output_text.strip()
             if not answer_text:
                 raise QAOrchestratorError(
@@ -230,8 +247,9 @@ class QAOrchestrator:
                         "model": normalized_model,
                         "prompt_id": prompt_id,
                         "prompt_version": prompt_version,
-                        "token_input": llm_response.token_input,
-                        "token_output": llm_response.token_output,
+                        "token_input": llm_token_input,
+                        "token_output": llm_token_output,
+                        "estimated_cost": estimated_cost,
                     },
                     sort_keys=True,
                 ),
@@ -257,6 +275,9 @@ class QAOrchestrator:
                 model=normalized_model,
                 prompt_id=prompt_id,
                 prompt_version=prompt_version,
+                token_input=llm_token_input,
+                token_output=llm_token_output,
+                estimated_cost=estimated_cost,
             )
             raise QAOrchestratorError(
                 error_code=exc.error_code,
@@ -274,6 +295,9 @@ class QAOrchestrator:
                 model=normalized_model,
                 prompt_id=prompt_id,
                 prompt_version=prompt_version,
+                token_input=llm_token_input,
+                token_output=llm_token_output,
+                estimated_cost=estimated_cost,
             )
             raise QAOrchestratorError(
                 error_code="PROVIDER_NOT_FOUND",
@@ -291,6 +315,9 @@ class QAOrchestrator:
                 model=normalized_model,
                 prompt_id=prompt_id,
                 prompt_version=prompt_version,
+                token_input=llm_token_input,
+                token_output=llm_token_output,
+                estimated_cost=estimated_cost,
             )
             raise QAOrchestratorError(
                 error_code="LLM_PROVIDER_ERROR",
@@ -308,6 +335,9 @@ class QAOrchestrator:
                 model=normalized_model,
                 prompt_id=prompt_id,
                 prompt_version=prompt_version,
+                token_input=llm_token_input,
+                token_output=llm_token_output,
+                estimated_cost=estimated_cost,
             )
             raise QAOrchestratorError(
                 error_code="INVALID_ARGUMENT",
@@ -325,6 +355,9 @@ class QAOrchestrator:
                 model=normalized_model,
                 prompt_id=prompt_id,
                 prompt_version=prompt_version,
+                token_input=llm_token_input,
+                token_output=llm_token_output,
+                estimated_cost=estimated_cost,
             )
             raise QAOrchestratorError(
                 error_code="PROMPT_TEMPLATE_INVALID",
@@ -342,6 +375,9 @@ class QAOrchestrator:
                 model=normalized_model,
                 prompt_id=prompt_id,
                 prompt_version=prompt_version,
+                token_input=llm_token_input,
+                token_output=llm_token_output,
+                estimated_cost=estimated_cost,
             )
             raise QAOrchestratorError(
                 error_code="QA_WORKFLOW_FAILED",
@@ -386,6 +422,9 @@ class QAOrchestrator:
         model: str,
         prompt_id: str,
         prompt_version: Optional[str],
+        token_input: Optional[int] = None,
+        token_output: Optional[int] = None,
+        estimated_cost: Optional[float] = None,
     ) -> None:
         normalized_failure_reason = self._normalize_failure_reason(failure_reason)
         self._workflow_run_service.mark_workflow_failed(
@@ -399,6 +438,9 @@ class QAOrchestrator:
                     "model": model,
                     "prompt_id": prompt_id,
                     "prompt_version": prompt_version,
+                    "token_input": token_input,
+                    "token_output": token_output,
+                    "estimated_cost": estimated_cost,
                 },
                 sort_keys=True,
             ),

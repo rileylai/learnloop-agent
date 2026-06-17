@@ -3,14 +3,18 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
-from src.app.dependencies import get_prompt_template_loader, get_provider_router
+from src.app.dependencies import (
+    get_cost_tracker,
+    get_prompt_template_loader,
+    get_provider_router,
+)
 from src.app.schemas import QACitation, QARequest, QAResponse
 from src.db.session import get_db_session
 from src.orchestrators import QAOrchestrator, QAOrchestratorError
 from src.providers import ProviderRouter
 from src.rag import ProductionChunkRetriever
 from src.repositories import ChunkRepository, WorkflowRunRepository
-from src.services import PromptTemplateLoader, WorkflowRunService
+from src.services import CostTracker, PromptTemplateLoader, WorkflowRunService
 
 router = APIRouter()
 
@@ -19,6 +23,7 @@ def _build_qa_orchestrator(
     *,
     db_session: Session,
     provider_router: ProviderRouter,
+    cost_tracker: CostTracker,
     prompt_template_loader: PromptTemplateLoader,
 ) -> QAOrchestrator:
     return QAOrchestrator(
@@ -26,6 +31,7 @@ def _build_qa_orchestrator(
             chunk_repository=ChunkRepository(db_session),
         ),
         provider_router=provider_router,
+        cost_tracker=cost_tracker,
         prompt_template_loader=prompt_template_loader,
         workflow_run_service=WorkflowRunService(WorkflowRunRepository(db_session)),
     )
@@ -37,11 +43,13 @@ async def run_qa(
     request: Request,
     db_session: Session = Depends(get_db_session),
     provider_router: ProviderRouter = Depends(get_provider_router),
+    cost_tracker: CostTracker = Depends(get_cost_tracker),
     prompt_template_loader: PromptTemplateLoader = Depends(get_prompt_template_loader),
 ) -> QAResponse:
     orchestrator = _build_qa_orchestrator(
         db_session=db_session,
         provider_router=provider_router,
+        cost_tracker=cost_tracker,
         prompt_template_loader=prompt_template_loader,
     )
     request_workflow_id = str(getattr(request.state, "workflow_id", ""))

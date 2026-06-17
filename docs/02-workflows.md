@@ -172,6 +172,8 @@ Rules:
 - Telegram workflow metadata records citation count only, not question text or citation paths.
 - The delegated QA workflow records `provider_name`, `model`, `prompt_id`, and
   `prompt_version` in its own workflow metadata.
+- When the delegated LLM call returns token usage, the QA workflow metadata also
+  records `token_input`, `token_output`, and `estimated_cost`.
 
 ## Telegram Review Workflow (Step 35)
 

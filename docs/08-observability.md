@@ -21,6 +21,11 @@ What belongs here:
   only when code explicitly loads them.
 - Prompt version tracking must be deterministic so prompt changes can be tied
   to workflow results during debugging and evaluation.
+- QA and supplement proposal workflows also record `token_input`,
+  `token_output`, and `estimated_cost` when token usage is available.
+- Cost estimates are computed from a small model-pricing catalog inside the
+  backend service layer. Unknown models return `estimated_cost=null` instead of
+  guessing.
 
 ## Failure Reason Taxonomy
 

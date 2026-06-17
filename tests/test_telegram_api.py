@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 
 from fastapi.testclient import TestClient
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -545,10 +546,13 @@ def test_telegram_webhook_ask_returns_answer_with_scoped_notion_citation() -> No
         verify_session: Session = session_factory()
         try:
             workflow_runs = verify_session.query(WorkflowRun).all()
-            assert any(row.workflow_type == "qa" for row in workflow_runs)
+            qa_run = next(row for row in workflow_runs if row.workflow_type == "qa")
             telegram_run = next(
                 row for row in workflow_runs if row.id == payload["workflow_run_id"]
             )
+            qa_metadata = json.loads(qa_run.metadata_json or "{}")
+            assert qa_metadata["prompt_id"] == "qa_answer"
+            assert qa_metadata["estimated_cost"] == pytest.approx(0.00000975)
             metadata = json.loads(telegram_run.metadata_json or "{}")
             assert metadata["command"] == "ask"
             assert metadata["qa_workflow_run_id"] == payload["qa_workflow_run_id"]
@@ -1135,7 +1139,12 @@ def test_telegram_webhook_ingest_pdf_creates_pending_change_request() -> None:
             workflow_runs = verify_session.query(WorkflowRun).all()
             assert any(row.workflow_type == "telegram" for row in workflow_runs)
             assert any(row.workflow_type == "ingestion" for row in workflow_runs)
-            assert any(row.workflow_type == "supplement" for row in workflow_runs)
+            supplement_run = next(
+                row for row in workflow_runs if row.workflow_type == "supplement"
+            )
+            supplement_metadata = json.loads(supplement_run.metadata_json or "{}")
+            assert supplement_metadata["prompt_id"] == "supplement_proposal"
+            assert supplement_metadata["estimated_cost"] == pytest.approx(0.000066)
         finally:
             verify_session.close()
     finally:

@@ -1,3 +1,8 @@
+from src.services.cost_tracker import (
+    CostTracker,
+    EmbeddingTokenPricing,
+    LLMTokenPricing,
+)
 from src.services.duplicate_checker import (
     DuplicateCheckResult,
     DuplicateKnowledgeChecker,
@@ -23,10 +28,13 @@ from src.services.workflow_run_service import (
 )
 
 __all__ = [
+    "CostTracker",
     "DuplicateCheckResult",
     "DuplicateKnowledgeChecker",
     "DuplicateMatch",
     "DEFAULT_PROMPT_TEMPLATE_DIR",
+    "EmbeddingTokenPricing",
+    "LLMTokenPricing",
     "PROMPT_ID_QA_ANSWER",
     "PROMPT_ID_SUPPLEMENT_PROPOSAL",
     "PromptTemplateBundle",

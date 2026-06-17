@@ -20,6 +20,7 @@ from src.providers import (
 )
 from src.repositories import ChangeRequestRepository, SourceDocumentRepository
 from src.services import (
+    CostTracker,
     DuplicateKnowledgeChecker,
     DuplicateMatch,
     PROMPT_ID_SUPPLEMENT_PROPOSAL,
@@ -72,6 +73,7 @@ class SupplementProposeOrchestrator:
         self,
         *,
         provider_router: ProviderRouter,
+        cost_tracker: CostTracker,
         prompt_template_loader: PromptTemplateLoader,
         source_document_repository: SourceDocumentRepository,
         change_request_repository: ChangeRequestRepository,
@@ -79,6 +81,7 @@ class SupplementProposeOrchestrator:
         workflow_run_service: WorkflowRunService,
     ) -> None:
         self._provider_router = provider_router
+        self._cost_tracker = cost_tracker
         self._prompt_template_loader = prompt_template_loader
         self._source_document_repository = source_document_repository
         self._change_request_repository = change_request_repository
@@ -139,6 +142,9 @@ class SupplementProposeOrchestrator:
 
         prompt_id = PROMPT_ID_SUPPLEMENT_PROPOSAL
         prompt_version: Optional[str] = None
+        token_input: Optional[int] = None
+        token_output: Optional[int] = None
+        estimated_cost: Optional[float] = None
         try:
             prompt_bundle = self._prompt_template_loader.load_bundle(prompt_id)
             prompt_version = prompt_bundle.version
@@ -159,8 +165,6 @@ class SupplementProposeOrchestrator:
 
             provider = None
             model_name = None
-            token_input = None
-            token_output = None
             if duplicate_match is None:
                 system_message, user_message = prompt_bundle.render_messages(
                     variables={
@@ -195,6 +199,16 @@ class SupplementProposeOrchestrator:
                         },
                     ),
                 )
+                provider = llm_response.provider
+                model_name = llm_response.model
+                token_input = llm_response.token_input
+                token_output = llm_response.token_output
+                estimated_cost = self._cost_tracker.estimate_llm_cost(
+                    provider_name=llm_response.provider,
+                    model=llm_response.model,
+                    token_input=token_input,
+                    token_output=token_output,
+                )
                 proposal = self._validate_llm_output(
                     llm_output=llm_response.output_text,
                     source_type=source_document.source_type,
@@ -209,11 +223,6 @@ class SupplementProposeOrchestrator:
                         source_display_name=source_document.source_display_name,
                         duplicate_match=duplicate_match,
                     )
-
-                provider = llm_response.provider
-                model_name = llm_response.model
-                token_input = llm_response.token_input
-                token_output = llm_response.token_output
             else:
                 proposal = self._build_duplicate_reference_proposal(
                     source_type=source_document.source_type,
@@ -247,6 +256,7 @@ class SupplementProposeOrchestrator:
                         "prompt_version": prompt_version,
                         "token_input": token_input,
                         "token_output": token_output,
+                        "estimated_cost": estimated_cost,
                     },
                     sort_keys=True,
                 ),
@@ -276,6 +286,9 @@ class SupplementProposeOrchestrator:
                 model=normalized_model,
                 prompt_id=prompt_id,
                 prompt_version=prompt_version,
+                token_input=token_input,
+                token_output=token_output,
+                estimated_cost=estimated_cost,
             )
             raise SupplementProposeError(
                 error_code=exc.error_code,
@@ -293,6 +306,9 @@ class SupplementProposeOrchestrator:
                 model=normalized_model,
                 prompt_id=prompt_id,
                 prompt_version=prompt_version,
+                token_input=token_input,
+                token_output=token_output,
+                estimated_cost=estimated_cost,
             )
             raise SupplementProposeError(
                 error_code=exc.error_code,
@@ -310,6 +326,9 @@ class SupplementProposeOrchestrator:
                 model=normalized_model,
                 prompt_id=prompt_id,
                 prompt_version=prompt_version,
+                token_input=token_input,
+                token_output=token_output,
+                estimated_cost=estimated_cost,
             )
             raise SupplementProposeError(
                 error_code="PROVIDER_NOT_FOUND",
@@ -327,6 +346,9 @@ class SupplementProposeOrchestrator:
                 model=normalized_model,
                 prompt_id=prompt_id,
                 prompt_version=prompt_version,
+                token_input=token_input,
+                token_output=token_output,
+                estimated_cost=estimated_cost,
             )
             raise SupplementProposeError(
                 error_code="LLM_PROVIDER_ERROR",
@@ -344,6 +366,9 @@ class SupplementProposeOrchestrator:
                 model=normalized_model,
                 prompt_id=prompt_id,
                 prompt_version=prompt_version,
+                token_input=token_input,
+                token_output=token_output,
+                estimated_cost=estimated_cost,
             )
             raise SupplementProposeError(
                 error_code="INVALID_ARGUMENT",
@@ -361,6 +386,9 @@ class SupplementProposeOrchestrator:
                 model=normalized_model,
                 prompt_id=prompt_id,
                 prompt_version=prompt_version,
+                token_input=token_input,
+                token_output=token_output,
+                estimated_cost=estimated_cost,
             )
             raise SupplementProposeError(
                 error_code="PROMPT_TEMPLATE_INVALID",
@@ -378,6 +406,9 @@ class SupplementProposeOrchestrator:
                 model=normalized_model,
                 prompt_id=prompt_id,
                 prompt_version=prompt_version,
+                token_input=token_input,
+                token_output=token_output,
+                estimated_cost=estimated_cost,
             )
             raise SupplementProposeError(
                 error_code="SUPPLEMENT_PROPOSAL_FAILED",
@@ -461,6 +492,9 @@ class SupplementProposeOrchestrator:
         model: str,
         prompt_id: str,
         prompt_version: Optional[str],
+        token_input: Optional[int] = None,
+        token_output: Optional[int] = None,
+        estimated_cost: Optional[float] = None,
     ) -> None:
         self._workflow_run_service.mark_workflow_failed(
             workflow_run_id,
@@ -473,6 +507,9 @@ class SupplementProposeOrchestrator:
                     "model": model,
                     "prompt_id": prompt_id,
                     "prompt_version": prompt_version,
+                    "token_input": token_input,
+                    "token_output": token_output,
+                    "estimated_cost": estimated_cost,
                 },
                 sort_keys=True,
             ),

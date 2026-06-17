@@ -443,6 +443,8 @@ Design notes:
 Metadata note:
 - LLM-backed workflows record `provider_name`, `model`, `prompt_id`, and
   `prompt_version` inside workflow metadata JSON.
+- When token usage is available, the same workflow metadata also records
+  `token_input`, `token_output`, and `estimated_cost`.
 - Prompt templates under `docs/prompts/*.md` are runtime inputs only when code
   explicitly loads them.
 

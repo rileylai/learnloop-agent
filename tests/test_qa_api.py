@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from fastapi.testclient import TestClient
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -183,6 +184,7 @@ def test_qa_api_returns_grounded_answer_with_citations() -> None:
             assert metadata["model"] == "gpt-4o-mini"
             assert metadata["prompt_id"] == "qa_answer"
             assert metadata["prompt_version"] == "qa_answer_v1"
+            assert metadata["estimated_cost"] == pytest.approx(0.00000975)
         finally:
             verify_session.close()
     finally:
@@ -288,6 +290,7 @@ def test_qa_api_returns_provider_not_found_when_provider_missing() -> None:
             assert metadata["model"] == "gpt-4o-mini"
             assert metadata["prompt_id"] == "qa_answer"
             assert metadata["prompt_version"] == "qa_answer_v1"
+            assert metadata["estimated_cost"] is None
         finally:
             verify_session.close()
     finally:
@@ -347,6 +350,7 @@ def test_qa_api_returns_llm_provider_error_when_provider_request_fails() -> None
             assert metadata["model"] == "gpt-4o-mini"
             assert metadata["prompt_id"] == "qa_answer"
             assert metadata["prompt_version"] == "qa_answer_v1"
+            assert metadata["estimated_cost"] is None
         finally:
             verify_session.close()
     finally:

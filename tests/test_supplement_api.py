@@ -4,6 +4,7 @@ import json
 from typing import Dict
 
 from fastapi.testclient import TestClient
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -320,6 +321,7 @@ def test_supplement_propose_api_creates_pending_change_request() -> None:
             assert metadata["model"] == "gpt-4o-mini"
             assert metadata["prompt_id"] == "supplement_proposal"
             assert metadata["prompt_version"] == "supplement_proposal_v1"
+            assert metadata["estimated_cost"] == pytest.approx(0.000072)
 
             # Step 28 must not write to Notion.
             assert verify_session.query(NotionPage).count() == 0
@@ -398,6 +400,7 @@ def test_supplement_propose_api_uses_duplicate_reference_without_provider() -> N
             assert metadata["model"] == "gpt-4o-mini"
             assert metadata["prompt_id"] == "supplement_proposal"
             assert metadata["prompt_version"] == "supplement_proposal_v1"
+            assert metadata["estimated_cost"] is None
 
             # No Notion write should happen. Existing seeded rows remain unchanged.
             assert verify_session.query(NotionPage).count() == 1
@@ -460,6 +463,7 @@ def test_supplement_propose_api_returns_llm_output_invalid() -> None:
             assert metadata["model"] == "gpt-4o-mini"
             assert metadata["prompt_id"] == "supplement_proposal"
             assert metadata["prompt_version"] == "supplement_proposal_v1"
+            assert metadata["estimated_cost"] == pytest.approx(0.000072)
             assert verify_session.query(ChangeRequest).count() == 0
         finally:
             verify_session.close()
@@ -523,6 +527,7 @@ def test_supplement_propose_api_returns_provider_not_found_when_provider_missing
             assert metadata["model"] == "gpt-4o-mini"
             assert metadata["prompt_id"] == "supplement_proposal"
             assert metadata["prompt_version"] == "supplement_proposal_v1"
+            assert metadata["estimated_cost"] is None
             assert verify_session.query(ChangeRequest).count() == 0
         finally:
             verify_session.close()
