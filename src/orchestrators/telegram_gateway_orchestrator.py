@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Optional
 
+from src.observability.redaction import sanitize_sensitive_text
 from src.orchestrators.telegram_ingestion_orchestrator import (
     TelegramDocumentAttachment,
     TelegramIngestionError,
@@ -350,7 +351,10 @@ class TelegramGatewayOrchestrator:
             )
             raise TelegramGatewayError(
                 error_code="TELEGRAM_GATEWAY_FAILED",
-                message=f"Telegram gateway workflow failed: {exc}",
+                message=(
+                    "Telegram gateway workflow failed: "
+                    f"{sanitize_sensitive_text(str(exc))}"
+                ),
                 http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 failure_reason="UNKNOWN_ERROR",
                 workflow_run_id=workflow_run.id,

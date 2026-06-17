@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, List, Optional
 from urllib import request as urllib_request
 
+from src.observability.redaction import sanitize_sensitive_text
 from src.providers.base import LLMProvider
 from src.providers.models import LLMRequest, LLMResponse
 
@@ -77,7 +78,9 @@ class OpenAIClient(BaseLLMClient):
         try:
             raw_response = await asyncio.to_thread(self._transport, url, headers, payload)
         except Exception as exc:
-            raise LLMClientError(f"LLM request failed: {exc}") from exc
+            raise LLMClientError(
+                f"LLM request failed: {sanitize_sensitive_text(str(exc))}"
+            ) from exc
 
         try:
             choice = raw_response["choices"][0]

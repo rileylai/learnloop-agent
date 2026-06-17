@@ -27,6 +27,17 @@ What belongs here:
   backend service layer. Unknown models return `estimated_cost=null` instead of
   guessing.
 
+## Log Redaction Rules
+
+- Request logs stay minimal: `workflow_id`, path, method, status code, duration,
+  and a short event name.
+- Log formatter output must redact bearer tokens, API keys, Notion tokens,
+  Telegram bot tokens, and other surfaced secret assignments.
+- Log formatter output must redact `raw_text` and `source_text` values because
+  they may contain private user or Notion content.
+- Tool and provider adapters should sanitize external exception strings before
+  returning them to orchestrators or API routes.
+
 ## Failure Reason Taxonomy
 
 - Use one shared `failure_reason` taxonomy for workflow runs, API responses,

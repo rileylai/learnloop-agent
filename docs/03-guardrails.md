@@ -102,3 +102,15 @@ The MVP does not support:
 - Always-on cloud sync.
 - Standalone MCP servers.
 - LangChain or LangGraph.
+
+## Security Review Checklist
+Use this checklist before demos and release-style local runs.
+
+| Check | Required state |
+|---|---|
+| Secret files | `.env` and `.env.*` stay ignored by Git. Only `.env.example` may be tracked. |
+| Structured logs | Logs emit only approved request fields plus sanitized event text. |
+| API keys and tokens | Bearer tokens, API keys, and Telegram bot tokens must be redacted from logs and surfaced error messages. |
+| Raw private source content | `raw_text` and `source_text` values must not appear in logs or surfaced error messages. |
+| Workflow metadata | Metadata may include workflow IDs, provider/model names, prompt version, token counts, and cost. It must not include secrets or raw source text. |
+| Production RAG | Development docs, `pending`, and `rejected` change requests remain excluded from production retrieval. |

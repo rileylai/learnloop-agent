@@ -8,6 +8,8 @@ from urllib import request as urllib_request
 
 from pydantic import BaseModel, Field
 
+from src.observability.redaction import sanitize_sensitive_text
+
 
 class EmbeddingRequest(BaseModel):
     inputs: List[str] = Field(min_length=1)
@@ -89,7 +91,9 @@ class OpenAIEmbeddingClient(EmbeddingClient):
         try:
             raw_response = await asyncio.to_thread(self._transport, url, headers, payload)
         except Exception as exc:
-            raise EmbeddingClientError(f"Embedding request failed: {exc}") from exc
+            raise EmbeddingClientError(
+                f"Embedding request failed: {sanitize_sensitive_text(str(exc))}"
+            ) from exc
 
         try:
             data = raw_response["data"]

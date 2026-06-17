@@ -5,6 +5,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict
 
+from src.observability.redaction import sanitize_sensitive_text
+
 
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
@@ -14,12 +16,14 @@ class JsonFormatter(logging.Formatter):
             ).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
             "level": record.levelname,
             "logger": record.name,
-            "event": record.getMessage(),
+            "event": sanitize_sensitive_text(record.getMessage()),
         }
 
         for key in ("workflow_id", "path", "method", "status_code", "duration_ms"):
             value = getattr(record, key, None)
             if value is not None:
+                if isinstance(value, str):
+                    value = sanitize_sensitive_text(value)
                 payload[key] = value
 
         return json.dumps(payload, ensure_ascii=True)

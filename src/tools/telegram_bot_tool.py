@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from urllib import error, request
 from urllib.parse import quote
 
+from src.observability.redaction import sanitize_sensitive_text
 from src.tools.base import Tool
 from src.tools.models import ToolContext, ToolResult, ToolSpec
 
@@ -143,7 +144,9 @@ class TelegramHTTPBotClient(TelegramBotClient):
             with request.urlopen(req, timeout=self._timeout_seconds) as response:
                 response_body = response.read().decode("utf-8")
         except error.URLError as exc:
-            raise TelegramBotSendError(f"Telegram request failed: {exc}") from exc
+            raise TelegramBotSendError(
+                f"Telegram request failed: {sanitize_sensitive_text(str(exc))}"
+            ) from exc
 
         try:
             parsed = json.loads(response_body)
@@ -189,7 +192,9 @@ class TelegramHTTPBotClient(TelegramBotClient):
                 payload={"file_id": normalized_file_id},
             )
         except TelegramBotSendError as exc:
-            raise TelegramBotFileDownloadError(str(exc)) from exc
+            raise TelegramBotFileDownloadError(
+                sanitize_sensitive_text(str(exc))
+            ) from exc
 
         file_path = str(get_file_result.get("file_path", "")).strip()
         if not file_path:
@@ -202,7 +207,7 @@ class TelegramHTTPBotClient(TelegramBotClient):
                 file_bytes = response.read()
         except error.URLError as exc:
             raise TelegramBotFileDownloadError(
-                f"Telegram file download failed: {exc}"
+                f"Telegram file download failed: {sanitize_sensitive_text(str(exc))}"
             ) from exc
 
         if not file_bytes:
@@ -234,7 +239,7 @@ class TelegramHTTPBotClient(TelegramBotClient):
                 response_body = response.read().decode("utf-8")
         except error.URLError as exc:
             raise TelegramBotSendError(
-                f"Telegram request failed: {exc}"
+                f"Telegram request failed: {sanitize_sensitive_text(str(exc))}"
             ) from exc
 
         try:
@@ -313,11 +318,20 @@ class TelegramBotTool(Tool):
         try:
             sent = self._telegram_client.send_message(chat_id=chat_id, text=text)
         except TelegramBotNotConfiguredError as exc:
-            return ToolResult.failure(code="TELEGRAM_NOT_CONFIGURED", message=str(exc))
+            return ToolResult.failure(
+                code="TELEGRAM_NOT_CONFIGURED",
+                message=sanitize_sensitive_text(str(exc)),
+            )
         except TelegramBotSendError as exc:
-            return ToolResult.failure(code="TELEGRAM_SEND_FAILED", message=str(exc))
+            return ToolResult.failure(
+                code="TELEGRAM_SEND_FAILED",
+                message=sanitize_sensitive_text(str(exc)),
+            )
         except TelegramBotClientError as exc:
-            return ToolResult.failure(code="UNKNOWN_ERROR", message=str(exc))
+            return ToolResult.failure(
+                code="UNKNOWN_ERROR",
+                message=sanitize_sensitive_text(str(exc)),
+            )
 
         return ToolResult.success(
             content=f"sent telegram message to chat_id={sent.chat_id}",
@@ -339,14 +353,20 @@ class TelegramBotTool(Tool):
         try:
             downloaded = self._telegram_client.download_file(file_id=file_id)
         except TelegramBotNotConfiguredError as exc:
-            return ToolResult.failure(code="TELEGRAM_NOT_CONFIGURED", message=str(exc))
+            return ToolResult.failure(
+                code="TELEGRAM_NOT_CONFIGURED",
+                message=sanitize_sensitive_text(str(exc)),
+            )
         except TelegramBotFileDownloadError as exc:
             return ToolResult.failure(
                 code="TELEGRAM_FILE_DOWNLOAD_FAILED",
-                message=str(exc),
+                message=sanitize_sensitive_text(str(exc)),
             )
         except TelegramBotClientError as exc:
-            return ToolResult.failure(code="UNKNOWN_ERROR", message=str(exc))
+            return ToolResult.failure(
+                code="UNKNOWN_ERROR",
+                message=sanitize_sensitive_text(str(exc)),
+            )
 
         encoded = base64.b64encode(downloaded.file_bytes).decode("ascii")
         return ToolResult.success(
