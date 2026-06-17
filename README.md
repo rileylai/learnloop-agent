@@ -43,6 +43,25 @@ Tool flow:
 API Route -> Orchestrator -> Tool Registry -> Local Tool Adapter
 ```
 
+### Architecture diagram
+
+```mermaid
+flowchart TD
+    USER["User or Telegram Bot"] --> API["FastAPI routes"]
+    API --> ORCH["Orchestrators"]
+    ORCH --> ROUTER["Provider Router"]
+    ROUTER --> PROVIDER["Provider Adapter"]
+    PROVIDER --> LLM["OpenAI now; Claude or Gemini later"]
+    ORCH --> TOOLS["Tool Registry"]
+    TOOLS --> ADAPTERS["Local tool adapters in MVP"]
+    ADAPTERS --> NOTION["Notion API"]
+    ADAPTERS --> PARSERS["PDF / URL / OCR / YouTube parsers"]
+    ORCH --> CORE["Repositories, QueueClient, and deterministic guardrails"]
+    CORE --> STORAGE["PostgreSQL, pgvector, Redis, workflow state"]
+    NOTION --> SOURCE["Existing notes: read-only source of truth"]
+    NOTION --> ZONE["AI Supplement Zone: append-only after accept"]
+```
+
 ## Local runtime
 
 - MVP is local-only.
@@ -60,11 +79,12 @@ API Route -> Orchestrator -> Tool Registry -> Local Tool Adapter
 
 Notes:
 
-- `OPENAI_API_KEY` is required for `POST /api/qa`.
+- `OPENAI_API_KEY` is required for the live `POST /api/qa` examples below.
 - Without `OPENAI_API_KEY`, indexing still works but `/api/qa` returns `PROVIDER_NOT_FOUND`.
 - `NOTION_TOKEN` is not required for the mock demo flow.
 - `TELEGRAM_BOT_TOKEN` is not required for the mock demo flow.
 - Tesseract is only needed later for screenshot OCR, not for `/health` or mock QA.
+- The one-command demo script below does not require Docker, Postgres, or an OpenAI key.
 
 ## Quick start
 
@@ -142,6 +162,37 @@ Expected response:
 
 ```json
 {"status":"ok"}
+```
+
+## One-command demo script
+
+If you want a deterministic portfolio demo without Docker, a running server,
+or an API key, run:
+
+```bash
+uv run python scripts/run_mock_demo.py
+```
+
+What it does:
+
+- Calls `/health` through the FastAPI app.
+- Calls `POST /api/notion/index/page` for bundled mock page `page-nlp-week5`.
+- Calls `POST /api/qa` with a fake provider through the normal Provider Router boundary.
+- Uses in-memory SQLite for repositories and workflow state.
+- Uses the bundled mock Notion reader path instead of real Notion access.
+
+This keeps the demo aligned with the implemented architecture while staying
+deterministic for local verification and portfolio walkthroughs.
+
+Expected output looks like:
+
+```text
+LearnLoop mock demo: pass
+health=ok
+indexed_page=page-nlp-week5 (NLP Week 5), blocks=12
+qa_provider=openai model=gpt-4o-mini
+qa_citation=Knowledge/NLP/Week5/...
+qa_answer=Positional encoding gives the model an order signal ...
 ```
 
 ## Mock demo flow
@@ -237,6 +288,7 @@ AGENTS.md
 README.md
 docs/
 mock_data/
+scripts/
 src/
 tests/
 dev_state/
