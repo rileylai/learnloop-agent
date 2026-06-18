@@ -27,6 +27,17 @@ What belongs here:
   backend service layer. Unknown models return `estimated_cost=null` instead of
   guessing.
 
+## Vector Retrieval Metadata
+
+- QA workflows that use live retrieval should record `retrieval_mode`:
+  `pgvector_exact_cosine`, `pgvector_hnsw_cosine`, or `lexical_fallback`.
+- QA workflows that fall back to lexical retrieval should record nullable
+  `retrieval_fallback_reason`.
+- QA workflows should also record `embedding_provider`, `embedding_model`,
+  `embedding_dimensions`, and `vector_distance_metric`.
+- A successful lexical fallback still uses workflow `status=succeeded`.
+  `failure_reason` should stay null unless the whole workflow actually fails.
+
 ## Log Redaction Rules
 
 - Request logs stay minimal: `workflow_id`, path, method, status code, duration,
@@ -49,8 +60,19 @@ What belongs here:
   `NOTION_BLOCK_FETCH_FAILED`, `OCR_FAILED`, `PDF_PARSE_FAILED`,
   `URL_FETCH_FAILED`, `YOUTUBE_TRANSCRIPT_NOT_FOUND`,
   `PROVIDER_NOT_FOUND`, `LLM_PROVIDER_ERROR`, `LLM_OUTPUT_INVALID`,
+  `EMBEDDING_PROVIDER_NOT_CONFIGURED`, `EMBEDDING_PROVIDER_ERROR`,
+  `VECTOR_DIMENSION_MISMATCH`, `VECTOR_QUERY_FAILED`,
   `VECTOR_UPSERT_FAILED`, `TELEGRAM_NOT_CONFIGURED`,
   `TELEGRAM_SEND_FAILED`, and `TELEGRAM_FILE_DOWNLOAD_FAILED`.
 - Current business-rule and workflow reasons:
   `CHANGE_REQUEST_NOT_FOUND`, `WRITE_POLICY_VIOLATION`,
   `DUPLICATE_SOURCE`, and `UNKNOWN_ERROR`.
+
+## Retrieval Fallback Reasons
+
+- Use `retrieval_fallback_reason` instead of workflow `failure_reason` when QA
+  safely degrades to lexical retrieval.
+- Allowed fallback reasons are:
+  `EMBEDDING_PROVIDER_NOT_CONFIGURED`, `EMBEDDING_PROVIDER_ERROR`,
+  `VECTOR_DIMENSION_MISMATCH`, `VECTOR_QUERY_FAILED`, and
+  `VECTOR_DATA_UNAVAILABLE`.

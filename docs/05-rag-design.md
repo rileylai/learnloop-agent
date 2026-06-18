@@ -116,7 +116,7 @@ Rules:
 - Delete old page chunks first, then insert new chunks in `chunk_index` order.
 - Keep cross-page chunks untouched.
 - Map each chunk to a page block via `notion_block_ids` from citation metadata.
-- Store embedding vectors as serialized text in current MVP schema (`embedding_text`).
+- Store embedding vectors as serialized text in current MVP schema (`embedding_text`) until the live pgvector rollout lands.
 
 ## Manual Incremental Sync Reconciliation (Step 16)
 
@@ -160,6 +160,55 @@ Production-RAG rules in this step:
 - Current MVP production retrieval is constrained to `source_kind="notion"`.
 - Non-production chunk kinds are excluded.
 - No reranker is used in MVP.
+
+## Current Audit Snapshot Before Step 48
+
+Audited code paths:
+- `src/db/models.py`
+- `alembic/versions/989de3f24186_initial_schema.py`
+- `src/orchestrators/notion_page_index_orchestrator.py`
+- `src/repositories/chunk_repository.py`
+- `src/rag/retriever.py`
+- `src/orchestrators/qa_orchestrator.py`
+
+Current state:
+- `knowledge_chunks` stores optional serialized JSON embeddings in `embedding_text`.
+- The shared Notion indexing flow builds chunks but does not yet call `EmbeddingClient`.
+- `ChunkRepository.list_production_chunks()` applies production-safe filters in SQL, then `ProductionChunkRetriever` ranks candidates in Python.
+- Default QA currently calls the retriever without a query embedding, so production QA today is lexical-only.
+- Optional cosine scoring exists only when a caller explicitly passes `query_embedding` and a row has `embedding_text`.
+
+## Live Embedding and pgvector Retrieval Contract (Step 48)
+
+Contract summary:
+- Embedding provider and model: OpenAI `text-embedding-3-small`.
+- Embedding dimensions: always send `dimensions=1536` explicitly for both chunk and query embeddings.
+- Stored vector shape: nullable pgvector `vector(1536)` is the live contract. Legacy `embedding_text` stays transitional during rollout only.
+- Distance metric: cosine distance.
+- PostgreSQL operator and index ops: use `<=>` and `vector_cosine_ops`.
+- Vector index strategy: exact cosine search on the filtered subset is the correctness baseline. A cosine HNSW index is the approved acceleration path. IVFFlat is not part of the MVP rollout contract.
+- Scope: production-safe `source_kind="notion"` chunks only. No reranker.
+
+Retrieval rules:
+- Page, section, source-kind, and production-safety filters must apply before semantic top-k.
+- Citations may come only from rows actually returned by retrieval.
+- Step 53 should not merge vector results and lexical results when the vector path succeeds. The vector path becomes the primary ranking path.
+- Repository-owned exact cosine search remains the fallback SQL shape when filter-first correctness is clearer or safer than using the ANN index.
+
+Fallback policy:
+- Query-time lexical fallback is allowed and required when the vector path is unavailable or unusable.
+- Lexical fallback must reuse the existing deterministic production-safe Notion retrieval scope.
+- If lexical fallback also returns no supporting chunks, QA returns the existing insufficient-info response instead of an ungrounded answer.
+
+Deterministic vector degradation cases:
+- Missing embedding provider configuration -> lexical fallback.
+- Embedding API call failure -> lexical fallback.
+- Query or stored vector dimension mismatch -> lexical fallback.
+- pgvector query failure -> lexical fallback.
+- Eligible chunks exist but no usable stored vectors are available yet -> lexical fallback.
+
+Indexing-side rule for later steps:
+- Once Step 50 wires live embeddings into indexing, embedding generation failures must fail closed. The system must not silently commit partial page replacements with mixed vector state.
 
 ## RAG QA Endpoint (Step 19)
 
