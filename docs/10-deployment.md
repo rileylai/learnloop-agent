@@ -32,7 +32,16 @@ What belongs here:
 - Exact cosine search on the filtered subset is the correctness baseline. A
   cosine HNSW index is the approved acceleration path. IVFFlat is not part of
   the MVP rollout contract.
+- Step 49 migration foundation enables `CREATE EXTENSION IF NOT EXISTS vector`
+  on PostgreSQL and adds the nullable `embedding` column before any live
+  backfill or shared indexing changes.
+- Step 49 also adds supporting B-tree indexes for planned filter-first
+  retrieval and a PostgreSQL-only partial HNSW cosine index on non-null
+  vectors.
 - Do not run whole-database vector backfill automatically during app startup.
 - If OpenAI embedding access or pgvector retrieval is unavailable during
   rollout, QA may fall back to deterministic lexical retrieval until later
   rollout steps are complete.
+- Downgrade removes the rollout column and indexes but intentionally leaves the
+  `vector` extension installed, since extension state may be shared by other
+  DB objects in the same PostgreSQL database.

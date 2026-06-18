@@ -337,6 +337,9 @@ Design notes:
 - PostgreSQL and pgvector store derived state from Notion plus workflow state.
 - Notion remains the source of truth for note content.
 - For changed pages, reconciliation uses page-level replacement.
+- Live vector rollout starts with a nullable `embedding` column and keeps
+  legacy `embedding_text` during the transition. No startup-wide automatic
+  backfill is allowed.
 
 ### 12.1 notion_pages
 | Column | Type | Description |
@@ -390,9 +393,17 @@ Design notes:
 | notion_path | TEXT NULL | Notion path metadata. |
 | citation_meta | JSONB | Citation metadata. |
 | embedding | VECTOR | pgvector embedding. |
+| embedding_text | TEXT NULL | Transitional legacy serialized embedding during rollout. |
 | is_production | BOOLEAN | Production RAG eligibility flag. |
 | created_at | TIMESTAMPTZ | Created time. |
 | updated_at | TIMESTAMPTZ | Updated time. |
+
+Rollout note:
+- Step 49 migration foundation adds supporting filter indexes on
+  `knowledge_chunks.source_kind`, `knowledge_chunks.notion_block_id`,
+  `knowledge_chunks.notion_path`, and `notion_blocks.notion_page_id`.
+- PostgreSQL also gets a partial HNSW cosine index on non-null
+  `knowledge_chunks.embedding`.
 
 ### 12.5 change_requests
 | Column | Type | Description |

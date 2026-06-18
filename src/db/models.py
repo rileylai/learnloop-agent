@@ -1,7 +1,10 @@
+from typing import List, Optional
+
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.db.base import Base
+from src.db.types import Vector
 
 
 class NotionPage(Base):
@@ -92,6 +95,10 @@ class KnowledgeChunk(Base):
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
     notion_path: Mapped[str] = mapped_column(Text, nullable=True)
+    embedding: Mapped[Optional[List[float]]] = mapped_column(
+        Vector(1536),
+        nullable=True,
+    )
     embedding_text: Mapped[str] = mapped_column(Text, nullable=True)
     source_kind: Mapped[str] = mapped_column(String(32), nullable=False)
     created_at: Mapped[DateTime] = mapped_column(
