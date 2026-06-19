@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Optional
 
 from src.app.config import get_settings
-from src.providers import OpenAIClient, ProviderRouter
+from src.providers import (
+    EmbeddingClient,
+    OpenAIClient,
+    OpenAIEmbeddingClient,
+    ProviderRouter,
+)
 from src.services import CostTracker, PromptTemplateLoader
 from src.tools import (
     DEFAULT_MOCK_NOTION_DATA_DIR,
@@ -63,6 +69,14 @@ def get_provider_router() -> ProviderRouter:
     if settings.openai_api_key:
         router.register_provider(OpenAIClient(api_key=settings.openai_api_key))
     return router
+
+
+@lru_cache(maxsize=1)
+def get_embedding_client() -> Optional[EmbeddingClient]:
+    settings = get_settings()
+    if not settings.openai_api_key:
+        return None
+    return OpenAIEmbeddingClient(api_key=settings.openai_api_key)
 
 
 @lru_cache(maxsize=1)

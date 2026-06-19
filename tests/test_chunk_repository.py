@@ -13,6 +13,10 @@ from src.repositories import (
 )
 
 
+def _embedding(fill_value: float) -> list[float]:
+    return [fill_value] * 1536
+
+
 def _build_test_session() -> Session:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(
@@ -91,7 +95,7 @@ def test_chunk_repository_upsert_replaces_same_page_chunks_without_duplicates() 
                 chunk_text="Chunk A1",
                 notion_path="Knowledge/PageA/A1",
                 notion_block_ids=["blk-a-1"],
-                embedding=[0.1, 0.2],
+                embedding=_embedding(0.1),
             ),
             NotionChunkUpsert(
                 chunk_index=1,
@@ -111,7 +115,7 @@ def test_chunk_repository_upsert_replaces_same_page_chunks_without_duplicates() 
                 chunk_text="Chunk A updated",
                 notion_path="Knowledge/PageA/Updated",
                 notion_block_ids=["blk-a-2", "blk-a-1"],
-                embedding=[0.3, 0.4],
+                embedding=_embedding(0.3),
             )
         ],
     )
@@ -122,7 +126,8 @@ def test_chunk_repository_upsert_replaces_same_page_chunks_without_duplicates() 
     assert all_chunks[0].chunk_text == "Chunk A updated"
     assert all_chunks[0].source_kind == "notion"
     assert all_chunks[0].notion_block_id == 2
-    assert json.loads(all_chunks[0].embedding_text or "[]") == [0.3, 0.4]
+    assert all_chunks[0].embedding == _embedding(0.3)
+    assert json.loads(all_chunks[0].embedding_text or "[]") == _embedding(0.3)
 
 
 def test_chunk_repository_upsert_keeps_other_page_chunks() -> None:

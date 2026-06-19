@@ -244,6 +244,10 @@ Boundary rules:
 - External capabilities go through Tool Registry and local tool adapters; future MCP clients can be added behind the same registry.
 - PostgreSQL and Redis stay backend infrastructure behind repositories and QueueClient, not LLM-facing tools.
 - Permission checks, write safety, RAG inclusion rules, output validation, and proposal state transitions remain deterministic backend logic.
+- Shared page indexing uses:
+  `Indexing Orchestrator -> EmbeddingClient -> ChunkRepository -> PostgreSQL + pgvector`.
+- If chunk embeddings cannot be generated, indexing fails closed before page
+  block or chunk replacement.
 
 ## 11. Main Workflows
 ### 11.1 Initial Indexing
@@ -251,13 +255,15 @@ Boundary rules:
 Run full indexing
 -> Read Notion pages and blocks
 -> Normalize and chunk
--> Build embeddings
--> Upsert vectors
+-> Batch chunk text through EmbeddingClient
+-> Persist blocks and vectors through ChunkRepository
 -> Save index run status
 ```
 Checklist:
 - [ ] Full index covers required page/block structure.
 - [ ] Citation metadata includes Notion path.
+- [ ] Successful indexing writes both live `embedding` and transitional
+  `embedding_text` during rollout.
 
 ### 11.2 Manual Incremental Sync
 ```text
@@ -265,6 +271,7 @@ User edits Notion manually
 -> Trigger /api/notion/index/incremental
 -> Detect changed pages
 -> Page-level replacement for each changed page
+-> Batch chunk text through the shared embedding flow
 -> Remove stale blocks/chunks
 -> Re-index current page content
 ```
@@ -277,7 +284,7 @@ Checklist:
 Change Request
 -> Human Accept
 -> Append to AI Supplement Zone
--> Trigger immediate page re-index
+-> Trigger immediate page re-index through the shared embedding flow
 -> Accepted content becomes searchable in production RAG
 ```
 Checklist:
@@ -404,6 +411,8 @@ Rollout note:
   `knowledge_chunks.notion_path`, and `notion_blocks.notion_page_id`.
 - PostgreSQL also gets a partial HNSW cosine index on non-null
   `knowledge_chunks.embedding`.
+- Step 50 writes both live `embedding` and transitional `embedding_text`
+  through the shared indexing path on every successful page re-index.
 
 ### 12.5 change_requests
 | Column | Type | Description |

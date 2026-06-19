@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from src.app.dependencies import (
     get_cost_tracker,
+    get_embedding_client,
     get_prompt_template_loader,
     get_provider_router,
     get_tool_registry,
@@ -25,7 +28,7 @@ from src.orchestrators import (
     SupplementReviewError,
     SupplementReviewOrchestrator,
 )
-from src.providers import ProviderRouter
+from src.providers import EmbeddingClient, ProviderRouter
 from src.repositories import (
     ChangeRequestRepository,
     ChunkRepository,
@@ -69,6 +72,8 @@ def _build_supplement_review_orchestrator(
     *,
     db_session: Session,
     tool_registry: ToolRegistry,
+    embedding_client: Optional[EmbeddingClient],
+    cost_tracker: CostTracker,
 ) -> SupplementReviewOrchestrator:
     page_index_orchestrator = NotionPageIndexOrchestrator(
         tool_registry=tool_registry,
@@ -76,6 +81,8 @@ def _build_supplement_review_orchestrator(
         notion_block_repository=NotionBlockRepository(db_session),
         workflow_run_service=WorkflowRunService(WorkflowRunRepository(db_session)),
         chunk_repository=ChunkRepository(db_session),
+        embedding_client=embedding_client,
+        cost_tracker=cost_tracker,
     )
     return SupplementReviewOrchestrator(
         change_request_repository=ChangeRequestRepository(db_session),
@@ -143,10 +150,14 @@ async def accept_supplement_change_request(
     request: Request,
     db_session: Session = Depends(get_db_session),
     tool_registry: ToolRegistry = Depends(get_tool_registry),
+    embedding_client: Optional[EmbeddingClient] = Depends(get_embedding_client),
+    cost_tracker: CostTracker = Depends(get_cost_tracker),
 ) -> SupplementReviewResponse:
     orchestrator = _build_supplement_review_orchestrator(
         db_session=db_session,
         tool_registry=tool_registry,
+        embedding_client=embedding_client,
+        cost_tracker=cost_tracker,
     )
     request_workflow_id = str(getattr(request.state, "workflow_id", ""))
 
@@ -184,10 +195,14 @@ async def reject_supplement_change_request(
     request: Request,
     db_session: Session = Depends(get_db_session),
     tool_registry: ToolRegistry = Depends(get_tool_registry),
+    embedding_client: Optional[EmbeddingClient] = Depends(get_embedding_client),
+    cost_tracker: CostTracker = Depends(get_cost_tracker),
 ) -> SupplementReviewResponse:
     orchestrator = _build_supplement_review_orchestrator(
         db_session=db_session,
         tool_registry=tool_registry,
+        embedding_client=embedding_client,
+        cost_tracker=cost_tracker,
     )
     request_workflow_id = str(getattr(request.state, "workflow_id", ""))
 
@@ -226,10 +241,14 @@ async def edit_later_supplement_change_request(
     request: Request,
     db_session: Session = Depends(get_db_session),
     tool_registry: ToolRegistry = Depends(get_tool_registry),
+    embedding_client: Optional[EmbeddingClient] = Depends(get_embedding_client),
+    cost_tracker: CostTracker = Depends(get_cost_tracker),
 ) -> SupplementReviewResponse:
     orchestrator = _build_supplement_review_orchestrator(
         db_session=db_session,
         tool_registry=tool_registry,
+        embedding_client=embedding_client,
+        cost_tracker=cost_tracker,
     )
     request_workflow_id = str(getattr(request.state, "workflow_id", ""))
 

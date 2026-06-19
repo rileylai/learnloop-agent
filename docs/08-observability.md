@@ -26,6 +26,11 @@ What belongs here:
 - Cost estimates are computed from a small model-pricing catalog inside the
   backend service layer. Unknown models return `estimated_cost=null` instead of
   guessing.
+- Indexing workflows that generate chunk vectors should record
+  `embedding_provider`, `embedding_model`, `embedding_dimensions`,
+  `embedding_token_input`, and `embedding_estimated_cost`.
+- Manual incremental sync should aggregate embedding token and cost metadata
+  across all successfully re-indexed pages in the workflow.
 
 ## Vector Retrieval Metadata
 

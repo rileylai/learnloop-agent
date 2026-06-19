@@ -116,7 +116,8 @@ Rules:
 - Delete old page chunks first, then insert new chunks in `chunk_index` order.
 - Keep cross-page chunks untouched.
 - Map each chunk to a page block via `notion_block_ids` from citation metadata.
-- Store embedding vectors as serialized text in current MVP schema (`embedding_text`) until the live pgvector rollout lands.
+- During rollout, persist both live pgvector data in `embedding` and legacy
+  serialized JSON in `embedding_text`.
 
 ## Manual Incremental Sync Reconciliation (Step 16)
 
@@ -131,8 +132,35 @@ Rules:
 - For each page id:
   - Re-read current page tree from Notion reader tool.
   - Rebuild page blocks with page-level replacement.
-  - Rebuild notion chunks and upsert with page-level replacement.
+  - Rebuild notion chunks, batch them through `EmbeddingClient`, and upsert
+    live vectors with page-level replacement.
 - If one page fails, fail the incremental workflow deterministically with failure reason and workflow id.
+
+## Shared Live Embedding Indexing Path (Step 50)
+
+Files:
+- `src/orchestrators/notion_page_index_orchestrator.py`
+- `src/orchestrators/notion_incremental_index_orchestrator.py`
+- `src/repositories/chunk_repository.py`
+
+Goal:
+- Make page indexing, manual incremental sync, and auto-after-accept re-index
+  all use one architecture-safe embedding flow.
+
+Flow:
+- `NotionPageIndexOrchestrator -> EmbeddingClient -> ChunkRepository -> PostgreSQL + pgvector`
+
+Rules:
+- Build chunk drafts from the current page snapshot before mutating page
+  blocks or chunk rows.
+- Batch all chunk text for one page through `EmbeddingClient` with explicit
+  `dimensions=1536`.
+- Persist successful embeddings to both `knowledge_chunks.embedding` and the
+  transitional `knowledge_chunks.embedding_text`.
+- Missing embedding configuration or embedding-provider failure must fail
+  closed before block or chunk replacement begins.
+- Manual incremental sync and auto-after-accept re-index must reuse the same
+  page indexing orchestrator instead of implementing vector writes separately.
 
 ## Production Chunk Retrieval (Step 17)
 
@@ -161,7 +189,7 @@ Production-RAG rules in this step:
 - Non-production chunk kinds are excluded.
 - No reranker is used in MVP.
 
-## Current Audit Snapshot Before Step 48
+## Current State After Step 50
 
 Audited code paths:
 - `src/db/models.py`
@@ -172,8 +200,10 @@ Audited code paths:
 - `src/orchestrators/qa_orchestrator.py`
 
 Current state:
-- `knowledge_chunks` stores optional serialized JSON embeddings in `embedding_text`.
-- The shared Notion indexing flow builds chunks but does not yet call `EmbeddingClient`.
+- `knowledge_chunks` stores nullable live vectors in `embedding` and keeps
+  serialized JSON in `embedding_text` during rollout.
+- The shared Notion indexing flow now batches page chunks through
+  `EmbeddingClient` before chunk persistence.
 - `ChunkRepository.list_production_chunks()` applies production-safe filters in SQL, then `ProductionChunkRetriever` ranks candidates in Python.
 - Default QA currently calls the retriever without a query embedding, so production QA today is lexical-only.
 - Optional cosine scoring exists only when a caller explicitly passes `query_embedding` and a row has `embedding_text`.

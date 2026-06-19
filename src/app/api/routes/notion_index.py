@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
-from src.app.dependencies import get_tool_registry
+from src.app.dependencies import (
+    get_cost_tracker,
+    get_embedding_client,
+    get_tool_registry,
+)
 from src.app.schemas import (
     NotionIncrementalIndexRequest,
     NotionIncrementalIndexResponse,
@@ -17,13 +23,14 @@ from src.orchestrators import (
     NotionPageIndexError,
     NotionPageIndexOrchestrator,
 )
+from src.providers import EmbeddingClient
 from src.repositories import (
     ChunkRepository,
     NotionBlockRepository,
     NotionPageRepository,
     WorkflowRunRepository,
 )
-from src.services import WorkflowRunService
+from src.services import CostTracker, WorkflowRunService
 from src.tools import ToolRegistry
 
 router = APIRouter()
@@ -33,6 +40,8 @@ def _build_index_orchestrator(
     *,
     db_session: Session,
     tool_registry: ToolRegistry,
+    embedding_client: Optional[EmbeddingClient],
+    cost_tracker: CostTracker,
 ) -> NotionPageIndexOrchestrator:
     return NotionPageIndexOrchestrator(
         tool_registry=tool_registry,
@@ -40,6 +49,8 @@ def _build_index_orchestrator(
         notion_block_repository=NotionBlockRepository(db_session),
         workflow_run_service=WorkflowRunService(WorkflowRunRepository(db_session)),
         chunk_repository=ChunkRepository(db_session),
+        embedding_client=embedding_client,
+        cost_tracker=cost_tracker,
     )
 
 
@@ -47,11 +58,15 @@ def _build_incremental_orchestrator(
     *,
     db_session: Session,
     tool_registry: ToolRegistry,
+    embedding_client: Optional[EmbeddingClient],
+    cost_tracker: CostTracker,
 ) -> NotionIncrementalIndexOrchestrator:
     return NotionIncrementalIndexOrchestrator(
         page_index_orchestrator=_build_index_orchestrator(
             db_session=db_session,
             tool_registry=tool_registry,
+            embedding_client=embedding_client,
+            cost_tracker=cost_tracker,
         ),
         workflow_run_service=WorkflowRunService(WorkflowRunRepository(db_session)),
     )
@@ -63,10 +78,14 @@ async def index_notion_page(
     request: Request,
     db_session: Session = Depends(get_db_session),
     tool_registry: ToolRegistry = Depends(get_tool_registry),
+    embedding_client: Optional[EmbeddingClient] = Depends(get_embedding_client),
+    cost_tracker: CostTracker = Depends(get_cost_tracker),
 ) -> NotionPageIndexResponse:
     orchestrator = _build_index_orchestrator(
         db_session=db_session,
         tool_registry=tool_registry,
+        embedding_client=embedding_client,
+        cost_tracker=cost_tracker,
     )
     request_workflow_id = str(getattr(request.state, "workflow_id", ""))
 
@@ -105,10 +124,14 @@ async def index_notion_incremental(
     request: Request,
     db_session: Session = Depends(get_db_session),
     tool_registry: ToolRegistry = Depends(get_tool_registry),
+    embedding_client: Optional[EmbeddingClient] = Depends(get_embedding_client),
+    cost_tracker: CostTracker = Depends(get_cost_tracker),
 ) -> NotionIncrementalIndexResponse:
     orchestrator = _build_incremental_orchestrator(
         db_session=db_session,
         tool_registry=tool_registry,
+        embedding_client=embedding_client,
+        cost_tracker=cost_tracker,
     )
     request_workflow_id = str(getattr(request.state, "workflow_id", ""))
 

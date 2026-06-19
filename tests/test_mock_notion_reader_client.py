@@ -12,6 +12,7 @@ from sqlalchemy.pool import StaticPool
 from src.db.base import Base
 from src.db.models import KnowledgeChunk, NotionBlock, NotionPage, WorkflowRun
 from src.orchestrators import NotionPageIndexOrchestrator
+from src.providers import EmbeddingClient, EmbeddingRequest, EmbeddingResponse
 from src.repositories import (
     ChunkRepository,
     NotionBlockRepository,
@@ -27,6 +28,24 @@ from src.tools import (
     ToolRegistry,
     load_mock_notion_pages,
 )
+
+
+class _FakeEmbeddingClient(EmbeddingClient):
+    @property
+    def name(self) -> str:
+        return "openai"
+
+    async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
+        embeddings = [
+            [float(index + 1)] * 1536
+            for index, _ in enumerate(request.inputs)
+        ]
+        return EmbeddingResponse(
+            provider="openai",
+            model="text-embedding-3-small",
+            embeddings=embeddings,
+            token_input=len(request.inputs) * 10,
+        )
 
 
 def _build_session() -> Session:
@@ -114,6 +133,7 @@ def test_json_mock_notion_reader_client_indexes_demo_page_into_chunks() -> None:
             notion_block_repository=NotionBlockRepository(session),
             workflow_run_service=WorkflowRunService(WorkflowRunRepository(session)),
             chunk_repository=ChunkRepository(session),
+            embedding_client=_FakeEmbeddingClient(),
         )
 
         snapshot = asyncio.run(
@@ -126,6 +146,9 @@ def test_json_mock_notion_reader_client_indexes_demo_page_into_chunks() -> None:
         assert snapshot.notion_page_id == "page-nlp-week5"
         assert snapshot.indexed_block_count == 12
         assert snapshot.indexed_chunk_count >= 3
+        assert snapshot.embedding_provider == "openai"
+        assert snapshot.embedding_model == "text-embedding-3-small"
+        assert snapshot.embedding_dimensions == 1536
 
         stored_paths = {
             row[0]

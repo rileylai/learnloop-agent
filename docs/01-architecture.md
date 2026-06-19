@@ -76,6 +76,12 @@ Provider client implementation (Step 18):
 - `src/providers/llm.py`: `BaseLLMClient`, `OpenAIClient`, and deterministic `LLMClientError`.
 - `OpenAIClient` uses transport injection for deterministic tests and stays behind the provider interface.
 
+Embedding provider implementation (Steps 14 and 50):
+- `src/providers/embedding.py`: `EmbeddingClient`, `EmbeddingRequest`,
+  `EmbeddingResponse`, and `OpenAIEmbeddingClient`.
+- Indexing orchestrators depend on `EmbeddingClient`, not provider SDKs,
+  and pass embedded chunk data to repositories only after provider success.
+
 Runtime prompt loading (Step 44):
 - `src/services/prompt_template_loader.py`: loads versioned prompt bundles from
   `docs/prompts/*.md`.
@@ -91,6 +97,8 @@ Tool boundary (Step 6.2):
 Orchestrator contract:
 - Orchestrators call `ProviderRouter` and `ToolRegistry` only.
 - Orchestrators do not import provider SDKs, Notion SDK, Redis clients, or DB drivers directly.
+- Shared indexing uses:
+  `NotionPageIndexOrchestrator -> EmbeddingClient -> ChunkRepository`.
 
 ## Future MCP Server Boundary (Post-MVP)
 Tools that may be extracted into MCP servers later:
@@ -115,3 +123,6 @@ Logic that must stay deterministic backend code (not MCP-owned):
 - Redis/RQ is accessed only through QueueClient.
 - Raw PostgreSQL and Redis must not become LLM-facing tools.
 - API routes must not directly call Notion, OpenAI, Claude, Gemini, Redis, PostgreSQL, or external APIs.
+- Manual incremental sync and auto-after-accept re-index both reuse the same
+  embedding-aware page indexing orchestrator instead of duplicating vector
+  persistence logic in routes or review flows.

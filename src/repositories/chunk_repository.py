@@ -92,6 +92,7 @@ class ChunkRepository:
                 chunk_index=chunk.chunk_index,
                 chunk_text=chunk.chunk_text,
                 notion_path=chunk.notion_path,
+                embedding=chunk.embedding,
                 embedding_text=self._serialize_embedding(chunk.embedding),
                 source_kind="notion",
             )

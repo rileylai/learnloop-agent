@@ -69,6 +69,13 @@ class NotionIncrementalIndexOrchestrator:
 
         indexed_pages: List[NotionIncrementalIndexedPageResult] = []
         current_page_id = ""
+        embedding_provider: str | None = None
+        embedding_model: str | None = None
+        embedding_dimensions: int | None = None
+        embedding_token_input_total = 0
+        embedding_token_input_available = False
+        embedding_estimated_cost_total = 0.0
+        embedding_estimated_cost_available = False
         try:
             for page_id in normalized_page_ids:
                 current_page_id = page_id
@@ -84,18 +91,41 @@ class NotionIncrementalIndexOrchestrator:
                         indexed_block_count=snapshot.indexed_block_count,
                     )
                 )
+                if snapshot.embedding_provider is not None:
+                    embedding_provider = snapshot.embedding_provider
+                if snapshot.embedding_model is not None:
+                    embedding_model = snapshot.embedding_model
+                if snapshot.embedding_dimensions is not None:
+                    embedding_dimensions = snapshot.embedding_dimensions
+                if snapshot.embedding_token_input is not None:
+                    embedding_token_input_total += snapshot.embedding_token_input
+                    embedding_token_input_available = True
+                if snapshot.embedding_estimated_cost is not None:
+                    embedding_estimated_cost_total += snapshot.embedding_estimated_cost
+                    embedding_estimated_cost_available = True
 
+            metadata: dict[str, object] = {
+                "operation": "index_incremental",
+                "sync_mode": "manual",
+                "processed_page_count": len(indexed_pages),
+                "page_ids": normalized_page_ids,
+            }
+            if embedding_provider is not None:
+                metadata["embedding_provider"] = embedding_provider
+            if embedding_model is not None:
+                metadata["embedding_model"] = embedding_model
+            if embedding_dimensions is not None:
+                metadata["embedding_dimensions"] = embedding_dimensions
+            if embedding_token_input_available:
+                metadata["embedding_token_input"] = embedding_token_input_total
+            if embedding_estimated_cost_available:
+                metadata["embedding_estimated_cost"] = round(
+                    embedding_estimated_cost_total,
+                    12,
+                )
             self._workflow_run_service.mark_workflow_succeeded(
                 workflow_run.id,
-                metadata_json=json.dumps(
-                    {
-                        "operation": "index_incremental",
-                        "sync_mode": "manual",
-                        "processed_page_count": len(indexed_pages),
-                        "page_ids": normalized_page_ids,
-                    },
-                    sort_keys=True,
-                ),
+                metadata_json=json.dumps(metadata, sort_keys=True),
             )
         except NotionPageIndexError as exc:
             self._workflow_run_service.mark_workflow_failed(

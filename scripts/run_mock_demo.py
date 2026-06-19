@@ -13,12 +13,20 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.app.dependencies import get_provider_router
+from src.app.dependencies import get_embedding_client, get_provider_router
 from src.app.main import app
 from src.db.base import Base
 from src.db.models import KnowledgeChunk, NotionBlock, NotionPage, WorkflowRun
 from src.db.session import get_db_session
-from src.providers import LLMProvider, LLMRequest, LLMResponse, ProviderRouter
+from src.providers import (
+    EmbeddingClient,
+    EmbeddingRequest,
+    EmbeddingResponse,
+    LLMProvider,
+    LLMRequest,
+    LLMResponse,
+    ProviderRouter,
+)
 
 
 class _FakeProvider(LLMProvider):
@@ -37,6 +45,24 @@ class _FakeProvider(LLMProvider):
             ),
             token_input=32,
             token_output=21,
+        )
+
+
+class _FakeEmbeddingClient(EmbeddingClient):
+    @property
+    def name(self) -> str:
+        return "openai"
+
+    async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
+        embeddings = [
+            [float(index + 1)] * 1536
+            for index, _ in enumerate(request.inputs)
+        ]
+        return EmbeddingResponse(
+            provider="openai",
+            model="text-embedding-3-small",
+            embeddings=embeddings,
+            token_input=len(request.inputs) * 10,
         )
 
 
@@ -84,6 +110,10 @@ def _provider_router_override() -> ProviderRouter:
     return router
 
 
+def _embedding_client_override() -> EmbeddingClient:
+    return _FakeEmbeddingClient()
+
+
 def run_demo() -> DemoSummary:
     session_factory = _build_session_factory()
     logging.getLogger("learnloop.request").setLevel(logging.WARNING)
@@ -94,6 +124,7 @@ def run_demo() -> DemoSummary:
 
     app.dependency_overrides[get_db_session] = _dependency_db_override
     app.dependency_overrides[get_provider_router] = _provider_router_override
+    app.dependency_overrides[get_embedding_client] = _embedding_client_override
 
     try:
         client = TestClient(app)

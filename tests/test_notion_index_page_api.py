@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+import json
 from typing import Dict
 
 from fastapi.testclient import TestClient
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from src.app.dependencies import get_tool_registry
+from src.app.dependencies import get_embedding_client, get_tool_registry
 from src.app.main import app
 from src.db.base import Base
 from src.db.models import KnowledgeChunk, NotionBlock, NotionPage, WorkflowRun
 from src.db.session import get_db_session
+from src.providers import EmbeddingClient, EmbeddingRequest, EmbeddingResponse
 from src.tools import (
     InMemoryNotionReaderClient,
     NotionBlockNode,
@@ -19,6 +22,24 @@ from src.tools import (
     NotionReaderTool,
     ToolRegistry,
 )
+
+
+class _FakeEmbeddingClient(EmbeddingClient):
+    @property
+    def name(self) -> str:
+        return "openai"
+
+    async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
+        embeddings = [
+            [float(index + 1)] * 1536
+            for index, _ in enumerate(request.inputs)
+        ]
+        return EmbeddingResponse(
+            provider="openai",
+            model="text-embedding-3-small",
+            embeddings=embeddings,
+            token_input=len(request.inputs) * 10,
+        )
 
 
 def _build_session_factory():
@@ -43,6 +64,10 @@ def _build_tool_registry(pages: Dict[str, NotionPageTree]) -> ToolRegistry:
     registry = ToolRegistry()
     registry.register_tool(NotionReaderTool(InMemoryNotionReaderClient(pages)))
     return registry
+
+
+def _embedding_client_override() -> EmbeddingClient:
+    return _FakeEmbeddingClient()
 
 
 def _sample_tree_v1() -> NotionPageTree:
@@ -203,6 +228,7 @@ def test_index_page_api_persists_page_and_nested_blocks() -> None:
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
+    app.dependency_overrides[get_embedding_client] = _embedding_client_override
 
     try:
         client = TestClient(app)
@@ -240,10 +266,27 @@ def test_index_page_api_persists_page_and_nested_blocks() -> None:
             assert parent_block.parent_block_id is None
             assert child_block.parent_block_id == parent_block.id
 
+            chunks = (
+                session.query(KnowledgeChunk)
+                .join(NotionBlock, KnowledgeChunk.notion_block_id == NotionBlock.id)
+                .filter(NotionBlock.notion_page_id == page.id)
+                .order_by(KnowledgeChunk.chunk_index.asc())
+                .all()
+            )
+            assert len(chunks) == 1
+            assert chunks[0].embedding == [1.0] * 1536
+            assert chunks[0].embedding_text is not None
+
             workflow_run = session.get(WorkflowRun, payload["workflow_run_id"])
             assert workflow_run is not None
             assert workflow_run.status == "succeeded"
             assert workflow_run.failure_reason is None
+            workflow_metadata = json.loads(workflow_run.metadata_json or "{}")
+            assert workflow_metadata["embedding_provider"] == "openai"
+            assert workflow_metadata["embedding_model"] == "text-embedding-3-small"
+            assert workflow_metadata["embedding_dimensions"] == 1536
+            assert workflow_metadata["embedding_token_input"] == 10
+            assert workflow_metadata["embedding_estimated_cost"] == pytest.approx(0.0000002)
         finally:
             session.close()
     finally:
@@ -266,6 +309,7 @@ def test_index_page_api_builds_paths_from_block_hierarchy() -> None:
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
+    app.dependency_overrides[get_embedding_client] = _embedding_client_override
 
     try:
         client = TestClient(app)
@@ -323,6 +367,7 @@ def test_index_page_api_replaces_existing_page_blocks() -> None:
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
+    app.dependency_overrides[get_embedding_client] = _embedding_client_override
 
     try:
         client = TestClient(app)
@@ -370,6 +415,7 @@ def test_index_page_api_returns_not_found_when_page_missing() -> None:
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
+    app.dependency_overrides[get_embedding_client] = _embedding_client_override
 
     try:
         client = TestClient(app)
@@ -392,6 +438,49 @@ def test_index_page_api_returns_not_found_when_page_missing() -> None:
         app.dependency_overrides.clear()
 
 
+def test_index_page_api_fails_closed_when_embedding_provider_missing() -> None:
+    session_factory = _build_session_factory()
+    pages = {"page-1": _sample_tree_v1()}
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _tool_registry_override() -> ToolRegistry:
+        return _build_tool_registry(pages)
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_tool_registry] = _tool_registry_override
+    app.dependency_overrides[get_embedding_client] = lambda: None
+
+    try:
+        client = TestClient(app)
+        response = client.post("/api/notion/index/page", json={"page_id": "page-1"})
+
+        assert response.status_code == 503
+        detail = response.json()["detail"]
+        assert detail["error_code"] == "EMBEDDING_PROVIDER_NOT_CONFIGURED"
+        assert detail["failure_reason"] == "EMBEDDING_PROVIDER_NOT_CONFIGURED"
+
+        session: Session = session_factory()
+        try:
+            assert session.query(NotionPage).count() == 0
+            assert session.query(NotionBlock).count() == 0
+            assert session.query(KnowledgeChunk).count() == 0
+
+            workflow_run = session.get(WorkflowRun, detail["workflow_run_id"])
+            assert workflow_run is not None
+            assert workflow_run.status == "failed"
+            assert workflow_run.failure_reason == "EMBEDDING_PROVIDER_NOT_CONFIGURED"
+        finally:
+            session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_index_incremental_api_reconciles_manual_deletion_with_page_replacement() -> None:
     session_factory = _build_session_factory()
     pages = {"page-sync": _sample_incremental_v1()}
@@ -408,6 +497,7 @@ def test_index_incremental_api_reconciles_manual_deletion_with_page_replacement(
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
+    app.dependency_overrides[get_embedding_client] = _embedding_client_override
 
     try:
         client = TestClient(app)
@@ -469,6 +559,17 @@ def test_index_incremental_api_reconciles_manual_deletion_with_page_replacement(
             )
             assert len(chunks) == 1
             assert chunks[0].chunk_text == "Old Section B\nOld note B (edited)"
+            assert chunks[0].embedding == [1.0] * 1536
+            assert chunks[0].embedding_text is not None
+
+            workflow_run = session.get(WorkflowRun, payload["workflow_run_id"])
+            assert workflow_run is not None
+            metadata = json.loads(workflow_run.metadata_json or "{}")
+            assert metadata["embedding_provider"] == "openai"
+            assert metadata["embedding_model"] == "text-embedding-3-small"
+            assert metadata["embedding_dimensions"] == 1536
+            assert metadata["embedding_token_input"] == 10
+            assert metadata["embedding_estimated_cost"] == pytest.approx(0.0000002)
         finally:
             session.close()
     finally:
@@ -491,6 +592,7 @@ def test_index_incremental_api_returns_not_found_when_any_page_missing() -> None
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
+    app.dependency_overrides[get_embedding_client] = _embedding_client_override
 
     try:
         client = TestClient(app)

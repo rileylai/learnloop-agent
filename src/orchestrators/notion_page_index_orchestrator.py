@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field, ValidationError
 
+from src.providers import EmbeddingClient, EmbeddingClientError, EmbeddingRequest
 from src.rag import (
     BlockPathNode,
     BlockPathSnapshot,
@@ -23,13 +24,14 @@ from src.repositories import (
     NotionChunkUpsert,
     NotionPageRepository,
 )
-from src.services import STANDARD_FAILURE_REASONS, WorkflowRunService
+from src.services import CostTracker, STANDARD_FAILURE_REASONS, WorkflowRunService
 from src.tools import ToolContext, ToolRegistry
 
 NOTION_READER_TOOL_NAME = "notion_reader"
 SYNC_MODE_MANUAL = "manual"
 SYNC_MODE_AUTO_AFTER_ACCEPT = "auto_after_accept"
 ALLOWED_SYNC_MODES = {SYNC_MODE_MANUAL, SYNC_MODE_AUTO_AFTER_ACCEPT}
+EMBEDDING_DIMENSIONS = 1536
 
 TOOL_ERROR_TO_HTTP_STATUS: Dict[str, int] = {
     "INVALID_ARGUMENT": HTTPStatus.BAD_REQUEST,
@@ -56,6 +58,11 @@ class NotionIndexedPageSnapshot:
     notion_path: str
     indexed_block_count: int
     indexed_chunk_count: int
+    embedding_provider: Optional[str] = None
+    embedding_model: Optional[str] = None
+    embedding_dimensions: Optional[int] = None
+    embedding_token_input: Optional[int] = None
+    embedding_estimated_cost: Optional[float] = None
 
 
 class NotionPageIndexError(Exception):
@@ -98,12 +105,16 @@ class NotionPageIndexOrchestrator:
         notion_block_repository: NotionBlockRepository,
         workflow_run_service: WorkflowRunService,
         chunk_repository: Optional[ChunkRepository] = None,
+        embedding_client: Optional[EmbeddingClient] = None,
+        cost_tracker: Optional[CostTracker] = None,
     ) -> None:
         self._tool_registry = tool_registry
         self._notion_page_repository = notion_page_repository
         self._notion_block_repository = notion_block_repository
         self._workflow_run_service = workflow_run_service
         self._chunk_repository = chunk_repository
+        self._embedding_client = embedding_client
+        self._cost_tracker = cost_tracker
 
     async def index_page(
         self,
@@ -153,13 +164,12 @@ class NotionPageIndexOrchestrator:
             self._workflow_run_service.mark_workflow_succeeded(
                 workflow_run.id,
                 metadata_json=json.dumps(
-                    {
-                        "operation": "index_page",
-                        "sync_mode": normalized_sync_mode,
-                        "page_id": normalized_page_id,
-                        "indexed_block_count": snapshot.indexed_block_count,
-                        "indexed_chunk_count": snapshot.indexed_chunk_count,
-                    },
+                    self._build_success_metadata(
+                        operation="index_page",
+                        sync_mode=normalized_sync_mode,
+                        page_id=normalized_page_id,
+                        snapshot=snapshot,
+                    ),
                     sort_keys=True,
                 ),
             )
@@ -238,17 +248,30 @@ class NotionPageIndexOrchestrator:
             page_payload, block_payloads = self._parse_tool_payload(
                 tool_result.structured_content
             )
-            notion_page = self._notion_page_repository.upsert_page_snapshot(
-                notion_page_id=page_payload.page_id,
-                title=page_payload.title,
-                notion_path=page_payload.notion_path,
-            )
             block_paths = build_block_paths(
                 page_path=page_payload.notion_path,
                 blocks=[
                     self._to_block_path_node(block_payload)
                     for block_payload in block_payloads
                 ],
+            )
+            chunk_upserts = self._build_chunk_upserts(
+                page_payload=page_payload,
+                block_paths=block_paths,
+            )
+            embedded_chunk_upserts = chunk_upserts
+            embedding_metadata = self._empty_embedding_metadata()
+            if self._chunk_repository is not None and chunk_upserts:
+                embedded_chunk_upserts, embedding_metadata = await self._embed_chunk_upserts(
+                    page_id=page_payload.page_id,
+                    request_workflow_id=request_workflow_id,
+                    chunk_upserts=chunk_upserts,
+                )
+
+            notion_page = self._notion_page_repository.upsert_page_snapshot(
+                notion_page_id=page_payload.page_id,
+                title=page_payload.title,
+                notion_path=page_payload.notion_path,
             )
             if self._chunk_repository is not None:
                 self._chunk_repository.delete_page_chunks(
@@ -263,15 +286,11 @@ class NotionPageIndexOrchestrator:
             )
             indexed_chunk_count = 0
             if self._chunk_repository is not None:
-                chunk_upserts = self._build_chunk_upserts(
-                    page_payload=page_payload,
-                    block_paths=block_paths,
-                )
                 self._chunk_repository.upsert_chunks(
                     notion_page_db_id=notion_page.id,
-                    chunks=chunk_upserts,
+                    chunks=embedded_chunk_upserts,
                 )
-                indexed_chunk_count = len(chunk_upserts)
+                indexed_chunk_count = len(embedded_chunk_upserts)
         except NotionPageIndexError:
             raise
         except ChunkRepositoryError as exc:
@@ -296,6 +315,11 @@ class NotionPageIndexOrchestrator:
             notion_path=notion_page.notion_path,
             indexed_block_count=len(inserted_blocks),
             indexed_chunk_count=indexed_chunk_count,
+            embedding_provider=embedding_metadata["embedding_provider"],
+            embedding_model=embedding_metadata["embedding_model"],
+            embedding_dimensions=embedding_metadata["embedding_dimensions"],
+            embedding_token_input=embedding_metadata["embedding_token_input"],
+            embedding_estimated_cost=embedding_metadata["embedding_estimated_cost"],
         )
 
     def _http_status_for_tool_error(self, error_code: str) -> int:
@@ -362,6 +386,127 @@ class NotionPageIndexOrchestrator:
             )
             for draft in chunk_drafts
         ]
+
+    async def _embed_chunk_upserts(
+        self,
+        *,
+        page_id: str,
+        request_workflow_id: str,
+        chunk_upserts: List[NotionChunkUpsert],
+    ) -> Tuple[List[NotionChunkUpsert], Dict[str, Optional[object]]]:
+        if self._embedding_client is None:
+            raise NotionPageIndexError(
+                error_code="EMBEDDING_PROVIDER_NOT_CONFIGURED",
+                message="Embedding provider is not configured for indexing",
+                http_status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                failure_reason="EMBEDDING_PROVIDER_NOT_CONFIGURED",
+            )
+
+        try:
+            response = await self._embedding_client.embed(
+                EmbeddingRequest(
+                    inputs=[chunk.chunk_text for chunk in chunk_upserts],
+                    dimensions=EMBEDDING_DIMENSIONS,
+                    metadata={
+                        "workflow_id": request_workflow_id,
+                        "operation": "index_page_snapshot",
+                        "page_id": page_id,
+                    },
+                )
+            )
+        except EmbeddingClientError as exc:
+            raise NotionPageIndexError(
+                error_code="EMBEDDING_PROVIDER_ERROR",
+                message=f"Failed to generate chunk embeddings: {exc}",
+                http_status_code=HTTPStatus.BAD_GATEWAY,
+                failure_reason="EMBEDDING_PROVIDER_ERROR",
+            ) from exc
+
+        if len(response.embeddings) != len(chunk_upserts):
+            raise NotionPageIndexError(
+                error_code="EMBEDDING_PROVIDER_ERROR",
+                message=(
+                    "Embedding provider returned an unexpected number of embeddings: "
+                    f"expected={len(chunk_upserts)} actual={len(response.embeddings)}"
+                ),
+                http_status_code=HTTPStatus.BAD_GATEWAY,
+                failure_reason="EMBEDDING_PROVIDER_ERROR",
+            )
+
+        embedded_chunks: List[NotionChunkUpsert] = []
+        for chunk, embedding in zip(chunk_upserts, response.embeddings):
+            if len(embedding) != EMBEDDING_DIMENSIONS:
+                raise NotionPageIndexError(
+                    error_code="VECTOR_DIMENSION_MISMATCH",
+                    message=(
+                        "Embedding provider returned an unexpected vector length: "
+                        f"expected={EMBEDDING_DIMENSIONS} actual={len(embedding)}"
+                    ),
+                    http_status_code=HTTPStatus.BAD_GATEWAY,
+                    failure_reason="VECTOR_DIMENSION_MISMATCH",
+                )
+            embedded_chunks.append(
+                NotionChunkUpsert(
+                    chunk_index=chunk.chunk_index,
+                    chunk_text=chunk.chunk_text,
+                    notion_path=chunk.notion_path,
+                    notion_block_ids=list(chunk.notion_block_ids),
+                    source_kind=chunk.source_kind,
+                    embedding=embedding,
+                )
+            )
+
+        estimated_cost = None
+        if self._cost_tracker is not None:
+            estimated_cost = self._cost_tracker.estimate_embedding_cost(
+                provider_name=response.provider,
+                model=response.model,
+                token_input=response.token_input,
+            )
+
+        return embedded_chunks, {
+            "embedding_provider": response.provider,
+            "embedding_model": response.model,
+            "embedding_dimensions": EMBEDDING_DIMENSIONS,
+            "embedding_token_input": response.token_input,
+            "embedding_estimated_cost": estimated_cost,
+        }
+
+    def _build_success_metadata(
+        self,
+        *,
+        operation: str,
+        sync_mode: str,
+        page_id: str,
+        snapshot: NotionIndexedPageSnapshot,
+    ) -> Dict[str, object]:
+        metadata: Dict[str, object] = {
+            "operation": operation,
+            "sync_mode": sync_mode,
+            "page_id": page_id,
+            "indexed_block_count": snapshot.indexed_block_count,
+            "indexed_chunk_count": snapshot.indexed_chunk_count,
+        }
+        if snapshot.embedding_provider is not None:
+            metadata["embedding_provider"] = snapshot.embedding_provider
+        if snapshot.embedding_model is not None:
+            metadata["embedding_model"] = snapshot.embedding_model
+        if snapshot.embedding_dimensions is not None:
+            metadata["embedding_dimensions"] = snapshot.embedding_dimensions
+        if snapshot.embedding_token_input is not None:
+            metadata["embedding_token_input"] = snapshot.embedding_token_input
+        if snapshot.embedding_estimated_cost is not None:
+            metadata["embedding_estimated_cost"] = snapshot.embedding_estimated_cost
+        return metadata
+
+    def _empty_embedding_metadata(self) -> Dict[str, Optional[object]]:
+        return {
+            "embedding_provider": None,
+            "embedding_model": None,
+            "embedding_dimensions": None,
+            "embedding_token_input": None,
+            "embedding_estimated_cost": None,
+        }
 
     def _extract_chunk_block_ids(self, citation_meta: Dict[str, Any]) -> List[str]:
         value = citation_meta.get("notion_block_ids")

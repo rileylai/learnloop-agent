@@ -20,6 +20,11 @@ from src.orchestrators import (  # noqa: E402
     NotionIncrementalIndexOrchestrator,
     NotionPageIndexOrchestrator,
 )
+from src.providers import (  # noqa: E402
+    EmbeddingClient,
+    EmbeddingRequest,
+    EmbeddingResponse,
+)
 from src.rag import ProductionChunkRetriever  # noqa: E402
 from src.repositories import (  # noqa: E402
     ChunkRepository,
@@ -42,6 +47,24 @@ MANUAL_SECTION_PATH = f"{PAGE_PATH}/Manual Concepts"
 DELETED_AI_SECTION_PATH = f"{PAGE_PATH}/AI Supplement Zone/Deleted AI Supplement"
 DELETED_AI_QUERY = "orphaned vector stale deletion marker"
 MANUAL_NOTE_QUERY = "manual source survives sync canonical"
+
+
+class _FakeEmbeddingClient(EmbeddingClient):
+    @property
+    def name(self) -> str:
+        return "openai"
+
+    async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
+        embeddings = [
+            [float(index + 1)] * 1536
+            for index, _ in enumerate(request.inputs)
+        ]
+        return EmbeddingResponse(
+            provider="openai",
+            model="text-embedding-3-small",
+            embeddings=embeddings,
+            token_input=len(request.inputs) * 10,
+        )
 
 
 @dataclass(frozen=True)
@@ -163,6 +186,7 @@ def _build_index_orchestrator(
         notion_block_repository=NotionBlockRepository(session),
         workflow_run_service=WorkflowRunService(WorkflowRunRepository(session)),
         chunk_repository=ChunkRepository(session),
+        embedding_client=_FakeEmbeddingClient(),
     )
 
 

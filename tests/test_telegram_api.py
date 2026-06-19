@@ -9,7 +9,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from src.app.dependencies import get_provider_router, get_tool_registry
+from src.app.dependencies import (
+    get_embedding_client,
+    get_provider_router,
+    get_tool_registry,
+)
 from src.app.main import app
 from src.db.base import Base
 from src.db.models import (
@@ -21,7 +25,15 @@ from src.db.models import (
     WorkflowRun,
 )
 from src.db.session import get_db_session
-from src.providers import LLMProvider, LLMRequest, LLMResponse, ProviderRouter
+from src.providers import (
+    EmbeddingClient,
+    EmbeddingRequest,
+    EmbeddingResponse,
+    LLMProvider,
+    LLMRequest,
+    LLMResponse,
+    ProviderRouter,
+)
 from src.tools import (
     DisabledTelegramBotClient,
     ImageOCRParserClient,
@@ -167,6 +179,24 @@ class _SnapshotBackedNotionReaderClient(NotionReaderClient):
         )
 
 
+class _FakeEmbeddingClient(EmbeddingClient):
+    @property
+    def name(self) -> str:
+        return "openai"
+
+    async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
+        embeddings = [
+            [float(index + 1)] * 1536
+            for index, _ in enumerate(request.inputs)
+        ]
+        return EmbeddingResponse(
+            provider="openai",
+            model="text-embedding-3-small",
+            embeddings=embeddings,
+            token_input=len(request.inputs) * 10,
+        )
+
+
 def _build_session_factory():
     engine = create_engine(
         "sqlite+pysqlite://",
@@ -200,6 +230,10 @@ def _build_review_tool_registry(
     )
     registry.register_tool(NotionWriterTool(writer_client))
     return registry, writer_client
+
+
+def _embedding_client_override() -> EmbeddingClient:
+    return _FakeEmbeddingClient()
 
 
 def _seed_notion_page(
@@ -733,6 +767,7 @@ def test_telegram_webhook_accept_appends_and_reindexes_before_replying() -> None
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
+    app.dependency_overrides[get_embedding_client] = _embedding_client_override
 
     try:
         client = TestClient(app)
@@ -790,6 +825,20 @@ def test_telegram_webhook_accept_appends_and_reindexes_before_replying() -> None
             assert len(indexing_runs) == 1
             indexing_metadata = json.loads(indexing_runs[0].metadata_json or "{}")
             assert indexing_metadata["sync_mode"] == "auto_after_accept"
+            assert indexing_metadata["embedding_provider"] == "openai"
+            assert indexing_metadata["embedding_model"] == "text-embedding-3-small"
+            assert indexing_metadata["embedding_dimensions"] == 1536
+            assert indexing_metadata["embedding_token_input"] >= 10
+            assert indexing_metadata["embedding_estimated_cost"] is not None
+
+            chunks = (
+                verify_session.query(KnowledgeChunk)
+                .filter(KnowledgeChunk.source_kind == "notion")
+                .all()
+            )
+            assert len(chunks) >= 1
+            assert all(chunk.embedding is not None for chunk in chunks)
+            assert all(chunk.embedding_text is not None for chunk in chunks)
 
             telegram_run = verify_session.get(WorkflowRun, payload["workflow_run_id"])
             assert telegram_run is not None
