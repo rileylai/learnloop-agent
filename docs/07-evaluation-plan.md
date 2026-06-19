@@ -51,6 +51,8 @@ uv run python tests/evals/golden_questions.py
 
 - Retrieval hit rate: expected path appears in top-k retrieved paths.
 - Citation accuracy: returned citation path matches an expected source path.
+- Vector retrieval regression: semantic ranking, lexical fallback reason,
+  citation de-duplication, and production-RAG exclusion stay deterministic.
 - Write safety: original blocks stay unchanged and append occurs only under
   `AI Supplement Zone`.
 - Manual sync reconciliation: deleted Notion content is removed after
@@ -122,6 +124,40 @@ Expected output includes:
 citation_accuracy: 1.000 (3/3)
 threshold: 1.000
 status: pass
+```
+
+## Vector Retrieval Regression Evaluation
+
+`tests/evals/vector_retrieval_eval.py` freezes deterministic vector-first QA
+retrieval behavior without real OpenAI calls, real PostgreSQL, or
+LLM-as-judge.
+
+The Step 54 eval uses a deterministic fake embedding fixture and an in-memory
+vector-capable repository fixture to exercise the real
+`ProductionChunkRetriever.retrieve_with_metadata()` decision path.
+
+Checks:
+
+- Semantic ranking returns `pgvector_exact_cosine` when vector results are
+  available.
+- Query-time vector failure falls back to lexical retrieval with
+  `retrieval_fallback_reason=VECTOR_QUERY_FAILED`.
+- Missing usable vectors in the filtered scope falls back to lexical retrieval
+  with `retrieval_fallback_reason=VECTOR_DATA_UNAVAILABLE`.
+- Duplicate retrieved paths collapse into unique citation paths.
+- Production RAG excludes non-Notion chunks even when they would otherwise be
+  the highest-scoring semantic match.
+
+Run:
+
+```bash
+uv run python tests/evals/vector_retrieval_eval.py
+```
+
+Expected output includes:
+
+```text
+vector_retrieval_regression: pass (4/4)
 ```
 
 ## Write Safety Evaluation

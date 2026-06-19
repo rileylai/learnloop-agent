@@ -345,3 +345,42 @@ def test_retriever_falls_back_when_scope_has_no_live_vectors() -> None:
     assert result.retrieval_mode == RETRIEVAL_MODE_LEXICAL_FALLBACK
     assert result.retrieval_fallback_reason == "VECTOR_DATA_UNAVAILABLE"
     assert [chunk.chunk_id for chunk in result.chunks] == [2]
+
+
+def test_retriever_fallback_can_disable_legacy_embedding_scoring() -> None:
+    retriever = ProductionChunkRetriever(
+        chunk_repository=_FakeVectorRepository(
+            lexical_candidates=[
+                RetrievalChunkCandidate(
+                    chunk_id=4,
+                    chunk_index=0,
+                    chunk_text="attention query key value vectors",
+                    notion_path="Knowledge/NLP/Week5/Attention",
+                    source_kind="notion",
+                    notion_page_id="page-nlp-week5",
+                    embedding_text=json.dumps([0.0, 1.0]),
+                ),
+                RetrievalChunkCandidate(
+                    chunk_id=5,
+                    chunk_index=1,
+                    chunk_text="completely unrelated words",
+                    notion_path="Knowledge/NLP/Week5/Noise",
+                    source_kind="notion",
+                    notion_page_id="page-nlp-week5",
+                    embedding_text=json.dumps([1.0, 0.0]),
+                ),
+            ],
+            raise_vector_error=True,
+        )
+    )
+
+    result = retriever.retrieve_with_metadata(
+        query_text="attention query key",
+        query_embedding=[1.0, 0.0],
+        top_k=2,
+        allow_legacy_embedding_scoring=False,
+    )
+
+    assert result.retrieval_mode == RETRIEVAL_MODE_LEXICAL_FALLBACK
+    assert result.retrieval_fallback_reason == "VECTOR_QUERY_FAILED"
+    assert [chunk.chunk_id for chunk in result.chunks] == [4]
