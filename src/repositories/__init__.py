@@ -3,8 +3,10 @@ from src.repositories.chunk_repository import (
     ChunkBlockMappingError,
     ChunkRepository,
     ChunkRepositoryError,
+    ChunkVectorQueryError,
     NotionChunkUpsert,
     RetrievalChunkCandidate,
+    SemanticChunkMatch,
 )
 from src.repositories.notion_block_repository import NotionBlockRepository, NotionBlockSnapshot
 from src.repositories.notion_page_repository import NotionPageRepository
@@ -16,9 +18,11 @@ __all__ = [
     "ChunkBlockMappingError",
     "ChunkRepository",
     "ChunkRepositoryError",
+    "ChunkVectorQueryError",
     "NotionBlockRepository",
     "NotionChunkUpsert",
     "RetrievalChunkCandidate",
+    "SemanticChunkMatch",
     "NotionBlockSnapshot",
     "NotionPageRepository",
     "SourceDocumentRepository",

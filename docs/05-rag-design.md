@@ -195,6 +195,31 @@ Retrieval behavior during rollout:
   filtered retrieval scope as a request-level lexical fallback condition, not
   as permission to silently skip unsupported rows.
 
+## Repository-Owned pgvector Top-k Retrieval (Step 52)
+
+Files:
+- `src/repositories/chunk_repository.py`
+- `src/rag/retriever.py`
+
+Goal:
+- Move semantic top-k ranking into PostgreSQL while keeping filter logic and
+  production-safety deterministic.
+
+Flow:
+- `ProductionChunkRetriever -> ChunkRepository -> PostgreSQL + pgvector`
+
+Rules:
+- The repository owns vector-distance ordering when a caller provides a query
+  embedding and PostgreSQL + pgvector are available.
+- Apply production-safe `source_kind="notion"` filtering before top-k.
+- Apply page and section filters before top-k.
+- Exclude `embedding IS NULL` rows inside the repository query instead of
+  trying to rank them in Python.
+- Order semantic results by cosine distance ascending, then by stable chunk id
+  for deterministic tie breaking.
+- Current QA remains lexical-only until Step 53 starts generating query
+  embeddings. Step 52 only moves the semantic query path into the repository.
+
 ## Production Chunk Retrieval (Step 17)
 
 File:
@@ -214,7 +239,10 @@ Scope filters:
 
 Ranking behavior:
 - Use lexical overlap scoring by default.
-- If query embedding and chunk embedding are both available, combine cosine similarity with lexical score.
+- If query embedding is provided on PostgreSQL + pgvector, use the
+  repository-owned semantic top-k path.
+- Otherwise, keep the current deterministic Python lexical path, with optional
+  local embedding scoring still available for non-PostgreSQL test fixtures.
 - Keep ranking deterministic and stable.
 
 Production-RAG rules in this step:
@@ -237,7 +265,10 @@ Current state:
   serialized JSON in `embedding_text` during rollout.
 - The shared Notion indexing flow now batches page chunks through
   `EmbeddingClient` before chunk persistence.
-- `ChunkRepository.list_production_chunks()` applies production-safe filters in SQL, then `ProductionChunkRetriever` ranks candidates in Python.
+- `ChunkRepository.list_production_chunks()` applies production-safe filters in SQL for lexical retrieval.
+- `ChunkRepository.list_production_chunks_by_vector()` now applies
+  production-safe filters and cosine-distance top-k in PostgreSQL when a query
+  embedding is available.
 - Default QA currently calls the retriever without a query embedding, so production QA today is lexical-only.
 - Optional cosine scoring exists only when a caller explicitly passes `query_embedding` and a row has `embedding_text`.
 - Legacy pages that still have NULL vectors stay safe because the current QA

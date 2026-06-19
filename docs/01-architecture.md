@@ -99,6 +99,8 @@ Orchestrator contract:
 - Orchestrators do not import provider SDKs, Notion SDK, Redis clients, or DB drivers directly.
 - Shared indexing uses:
   `NotionPageIndexOrchestrator -> EmbeddingClient -> ChunkRepository`.
+- Semantic vector top-k retrieval uses:
+  `ProductionChunkRetriever -> ChunkRepository -> PostgreSQL + pgvector`.
 
 ## Future MCP Server Boundary (Post-MVP)
 Tools that may be extracted into MCP servers later:
@@ -126,3 +128,6 @@ Logic that must stay deterministic backend code (not MCP-owned):
 - Manual incremental sync and auto-after-accept re-index both reuse the same
   embedding-aware page indexing orchestrator instead of duplicating vector
   persistence logic in routes or review flows.
+- pgvector distance ordering, NULL-vector exclusion, and filter-before-top-k
+  behavior must stay inside repository queries rather than Python-side
+  orchestrator ranking.

@@ -6,7 +6,11 @@ import re
 from dataclasses import dataclass
 from typing import List, Optional
 
-from src.repositories import ChunkRepository, RetrievalChunkCandidate
+from src.repositories import (
+    ChunkRepository,
+    RetrievalChunkCandidate,
+    SemanticChunkMatch,
+)
 
 _TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 
@@ -46,6 +50,20 @@ class ProductionChunkRetriever:
         if not normalized_query_text and normalized_query_embedding is None:
             return []
 
+        if normalized_query_embedding is not None and self._chunk_repository.supports_vector_query():
+            semantic_matches = self._chunk_repository.list_production_chunks_by_vector(
+                query_embedding=normalized_query_embedding,
+                top_k=top_k,
+                page_ids=page_ids,
+                section_paths=section_paths,
+                source_kinds=source_kinds,
+            )
+            if semantic_matches:
+                return [
+                    self._to_retrieved_chunk(match)
+                    for match in semantic_matches
+                ]
+
         candidates = self._chunk_repository.list_production_chunks(
             page_ids=page_ids,
             section_paths=section_paths,
@@ -84,6 +102,17 @@ class ProductionChunkRetriever:
 
         ranked.sort(key=lambda item: (-item.score, item.chunk_id))
         return ranked[:top_k]
+
+    def _to_retrieved_chunk(self, match: SemanticChunkMatch) -> RetrievedChunk:
+        return RetrievedChunk(
+            chunk_id=match.chunk_id,
+            chunk_index=match.chunk_index,
+            chunk_text=match.chunk_text,
+            notion_path=match.notion_path,
+            notion_page_id=match.notion_page_id,
+            source_kind=match.source_kind,
+            score=match.score,
+        )
 
     def _score_lexical(
         self,

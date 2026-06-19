@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from sqlalchemy import func, or_
+from sqlalchemy import Float, Text, bindparam, cast, func, or_
 from sqlalchemy.orm import Session
 
 from src.db.models import KnowledgeChunk, NotionBlock, NotionPage
@@ -15,6 +15,10 @@ class ChunkRepositoryError(Exception):
 
 
 class ChunkBlockMappingError(ChunkRepositoryError):
+    pass
+
+
+class ChunkVectorQueryError(ChunkRepositoryError):
     pass
 
 
@@ -37,6 +41,17 @@ class RetrievalChunkCandidate:
     source_kind: str
     notion_page_id: Optional[str]
     embedding_text: Optional[str]
+
+
+@dataclass
+class SemanticChunkMatch:
+    chunk_id: int
+    chunk_index: int
+    chunk_text: str
+    notion_path: str
+    source_kind: str
+    notion_page_id: Optional[str]
+    score: float
 
 
 class ChunkRepository:
@@ -140,11 +155,9 @@ class ChunkRepository:
             self._normalize_path(path) for path in self._normalize_text_list(section_paths)
         ]
         normalized_source_kinds = self._normalize_source_kinds(source_kinds)
-
-        # Current production RAG in MVP reads from indexed Notion chunks only.
-        effective_source_kinds = [
-            source_kind for source_kind in normalized_source_kinds if source_kind == "notion"
-        ]
+        effective_source_kinds = self._effective_production_source_kinds(
+            normalized_source_kinds
+        )
         if not effective_source_kinds:
             return []
 
@@ -162,20 +175,14 @@ class ChunkRepository:
             .outerjoin(NotionPage, NotionBlock.notion_page_id == NotionPage.id)
             .filter(KnowledgeChunk.source_kind.in_(effective_source_kinds))
         )
-
-        if normalized_page_ids:
-            query = query.filter(NotionPage.notion_page_id.in_(normalized_page_ids))
-
-        if normalized_section_paths:
-            section_conditions = []
-            for section_path in normalized_section_paths:
-                section_conditions.append(
-                    or_(
-                        KnowledgeChunk.notion_path == section_path,
-                        KnowledgeChunk.notion_path.like(f"{section_path}/%"),
-                    )
-                )
-            query = query.filter(or_(*section_conditions))
+        query = self._apply_page_filter(
+            query=query,
+            normalized_page_ids=normalized_page_ids,
+        )
+        query = self._apply_section_filter(
+            query=query,
+            normalized_section_paths=normalized_section_paths,
+        )
 
         rows = query.order_by(KnowledgeChunk.id.asc()).all()
         return [
@@ -190,6 +197,105 @@ class ChunkRepository:
             )
             for row in rows
         ]
+
+    def list_production_chunks_by_vector(
+        self,
+        *,
+        query_embedding: List[float],
+        top_k: int,
+        page_ids: Optional[List[str]] = None,
+        section_paths: Optional[List[str]] = None,
+        source_kinds: Optional[List[str]] = None,
+    ) -> List[SemanticChunkMatch]:
+        if top_k <= 0:
+            raise ValueError("top_k must be positive")
+        if not self.supports_vector_query():
+            raise ChunkVectorQueryError(
+                "Semantic vector query requires PostgreSQL + pgvector"
+            )
+
+        normalized_query_embedding = self._normalize_embedding(query_embedding)
+        if normalized_query_embedding is None:
+            raise ChunkVectorQueryError("query_embedding must contain numeric values")
+
+        normalized_page_ids = self._normalize_text_list(page_ids)
+        normalized_section_paths = [
+            self._normalize_path(path) for path in self._normalize_text_list(section_paths)
+        ]
+        normalized_source_kinds = self._normalize_source_kinds(source_kinds)
+        effective_source_kinds = self._effective_production_source_kinds(
+            normalized_source_kinds
+        )
+        if not effective_source_kinds:
+            return []
+
+        query_embedding_param = cast(
+            bindparam(
+                "query_embedding",
+                value=self._serialize_embedding(normalized_query_embedding),
+                type_=Text(),
+            ),
+            KnowledgeChunk.__table__.c.embedding.type,
+        )
+        vector_distance = cast(
+            KnowledgeChunk.embedding.op("<=>")(query_embedding_param),
+            Float,
+        )
+        query = (
+            self._session.query(
+                KnowledgeChunk.id,
+                KnowledgeChunk.chunk_index,
+                KnowledgeChunk.chunk_text,
+                KnowledgeChunk.notion_path,
+                KnowledgeChunk.source_kind,
+                NotionPage.notion_page_id,
+                vector_distance.label("vector_distance"),
+            )
+            .outerjoin(NotionBlock, KnowledgeChunk.notion_block_id == NotionBlock.id)
+            .outerjoin(NotionPage, NotionBlock.notion_page_id == NotionPage.id)
+            .filter(
+                KnowledgeChunk.source_kind.in_(effective_source_kinds),
+                KnowledgeChunk.embedding.is_not(None),
+            )
+        )
+        query = self._apply_page_filter(
+            query=query,
+            normalized_page_ids=normalized_page_ids,
+        )
+        query = self._apply_section_filter(
+            query=query,
+            normalized_section_paths=normalized_section_paths,
+        )
+
+        try:
+            rows = (
+                query.order_by(vector_distance.asc(), KnowledgeChunk.id.asc())
+                .limit(top_k)
+                .all()
+            )
+        except Exception as exc:
+            raise ChunkVectorQueryError(
+                f"Semantic vector query failed: {exc}"
+            ) from exc
+
+        return [
+            SemanticChunkMatch(
+                chunk_id=row.id,
+                chunk_index=row.chunk_index,
+                chunk_text=row.chunk_text,
+                notion_path=row.notion_path or "",
+                source_kind=row.source_kind,
+                notion_page_id=row.notion_page_id,
+                score=max(0.0, min(1.0, 1.0 - float(row.vector_distance))),
+            )
+            for row in rows
+        ]
+
+    def supports_vector_query(self) -> bool:
+        return (
+            self._session.bind is not None
+            and self._session.bind.dialect.name == "postgresql"
+        )
 
     def _select_chunk_block_id(
         self,
@@ -209,6 +315,57 @@ class ChunkRepository:
         if embedding is None:
             return None
         return json.dumps(embedding)
+
+    def _effective_production_source_kinds(
+        self,
+        normalized_source_kinds: List[str],
+    ) -> List[str]:
+        # Current production RAG in MVP reads from indexed Notion chunks only.
+        return [
+            source_kind for source_kind in normalized_source_kinds if source_kind == "notion"
+        ]
+
+    def _apply_page_filter(
+        self,
+        *,
+        query,
+        normalized_page_ids: List[str],
+    ):
+        if normalized_page_ids:
+            query = query.filter(NotionPage.notion_page_id.in_(normalized_page_ids))
+        return query
+
+    def _apply_section_filter(
+        self,
+        *,
+        query,
+        normalized_section_paths: List[str],
+    ):
+        if normalized_section_paths:
+            section_conditions = []
+            for section_path in normalized_section_paths:
+                section_conditions.append(
+                    or_(
+                        KnowledgeChunk.notion_path == section_path,
+                        KnowledgeChunk.notion_path.like(f"{section_path}/%"),
+                    )
+                )
+            query = query.filter(or_(*section_conditions))
+        return query
+
+    def _normalize_embedding(
+        self,
+        query_embedding: List[float],
+    ) -> Optional[List[float]]:
+        normalized = []
+        for value in query_embedding:
+            try:
+                normalized.append(float(value))
+            except (TypeError, ValueError):
+                return None
+        if not normalized:
+            return None
+        return normalized
 
     def _normalize_source_kinds(self, source_kinds: Optional[List[str]]) -> List[str]:
         if source_kinds is None:
