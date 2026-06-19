@@ -162,6 +162,39 @@ Rules:
 - Manual incremental sync and auto-after-accept re-index must reuse the same
   page indexing orchestrator instead of implementing vector writes separately.
 
+## Legacy Chunk Vector Gap Handling (Step 51)
+
+Goal:
+- Define safe behavior while some existing Notion chunks still have no live
+  vector during rollout.
+
+Backfill strategy:
+- The approved MVP backfill path is page-scoped re-index only.
+- Use the shared indexing flow to regenerate blocks, chunks, and vectors for
+  one page at a time.
+- Manual incremental sync is the normal operator path when user manual edits
+  or known vector gaps exist on specific pages.
+- Future standalone backfill commands, if added, must still call the same
+  page indexing orchestrator page by page.
+
+Forbidden behavior:
+- Do not walk the whole database and generate vectors automatically at app
+  startup.
+- Do not mix partial page replacement with failed vector generation.
+
+Retrieval behavior during rollout:
+- Before Step 53, default production QA remains lexical-only because the QA
+  orchestrator does not generate query embeddings yet.
+- Mixed vector state is therefore safe in the current rollout stage: chunks
+  with vectors and chunks without vectors remain searchable through the same
+  deterministic lexical retrieval path.
+- When a page is re-indexed successfully, all notion chunks for that page must
+  leave the shared indexing flow with both live `embedding` and transitional
+  `embedding_text`.
+- Later vector-first QA steps must treat unusable or missing vectors in the
+  filtered retrieval scope as a request-level lexical fallback condition, not
+  as permission to silently skip unsupported rows.
+
 ## Production Chunk Retrieval (Step 17)
 
 File:
@@ -207,6 +240,8 @@ Current state:
 - `ChunkRepository.list_production_chunks()` applies production-safe filters in SQL, then `ProductionChunkRetriever` ranks candidates in Python.
 - Default QA currently calls the retriever without a query embedding, so production QA today is lexical-only.
 - Optional cosine scoring exists only when a caller explicitly passes `query_embedding` and a row has `embedding_text`.
+- Legacy pages that still have NULL vectors stay safe because the current QA
+  path is lexical-only until later rollout steps switch on query embeddings.
 
 ## Live Embedding and pgvector Retrieval Contract (Step 48)
 

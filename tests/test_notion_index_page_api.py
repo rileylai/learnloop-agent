@@ -70,6 +70,10 @@ def _embedding_client_override() -> EmbeddingClient:
     return _FakeEmbeddingClient()
 
 
+def _embedding_vector(fill_value: float) -> list[float]:
+    return [fill_value] * 1536
+
+
 def _sample_tree_v1() -> NotionPageTree:
     return NotionPageTree(
         page_id="page-1",
@@ -205,6 +209,33 @@ def _sample_incremental_v2_after_manual_delete() -> NotionPageTree:
                         block_type="paragraph",
                         content_text="Old note B (edited)",
                         block_path="Knowledge/Sync/Old Section B/Old note B (edited)",
+                    )
+                ],
+            )
+        ],
+    )
+
+
+def _sample_legacy_backfill_page() -> NotionPageTree:
+    return NotionPageTree(
+        page_id="page-legacy-a",
+        title="Legacy Vector Page",
+        notion_path="Knowledge/Legacy/A",
+        blocks=[
+            NotionBlockNode(
+                block_id="blk-legacy-a-heading",
+                block_type="heading_2",
+                content_text="Recovered Section",
+                block_path="Knowledge/Legacy/A/Recovered Section",
+                children=[
+                    NotionBlockNode(
+                        block_id="blk-legacy-a-note",
+                        block_type="paragraph",
+                        content_text="Legacy page re-index restores vector state",
+                        block_path=(
+                            "Knowledge/Legacy/A/Recovered Section/"
+                            "Legacy page re-index restores vector state"
+                        ),
                     )
                 ],
             )
@@ -614,5 +645,141 @@ def test_index_incremental_api_returns_not_found_when_any_page_missing() -> None
             assert workflow_runs[0].failure_reason == "NOTION_PAGE_NOT_FOUND"
         finally:
             session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_index_incremental_api_backfills_only_requested_legacy_page_vectors() -> None:
+    session_factory = _build_session_factory()
+    pages = {"page-legacy-a": _sample_legacy_backfill_page()}
+
+    seed_session = session_factory()
+    try:
+        legacy_page = NotionPage(
+            id=101,
+            notion_page_id="page-legacy-a",
+            title="Legacy Vector Page",
+            notion_path="Knowledge/Legacy/A",
+        )
+        untouched_page = NotionPage(
+            id=102,
+            notion_page_id="page-legacy-b",
+            title="Untouched Vector Page",
+            notion_path="Knowledge/Legacy/B",
+        )
+        seed_session.add_all([legacy_page, untouched_page])
+        seed_session.flush()
+
+        legacy_block = NotionBlock(
+            id=201,
+            notion_block_id="blk-legacy-a-old",
+            notion_page_id=legacy_page.id,
+            parent_block_id=None,
+            block_type="paragraph",
+            content_text="Old legacy chunk without vectors",
+            block_path="Knowledge/Legacy/A/Old Legacy Chunk",
+            block_order=0,
+        )
+        untouched_block = NotionBlock(
+            id=202,
+            notion_block_id="blk-legacy-b-stable",
+            notion_page_id=untouched_page.id,
+            parent_block_id=None,
+            block_type="paragraph",
+            content_text="Existing live vector chunk",
+            block_path="Knowledge/Legacy/B/Stable Vector Chunk",
+            block_order=0,
+        )
+        seed_session.add_all([legacy_block, untouched_block])
+        seed_session.flush()
+
+        seed_session.add_all(
+            [
+                KnowledgeChunk(
+                    id=301,
+                    source_document_id=None,
+                    notion_block_id=legacy_block.id,
+                    chunk_index=0,
+                    chunk_text="Old legacy chunk without vectors",
+                    notion_path="Knowledge/Legacy/A/Old Legacy Chunk",
+                    embedding=None,
+                    embedding_text=None,
+                    source_kind="notion",
+                ),
+                KnowledgeChunk(
+                    id=302,
+                    source_document_id=None,
+                    notion_block_id=untouched_block.id,
+                    chunk_index=0,
+                    chunk_text="Existing live vector chunk",
+                    notion_path="Knowledge/Legacy/B/Stable Vector Chunk",
+                    embedding=_embedding_vector(9.0),
+                    embedding_text=json.dumps(_embedding_vector(9.0)),
+                    source_kind="notion",
+                ),
+            ]
+        )
+        seed_session.commit()
+    finally:
+        seed_session.close()
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _tool_registry_override() -> ToolRegistry:
+        return _build_tool_registry(pages)
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_tool_registry] = _tool_registry_override
+    app.dependency_overrides[get_embedding_client] = _embedding_client_override
+
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/notion/index/incremental",
+            json={"page_ids": ["page-legacy-a"]},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "succeeded"
+        assert payload["processed_page_count"] == 1
+        assert payload["indexed_pages"][0]["page_id"] == "page-legacy-a"
+
+        verify_session = session_factory()
+        try:
+            legacy_chunks = (
+                verify_session.query(KnowledgeChunk)
+                .join(NotionBlock, KnowledgeChunk.notion_block_id == NotionBlock.id)
+                .join(NotionPage, NotionBlock.notion_page_id == NotionPage.id)
+                .filter(NotionPage.notion_page_id == "page-legacy-a")
+                .order_by(KnowledgeChunk.chunk_index.asc())
+                .all()
+            )
+            assert len(legacy_chunks) == 1
+            assert legacy_chunks[0].chunk_text == (
+                "Recovered Section\nLegacy page re-index restores vector state"
+            )
+            assert legacy_chunks[0].embedding == _embedding_vector(1.0)
+            assert legacy_chunks[0].embedding_text is not None
+
+            untouched_chunks = (
+                verify_session.query(KnowledgeChunk)
+                .join(NotionBlock, KnowledgeChunk.notion_block_id == NotionBlock.id)
+                .join(NotionPage, NotionBlock.notion_page_id == NotionPage.id)
+                .filter(NotionPage.notion_page_id == "page-legacy-b")
+                .order_by(KnowledgeChunk.id.asc())
+                .all()
+            )
+            assert len(untouched_chunks) == 1
+            assert untouched_chunks[0].chunk_text == "Existing live vector chunk"
+            assert untouched_chunks[0].embedding == _embedding_vector(9.0)
+            assert untouched_chunks[0].embedding_text == json.dumps(_embedding_vector(9.0))
+        finally:
+            verify_session.close()
     finally:
         app.dependency_overrides.clear()

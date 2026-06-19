@@ -199,3 +199,24 @@ def test_retriever_supports_embedding_only_query() -> None:
 
     assert len(results) == 1
     assert results[0].chunk_id == 1
+
+
+def test_retriever_lexical_path_remains_safe_with_mixed_vector_state() -> None:
+    session = _build_test_session()
+    _seed_retrieval_data(session)
+
+    legacy_chunk = session.get(KnowledgeChunk, 1)
+    assert legacy_chunk is not None
+    legacy_chunk.embedding_text = None
+    session.commit()
+
+    retriever = ProductionChunkRetriever(chunk_repository=ChunkRepository(session))
+
+    results = retriever.retrieve(
+        query_text="attention query key value",
+        top_k=2,
+    )
+
+    assert len(results) == 2
+    assert [chunk.chunk_id for chunk in results] == [1, 2]
+    assert results[0].notion_path == "Knowledge/NLP/Week5/Attention"

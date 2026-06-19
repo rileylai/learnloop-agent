@@ -39,6 +39,12 @@ What belongs here:
   retrieval and a PostgreSQL-only partial HNSW cosine index on non-null
   vectors.
 - Do not run whole-database vector backfill automatically during app startup.
+- During rollout, existing NULL-vector rows should be repaired through
+  page-scoped re-index, usually by the manual incremental sync path for known
+  affected pages.
+- If a future maintenance command backfills vectors, it must reuse the shared
+  page indexing orchestrator page by page instead of issuing raw SQL updates
+  or startup-wide scans.
 - If OpenAI embedding access or pgvector retrieval is unavailable during
   rollout, QA may fall back to deterministic lexical retrieval until later
   rollout steps are complete.
