@@ -8,11 +8,16 @@ from typing import List, Optional
 
 from src.repositories import (
     ChunkRepository,
+    ChunkVectorQueryError,
     RetrievalChunkCandidate,
     SemanticChunkMatch,
 )
 
 _TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
+RETRIEVAL_MODE_PGVECTOR_EXACT_COSINE = "pgvector_exact_cosine"
+RETRIEVAL_MODE_LEXICAL_FALLBACK = "lexical_fallback"
+RETRIEVAL_FALLBACK_VECTOR_QUERY_FAILED = "VECTOR_QUERY_FAILED"
+RETRIEVAL_FALLBACK_VECTOR_DATA_UNAVAILABLE = "VECTOR_DATA_UNAVAILABLE"
 
 
 @dataclass
@@ -24,6 +29,13 @@ class RetrievedChunk:
     notion_page_id: Optional[str]
     source_kind: str
     score: float
+
+
+@dataclass
+class RetrievalResult:
+    chunks: List[RetrievedChunk]
+    retrieval_mode: str
+    retrieval_fallback_reason: Optional[str]
 
 
 class ProductionChunkRetriever:
@@ -40,29 +52,73 @@ class ProductionChunkRetriever:
         source_kinds: Optional[List[str]] = None,
         query_embedding: Optional[List[float]] = None,
     ) -> List[RetrievedChunk]:
+        return self.retrieve_with_metadata(
+            query_text=query_text,
+            top_k=top_k,
+            page_ids=page_ids,
+            section_paths=section_paths,
+            source_kinds=source_kinds,
+            query_embedding=query_embedding,
+        ).chunks
+
+    def retrieve_with_metadata(
+        self,
+        *,
+        query_text: str,
+        top_k: int = 5,
+        page_ids: Optional[List[str]] = None,
+        section_paths: Optional[List[str]] = None,
+        source_kinds: Optional[List[str]] = None,
+        query_embedding: Optional[List[float]] = None,
+        allow_legacy_embedding_scoring: bool = True,
+    ) -> RetrievalResult:
         if top_k <= 0:
             raise ValueError("top_k must be positive")
 
         normalized_query_text = self._normalize_text(query_text)
         query_tokens = set(self._tokenize(normalized_query_text))
         normalized_query_embedding = self._normalize_embedding(query_embedding)
+        supports_vector_query = self._chunk_repository.supports_vector_query()
 
         if not normalized_query_text and normalized_query_embedding is None:
-            return []
-
-        if normalized_query_embedding is not None and self._chunk_repository.supports_vector_query():
-            semantic_matches = self._chunk_repository.list_production_chunks_by_vector(
-                query_embedding=normalized_query_embedding,
-                top_k=top_k,
-                page_ids=page_ids,
-                section_paths=section_paths,
-                source_kinds=source_kinds,
+            return RetrievalResult(
+                chunks=[],
+                retrieval_mode=RETRIEVAL_MODE_LEXICAL_FALLBACK,
+                retrieval_fallback_reason=None,
             )
+
+        if normalized_query_embedding is not None and supports_vector_query:
+            try:
+                semantic_matches = self._chunk_repository.list_production_chunks_by_vector(
+                    query_embedding=normalized_query_embedding,
+                    top_k=top_k,
+                    page_ids=page_ids,
+                    section_paths=section_paths,
+                    source_kinds=source_kinds,
+                )
+            except ChunkVectorQueryError:
+                return self._build_lexical_result(
+                    candidates=self._chunk_repository.list_production_chunks(
+                        page_ids=page_ids,
+                        section_paths=section_paths,
+                        source_kinds=source_kinds,
+                    ),
+                    query_tokens=query_tokens,
+                    normalized_query_text=normalized_query_text,
+                    normalized_query_embedding=normalized_query_embedding,
+                    top_k=top_k,
+                    allow_embedding_score=False,
+                    retrieval_fallback_reason=RETRIEVAL_FALLBACK_VECTOR_QUERY_FAILED,
+                )
             if semantic_matches:
-                return [
-                    self._to_retrieved_chunk(match)
-                    for match in semantic_matches
-                ]
+                return RetrievalResult(
+                    chunks=[
+                        self._to_retrieved_chunk(match)
+                        for match in semantic_matches
+                    ],
+                    retrieval_mode=RETRIEVAL_MODE_PGVECTOR_EXACT_COSINE,
+                    retrieval_fallback_reason=None,
+                )
 
         candidates = self._chunk_repository.list_production_chunks(
             page_ids=page_ids,
@@ -70,6 +126,38 @@ class ProductionChunkRetriever:
             source_kinds=source_kinds,
         )
 
+        retrieval_fallback_reason = None
+        if (
+            normalized_query_embedding is not None
+            and supports_vector_query
+            and candidates
+        ):
+            retrieval_fallback_reason = RETRIEVAL_FALLBACK_VECTOR_DATA_UNAVAILABLE
+
+        return self._build_lexical_result(
+            candidates=candidates,
+            query_tokens=query_tokens,
+            normalized_query_text=normalized_query_text,
+            normalized_query_embedding=normalized_query_embedding,
+            top_k=top_k,
+            allow_embedding_score=(
+                allow_legacy_embedding_scoring
+                and retrieval_fallback_reason is None
+            ),
+            retrieval_fallback_reason=retrieval_fallback_reason,
+        )
+
+    def _build_lexical_result(
+        self,
+        *,
+        candidates: List[RetrievalChunkCandidate],
+        query_tokens: set[str],
+        normalized_query_text: str,
+        normalized_query_embedding: Optional[List[float]],
+        top_k: int,
+        allow_embedding_score: bool,
+        retrieval_fallback_reason: Optional[str],
+    ) -> RetrievalResult:
         ranked: List[RetrievedChunk] = []
         for candidate in candidates:
             lexical_score = self._score_lexical(
@@ -78,7 +166,9 @@ class ProductionChunkRetriever:
                 chunk_text=candidate.chunk_text,
             )
             embedding_score = self._score_embedding(
-                query_embedding=normalized_query_embedding,
+                query_embedding=(
+                    normalized_query_embedding if allow_embedding_score else None
+                ),
                 chunk_embedding_text=candidate.embedding_text,
             )
             score = self._combine_scores(
@@ -101,7 +191,11 @@ class ProductionChunkRetriever:
             )
 
         ranked.sort(key=lambda item: (-item.score, item.chunk_id))
-        return ranked[:top_k]
+        return RetrievalResult(
+            chunks=ranked[:top_k],
+            retrieval_mode=RETRIEVAL_MODE_LEXICAL_FALLBACK,
+            retrieval_fallback_reason=retrieval_fallback_reason,
+        )
 
     def _to_retrieved_chunk(self, match: SemanticChunkMatch) -> RetrievedChunk:
         return RetrievedChunk(

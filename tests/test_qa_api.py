@@ -184,6 +184,11 @@ def test_qa_api_returns_grounded_answer_with_citations() -> None:
             assert metadata["model"] == "gpt-4o-mini"
             assert metadata["prompt_id"] == "qa_answer"
             assert metadata["prompt_version"] == "qa_answer_v1"
+            assert metadata["retrieval_mode"] == "lexical_fallback"
+            assert (
+                metadata["retrieval_fallback_reason"]
+                == "EMBEDDING_PROVIDER_NOT_CONFIGURED"
+            )
             assert metadata["estimated_cost"] == pytest.approx(0.00000975)
         finally:
             verify_session.close()
@@ -235,6 +240,20 @@ def test_qa_api_returns_insufficient_info_when_no_retrieval_match() -> None:
         )
         assert payload["provider"] is None
         assert payload["model"] is None
+
+        verify_session: Session = session_factory()
+        try:
+            workflow_run = verify_session.get(WorkflowRun, payload["workflow_run_id"])
+            assert workflow_run is not None
+            metadata = json.loads(workflow_run.metadata_json or "{}")
+            assert metadata["retrieval_mode"] == "lexical_fallback"
+            assert (
+                metadata["retrieval_fallback_reason"]
+                == "EMBEDDING_PROVIDER_NOT_CONFIGURED"
+            )
+            assert metadata["insufficient_info"] is True
+        finally:
+            verify_session.close()
     finally:
         app.dependency_overrides.clear()
 

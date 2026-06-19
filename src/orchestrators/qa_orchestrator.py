@@ -6,6 +6,9 @@ from http import HTTPStatus
 from typing import List, Optional
 
 from src.providers import (
+    EmbeddingClient,
+    EmbeddingClientError,
+    EmbeddingRequest,
     LLMMessage,
     LLMRequest,
     LLMClientError,
@@ -13,7 +16,11 @@ from src.providers import (
     ProviderRouter,
     ProviderRouterError,
 )
-from src.rag import ProductionChunkRetriever, RetrievedChunk
+from src.rag import (
+    ProductionChunkRetriever,
+    RetrievedChunk,
+    RETRIEVAL_MODE_LEXICAL_FALLBACK,
+)
 from src.services import (
     CostTracker,
     PROMPT_ID_QA_ANSWER,
@@ -29,6 +36,8 @@ INSUFFICIENT_INFO_ANSWER = (
 DEFAULT_QA_TOP_K = 5
 DEFAULT_QA_PROVIDER_NAME = "openai"
 DEFAULT_QA_MODEL = "gpt-4o-mini"
+EMBEDDING_DIMENSIONS = 1536
+VECTOR_DISTANCE_METRIC = "cosine"
 
 
 @dataclass
@@ -50,6 +59,15 @@ class QAResult:
     model: Optional[str]
     token_input: Optional[int]
     token_output: Optional[int]
+
+
+@dataclass
+class _QueryEmbeddingState:
+    query_embedding: Optional[List[float]] = None
+    retrieval_fallback_reason: Optional[str] = None
+    embedding_provider: Optional[str] = None
+    embedding_model: Optional[str] = None
+    embedding_dimensions: Optional[int] = None
 
 
 class QAOrchestratorError(Exception):
@@ -75,12 +93,14 @@ class QAOrchestrator:
         self,
         *,
         retriever: ProductionChunkRetriever,
+        embedding_client: Optional[EmbeddingClient],
         provider_router: ProviderRouter,
         cost_tracker: CostTracker,
         prompt_template_loader: PromptTemplateLoader,
         workflow_run_service: WorkflowRunService,
     ) -> None:
         self._retriever = retriever
+        self._embedding_client = embedding_client
         self._provider_router = provider_router
         self._cost_tracker = cost_tracker
         self._prompt_template_loader = prompt_template_loader
@@ -141,34 +161,51 @@ class QAOrchestrator:
         llm_token_input: Optional[int] = None
         llm_token_output: Optional[int] = None
         estimated_cost: Optional[float] = None
+        retrieval_mode = RETRIEVAL_MODE_LEXICAL_FALLBACK
+        retrieval_fallback_reason: Optional[str] = None
+        query_embedding_state = _QueryEmbeddingState()
         try:
             prompt_bundle = self._prompt_template_loader.load_bundle(prompt_id)
             prompt_version = prompt_bundle.version
-            retrieved_chunks = self._retriever.retrieve(
+            query_embedding_state = await self._build_query_embedding_state(
+                query_text=normalized_query,
+                request_workflow_id=request_workflow_id,
+            )
+            retrieval_result = self._retriever.retrieve_with_metadata(
                 query_text=normalized_query,
                 top_k=top_k,
                 page_ids=page_ids,
                 section_paths=section_paths,
                 source_kinds=source_kinds,
+                query_embedding=query_embedding_state.query_embedding,
+                allow_legacy_embedding_scoring=False,
             )
+            retrieval_mode = retrieval_result.retrieval_mode
+            retrieval_fallback_reason = (
+                query_embedding_state.retrieval_fallback_reason
+                or retrieval_result.retrieval_fallback_reason
+            )
+            retrieved_chunks = retrieval_result.chunks
             citations = self._build_citations(retrieved_chunks)
             if not retrieved_chunks or not citations:
                 self._workflow_run_service.mark_workflow_succeeded(
                     workflow_run.id,
                     metadata_json=json.dumps(
-                        {
-                            "operation": "qa_answer",
-                            "insufficient_info": True,
-                            "retrieved_chunk_count": len(retrieved_chunks),
-                            "citation_count": len(citations),
-                            "provider_name": normalized_provider_name,
-                            "model": normalized_model,
-                            "prompt_id": prompt_id,
-                            "prompt_version": prompt_version,
-                            "token_input": None,
-                            "token_output": None,
-                            "estimated_cost": None,
-                        },
+                        self._build_workflow_metadata(
+                            insufficient_info=True,
+                            retrieved_chunk_count=len(retrieved_chunks),
+                            citation_count=len(citations),
+                            provider_name=normalized_provider_name,
+                            model=normalized_model,
+                            prompt_id=prompt_id,
+                            prompt_version=prompt_version,
+                            token_input=None,
+                            token_output=None,
+                            estimated_cost=None,
+                            retrieval_mode=retrieval_mode,
+                            retrieval_fallback_reason=retrieval_fallback_reason,
+                            query_embedding_state=query_embedding_state,
+                        ),
                         sort_keys=True,
                     ),
                 )
@@ -238,19 +275,21 @@ class QAOrchestrator:
             self._workflow_run_service.mark_workflow_succeeded(
                 workflow_run.id,
                 metadata_json=json.dumps(
-                    {
-                        "operation": "qa_answer",
-                        "insufficient_info": False,
-                        "retrieved_chunk_count": len(retrieved_chunks),
-                        "citation_count": len(citations),
-                        "provider_name": normalized_provider_name,
-                        "model": normalized_model,
-                        "prompt_id": prompt_id,
-                        "prompt_version": prompt_version,
-                        "token_input": llm_token_input,
-                        "token_output": llm_token_output,
-                        "estimated_cost": estimated_cost,
-                    },
+                    self._build_workflow_metadata(
+                        insufficient_info=False,
+                        retrieved_chunk_count=len(retrieved_chunks),
+                        citation_count=len(citations),
+                        provider_name=normalized_provider_name,
+                        model=normalized_model,
+                        prompt_id=prompt_id,
+                        prompt_version=prompt_version,
+                        token_input=llm_token_input,
+                        token_output=llm_token_output,
+                        estimated_cost=estimated_cost,
+                        retrieval_mode=retrieval_mode,
+                        retrieval_fallback_reason=retrieval_fallback_reason,
+                        query_embedding_state=query_embedding_state,
+                    ),
                     sort_keys=True,
                 ),
             )
@@ -278,6 +317,9 @@ class QAOrchestrator:
                 token_input=llm_token_input,
                 token_output=llm_token_output,
                 estimated_cost=estimated_cost,
+                retrieval_mode=retrieval_mode,
+                retrieval_fallback_reason=retrieval_fallback_reason,
+                query_embedding_state=query_embedding_state,
             )
             raise QAOrchestratorError(
                 error_code=exc.error_code,
@@ -298,6 +340,9 @@ class QAOrchestrator:
                 token_input=llm_token_input,
                 token_output=llm_token_output,
                 estimated_cost=estimated_cost,
+                retrieval_mode=retrieval_mode,
+                retrieval_fallback_reason=retrieval_fallback_reason,
+                query_embedding_state=query_embedding_state,
             )
             raise QAOrchestratorError(
                 error_code="PROVIDER_NOT_FOUND",
@@ -318,6 +363,9 @@ class QAOrchestrator:
                 token_input=llm_token_input,
                 token_output=llm_token_output,
                 estimated_cost=estimated_cost,
+                retrieval_mode=retrieval_mode,
+                retrieval_fallback_reason=retrieval_fallback_reason,
+                query_embedding_state=query_embedding_state,
             )
             raise QAOrchestratorError(
                 error_code="LLM_PROVIDER_ERROR",
@@ -338,6 +386,9 @@ class QAOrchestrator:
                 token_input=llm_token_input,
                 token_output=llm_token_output,
                 estimated_cost=estimated_cost,
+                retrieval_mode=retrieval_mode,
+                retrieval_fallback_reason=retrieval_fallback_reason,
+                query_embedding_state=query_embedding_state,
             )
             raise QAOrchestratorError(
                 error_code="INVALID_ARGUMENT",
@@ -358,6 +409,9 @@ class QAOrchestrator:
                 token_input=llm_token_input,
                 token_output=llm_token_output,
                 estimated_cost=estimated_cost,
+                retrieval_mode=retrieval_mode,
+                retrieval_fallback_reason=retrieval_fallback_reason,
+                query_embedding_state=query_embedding_state,
             )
             raise QAOrchestratorError(
                 error_code="PROMPT_TEMPLATE_INVALID",
@@ -378,6 +432,9 @@ class QAOrchestrator:
                 token_input=llm_token_input,
                 token_output=llm_token_output,
                 estimated_cost=estimated_cost,
+                retrieval_mode=retrieval_mode,
+                retrieval_fallback_reason=retrieval_fallback_reason,
+                query_embedding_state=query_embedding_state,
             )
             raise QAOrchestratorError(
                 error_code="QA_WORKFLOW_FAILED",
@@ -386,6 +443,56 @@ class QAOrchestrator:
                 failure_reason="UNKNOWN_ERROR",
                 workflow_run_id=workflow_run.id,
             ) from exc
+
+    async def _build_query_embedding_state(
+        self,
+        *,
+        query_text: str,
+        request_workflow_id: str,
+    ) -> _QueryEmbeddingState:
+        if self._embedding_client is None:
+            return _QueryEmbeddingState(
+                retrieval_fallback_reason="EMBEDDING_PROVIDER_NOT_CONFIGURED",
+            )
+
+        state = _QueryEmbeddingState(
+            embedding_provider=self._embedding_client.name,
+            embedding_dimensions=EMBEDDING_DIMENSIONS,
+        )
+        try:
+            response = await self._embedding_client.embed(
+                EmbeddingRequest(
+                    inputs=[query_text],
+                    dimensions=EMBEDDING_DIMENSIONS,
+                    metadata={
+                        "workflow_id": request_workflow_id,
+                        "operation": "qa_answer",
+                    },
+                )
+            )
+        except EmbeddingClientError:
+            state.retrieval_fallback_reason = "EMBEDDING_PROVIDER_ERROR"
+            return state
+
+        state.embedding_provider = response.provider
+        state.embedding_model = response.model
+        if len(response.embeddings) != 1:
+            state.retrieval_fallback_reason = "EMBEDDING_PROVIDER_ERROR"
+            return state
+
+        normalized_embedding: List[float] = []
+        for value in response.embeddings[0]:
+            try:
+                normalized_embedding.append(float(value))
+            except (TypeError, ValueError):
+                state.retrieval_fallback_reason = "EMBEDDING_PROVIDER_ERROR"
+                return state
+        if len(normalized_embedding) != EMBEDDING_DIMENSIONS:
+            state.retrieval_fallback_reason = "VECTOR_DIMENSION_MISMATCH"
+            return state
+
+        state.query_embedding = normalized_embedding
+        return state
 
     def _build_context_text(self, retrieved_chunks: List[RetrievedChunk]) -> str:
         context_lines = []
@@ -412,6 +519,50 @@ class QAOrchestrator:
             )
         return citations
 
+    def _build_workflow_metadata(
+        self,
+        *,
+        insufficient_info: Optional[bool] = None,
+        retrieved_chunk_count: Optional[int] = None,
+        citation_count: Optional[int] = None,
+        provider_name: str,
+        model: str,
+        prompt_id: str,
+        prompt_version: Optional[str],
+        token_input: Optional[int],
+        token_output: Optional[int],
+        estimated_cost: Optional[float],
+        retrieval_mode: Optional[str],
+        retrieval_fallback_reason: Optional[str],
+        query_embedding_state: _QueryEmbeddingState,
+        error_code: Optional[str] = None,
+    ) -> dict[str, object]:
+        metadata: dict[str, object] = {
+            "operation": "qa_answer",
+            "provider_name": provider_name,
+            "model": model,
+            "prompt_id": prompt_id,
+            "prompt_version": prompt_version,
+            "token_input": token_input,
+            "token_output": token_output,
+            "estimated_cost": estimated_cost,
+            "retrieval_mode": retrieval_mode,
+            "retrieval_fallback_reason": retrieval_fallback_reason,
+            "embedding_provider": query_embedding_state.embedding_provider,
+            "embedding_model": query_embedding_state.embedding_model,
+            "embedding_dimensions": query_embedding_state.embedding_dimensions,
+            "vector_distance_metric": VECTOR_DISTANCE_METRIC,
+        }
+        if insufficient_info is not None:
+            metadata["insufficient_info"] = insufficient_info
+        if retrieved_chunk_count is not None:
+            metadata["retrieved_chunk_count"] = retrieved_chunk_count
+        if citation_count is not None:
+            metadata["citation_count"] = citation_count
+        if error_code is not None:
+            metadata["error_code"] = error_code
+        return metadata
+
     def _mark_failed_workflow(
         self,
         *,
@@ -425,23 +576,29 @@ class QAOrchestrator:
         token_input: Optional[int] = None,
         token_output: Optional[int] = None,
         estimated_cost: Optional[float] = None,
+        retrieval_mode: Optional[str] = None,
+        retrieval_fallback_reason: Optional[str] = None,
+        query_embedding_state: Optional[_QueryEmbeddingState] = None,
     ) -> None:
         normalized_failure_reason = self._normalize_failure_reason(failure_reason)
+        metadata_query_embedding_state = query_embedding_state or _QueryEmbeddingState()
         self._workflow_run_service.mark_workflow_failed(
             workflow_run_id,
             failure_reason=normalized_failure_reason,
             metadata_json=json.dumps(
-                {
-                    "operation": "qa_answer",
-                    "error_code": error_code,
-                    "provider_name": provider_name,
-                    "model": model,
-                    "prompt_id": prompt_id,
-                    "prompt_version": prompt_version,
-                    "token_input": token_input,
-                    "token_output": token_output,
-                    "estimated_cost": estimated_cost,
-                },
+                self._build_workflow_metadata(
+                    provider_name=provider_name,
+                    model=model,
+                    prompt_id=prompt_id,
+                    prompt_version=prompt_version,
+                    token_input=token_input,
+                    token_output=token_output,
+                    estimated_cost=estimated_cost,
+                    retrieval_mode=retrieval_mode,
+                    retrieval_fallback_reason=retrieval_fallback_reason,
+                    query_embedding_state=metadata_query_embedding_state,
+                    error_code=error_code,
+                ),
                 sort_keys=True,
             ),
         )

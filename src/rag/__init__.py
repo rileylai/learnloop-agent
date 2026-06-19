@@ -9,7 +9,15 @@ from src.rag.chunker import (
     NotionChunkDraft,
     chunk_notion_page,
 )
-from src.rag.retriever import ProductionChunkRetriever, RetrievedChunk
+from src.rag.retriever import (
+    ProductionChunkRetriever,
+    RetrievedChunk,
+    RetrievalResult,
+    RETRIEVAL_FALLBACK_VECTOR_DATA_UNAVAILABLE,
+    RETRIEVAL_FALLBACK_VECTOR_QUERY_FAILED,
+    RETRIEVAL_MODE_LEXICAL_FALLBACK,
+    RETRIEVAL_MODE_PGVECTOR_EXACT_COSINE,
+)
 
 __all__ = [
     "BlockPathNode",
@@ -18,6 +26,11 @@ __all__ = [
     "ChunkerPage",
     "NotionChunkDraft",
     "ProductionChunkRetriever",
+    "RetrievalResult",
+    "RETRIEVAL_FALLBACK_VECTOR_DATA_UNAVAILABLE",
+    "RETRIEVAL_FALLBACK_VECTOR_QUERY_FAILED",
+    "RETRIEVAL_MODE_LEXICAL_FALLBACK",
+    "RETRIEVAL_MODE_PGVECTOR_EXACT_COSINE",
     "RetrievedChunk",
     "build_block_paths",
     "chunk_notion_page",

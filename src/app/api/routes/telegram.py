@@ -90,6 +90,7 @@ def _build_telegram_gateway_orchestrator(
             retriever=ProductionChunkRetriever(
                 chunk_repository=ChunkRepository(db_session),
             ),
+            embedding_client=embedding_client,
             provider_router=provider_router,
             cost_tracker=cost_tracker,
             prompt_template_loader=prompt_template_loader,

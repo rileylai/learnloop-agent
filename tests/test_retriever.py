@@ -1,12 +1,22 @@
 import json
+from typing import List, Optional
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from src.db.base import Base
 from src.db.models import KnowledgeChunk, NotionBlock, NotionPage, SourceDocument
-from src.rag import ProductionChunkRetriever
-from src.repositories import ChunkRepository
+from src.rag import (
+    ProductionChunkRetriever,
+    RETRIEVAL_MODE_LEXICAL_FALLBACK,
+    RETRIEVAL_MODE_PGVECTOR_EXACT_COSINE,
+)
+from src.repositories import (
+    ChunkRepository,
+    ChunkVectorQueryError,
+    RetrievalChunkCandidate,
+    SemanticChunkMatch,
+)
 
 
 def _build_test_session() -> Session:
@@ -220,3 +230,118 @@ def test_retriever_lexical_path_remains_safe_with_mixed_vector_state() -> None:
     assert len(results) == 2
     assert [chunk.chunk_id for chunk in results] == [1, 2]
     assert results[0].notion_path == "Knowledge/NLP/Week5/Attention"
+
+
+class _FakeVectorRepository:
+    def __init__(
+        self,
+        *,
+        semantic_matches: Optional[List[SemanticChunkMatch]] = None,
+        lexical_candidates: Optional[List[RetrievalChunkCandidate]] = None,
+        raise_vector_error: bool = False,
+    ) -> None:
+        self._semantic_matches = semantic_matches or []
+        self._lexical_candidates = lexical_candidates or []
+        self._raise_vector_error = raise_vector_error
+
+    def supports_vector_query(self) -> bool:
+        return True
+
+    def list_production_chunks_by_vector(self, **kwargs) -> list[SemanticChunkMatch]:
+        _ = kwargs
+        if self._raise_vector_error:
+            raise ChunkVectorQueryError("pgvector query failed")
+        return list(self._semantic_matches)
+
+    def list_production_chunks(self, **kwargs) -> list[RetrievalChunkCandidate]:
+        _ = kwargs
+        return list(self._lexical_candidates)
+
+
+def test_retriever_reports_pgvector_mode_when_semantic_query_succeeds() -> None:
+    retriever = ProductionChunkRetriever(
+        chunk_repository=_FakeVectorRepository(
+            semantic_matches=[
+                SemanticChunkMatch(
+                    chunk_id=7,
+                    chunk_index=0,
+                    chunk_text="Attention uses query key value vectors",
+                    notion_path="Knowledge/NLP/Week5/Attention",
+                    source_kind="notion",
+                    notion_page_id="page-nlp-week5",
+                    score=0.93,
+                )
+            ]
+        )
+    )
+
+    result = retriever.retrieve_with_metadata(
+        query_text="attention",
+        query_embedding=[0.9, 0.1],
+        top_k=3,
+        allow_legacy_embedding_scoring=False,
+    )
+
+    assert result.retrieval_mode == RETRIEVAL_MODE_PGVECTOR_EXACT_COSINE
+    assert result.retrieval_fallback_reason is None
+    assert [chunk.chunk_id for chunk in result.chunks] == [7]
+
+
+def test_retriever_falls_back_when_vector_query_fails() -> None:
+    retriever = ProductionChunkRetriever(
+        chunk_repository=_FakeVectorRepository(
+            lexical_candidates=[
+                RetrievalChunkCandidate(
+                    chunk_id=1,
+                    chunk_index=0,
+                    chunk_text="Attention uses query key value vectors",
+                    notion_path="Knowledge/NLP/Week5/Attention",
+                    source_kind="notion",
+                    notion_page_id="page-nlp-week5",
+                    embedding_text=json.dumps([0.9, 0.1]),
+                )
+            ],
+            raise_vector_error=True,
+        )
+    )
+
+    result = retriever.retrieve_with_metadata(
+        query_text="attention query key",
+        query_embedding=[0.9, 0.1],
+        top_k=3,
+        allow_legacy_embedding_scoring=False,
+    )
+
+    assert result.retrieval_mode == RETRIEVAL_MODE_LEXICAL_FALLBACK
+    assert result.retrieval_fallback_reason == "VECTOR_QUERY_FAILED"
+    assert [chunk.chunk_id for chunk in result.chunks] == [1]
+
+
+def test_retriever_falls_back_when_scope_has_no_live_vectors() -> None:
+    retriever = ProductionChunkRetriever(
+        chunk_repository=_FakeVectorRepository(
+            semantic_matches=[],
+            lexical_candidates=[
+                RetrievalChunkCandidate(
+                    chunk_id=2,
+                    chunk_index=0,
+                    chunk_text="Attention uses query key value vectors",
+                    notion_path="Knowledge/NLP/Week5/Attention",
+                    source_kind="notion",
+                    notion_page_id="page-nlp-week5",
+                    embedding_text=None,
+                )
+            ],
+        )
+    )
+
+    result = retriever.retrieve_with_metadata(
+        query_text="attention query key",
+        query_embedding=[0.9, 0.1],
+        top_k=3,
+        allow_legacy_embedding_scoring=False,
+    )
+
+    assert result.retrieval_mode == RETRIEVAL_MODE_LEXICAL_FALLBACK
+    assert result.retrieval_fallback_reason == "VECTOR_DATA_UNAVAILABLE"
+    assert [chunk.chunk_id for chunk in result.chunks] == [2]

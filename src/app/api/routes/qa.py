@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from src.app.dependencies import (
     get_cost_tracker,
+    get_embedding_client,
     get_prompt_template_loader,
     get_provider_router,
 )
 from src.app.schemas import QACitation, QARequest, QAResponse
 from src.db.session import get_db_session
 from src.orchestrators import QAOrchestrator, QAOrchestratorError
-from src.providers import ProviderRouter
+from src.providers import EmbeddingClient, ProviderRouter
 from src.rag import ProductionChunkRetriever
 from src.repositories import ChunkRepository, WorkflowRunRepository
 from src.services import CostTracker, PromptTemplateLoader, WorkflowRunService
@@ -22,6 +25,7 @@ router = APIRouter()
 def _build_qa_orchestrator(
     *,
     db_session: Session,
+    embedding_client: Optional[EmbeddingClient],
     provider_router: ProviderRouter,
     cost_tracker: CostTracker,
     prompt_template_loader: PromptTemplateLoader,
@@ -30,6 +34,7 @@ def _build_qa_orchestrator(
         retriever=ProductionChunkRetriever(
             chunk_repository=ChunkRepository(db_session),
         ),
+        embedding_client=embedding_client,
         provider_router=provider_router,
         cost_tracker=cost_tracker,
         prompt_template_loader=prompt_template_loader,
@@ -42,12 +47,14 @@ async def run_qa(
     payload: QARequest,
     request: Request,
     db_session: Session = Depends(get_db_session),
+    embedding_client: Optional[EmbeddingClient] = Depends(get_embedding_client),
     provider_router: ProviderRouter = Depends(get_provider_router),
     cost_tracker: CostTracker = Depends(get_cost_tracker),
     prompt_template_loader: PromptTemplateLoader = Depends(get_prompt_template_loader),
 ) -> QAResponse:
     orchestrator = _build_qa_orchestrator(
         db_session=db_session,
+        embedding_client=embedding_client,
         provider_router=provider_router,
         cost_tracker=cost_tracker,
         prompt_template_loader=prompt_template_loader,

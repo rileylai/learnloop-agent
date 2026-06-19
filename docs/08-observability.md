@@ -34,11 +34,11 @@ What belongs here:
 
 ## Vector Retrieval Metadata
 
-- QA workflows that use live retrieval should record `retrieval_mode`:
+- Step 53 QA workflows record `retrieval_mode`:
   `pgvector_exact_cosine`, `pgvector_hnsw_cosine`, or `lexical_fallback`.
-- QA workflows that fall back to lexical retrieval should record nullable
+- QA workflows that fall back to lexical retrieval record nullable
   `retrieval_fallback_reason`.
-- QA workflows should also record `embedding_provider`, `embedding_model`,
+- QA workflows also record `embedding_provider`, `embedding_model`,
   `embedding_dimensions`, and `vector_distance_metric`.
 - A successful lexical fallback still uses workflow `status=succeeded`.
   `failure_reason` should stay null unless the whole workflow actually fails.

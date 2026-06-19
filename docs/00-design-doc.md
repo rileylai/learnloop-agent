@@ -306,13 +306,16 @@ Checklist:
 ### 11.5 QA Workflow
 ```text
 User asks question
+-> Generate query embedding when available
 -> Retrieve production chunks
+-> Lexical fallback only when vector retrieval is unavailable or unusable
 -> Generate grounded answer
 -> Return answer with Notion path citation
 ```
 Checklist:
 - [ ] `pending` and `rejected` proposals are excluded.
 - [ ] Missing citations are handled safely.
+- [ ] Query-time vector failures degrade to deterministic lexical fallback instead of failing the whole QA workflow.
 - [ ] Workflow metadata records provider name, model name, prompt id, and prompt version.
 
 ### 11.6 New Source Ingestion
@@ -600,6 +603,12 @@ Required structured fields:
 - `token_input`
 - `token_output`
 - `estimated_cost`
+- `retrieval_mode`
+- `retrieval_fallback_reason`
+- `embedding_provider`
+- `embedding_model`
+- `embedding_dimensions`
+- `vector_distance_metric`
 
 Failure taxonomy:
 - `NOTION_AUTH_FAILED`

@@ -269,10 +269,12 @@ Current state:
 - `ChunkRepository.list_production_chunks_by_vector()` now applies
   production-safe filters and cosine-distance top-k in PostgreSQL when a query
   embedding is available.
-- Default QA currently calls the retriever without a query embedding, so production QA today is lexical-only.
-- Optional cosine scoring exists only when a caller explicitly passes `query_embedding` and a row has `embedding_text`.
-- Legacy pages that still have NULL vectors stay safe because the current QA
-  path is lexical-only until later rollout steps switch on query embeddings.
+- QA now generates query embeddings through `EmbeddingClient` and prefers the
+  repository-owned pgvector retrieval path when PostgreSQL + pgvector are available.
+- Query-time fallback is lexical-only for QA. The QA path no longer mixes
+  lexical and local embedding scores after a vector fallback condition.
+- Legacy pages that still have NULL vectors stay safe because query-time
+  vector gaps degrade to lexical fallback on the same filtered production scope.
 
 ## Live Embedding and pgvector Retrieval Contract (Step 48)
 
@@ -329,3 +331,31 @@ Behavior:
 Failure handling:
 - Provider missing or provider call failure returns deterministic error with workflow id.
 - Invalid or empty LLM output maps to `LLM_OUTPUT_INVALID`.
+
+## Query Embedding QA Path (Step 53)
+
+Files:
+- `src/orchestrators/qa_orchestrator.py`
+- `src/rag/retriever.py`
+
+Goal:
+- Switch QA from lexical-only retrieval to query-embedding-first retrieval
+  while preserving grounded citations and deterministic fallback.
+
+Flow:
+- `API Route -> QA Orchestrator -> EmbeddingClient -> ProductionChunkRetriever -> ChunkRepository -> grounded LLM answer`
+
+Rules:
+- Generate one query embedding per QA request with explicit
+  `dimensions=1536`.
+- When pgvector retrieval succeeds, use only the repository-returned semantic
+  result set for citations and prompt context.
+- When query embedding generation fails, query vector dimensions are invalid,
+  pgvector retrieval fails, or the filtered scope has no live vectors yet,
+  fall back to deterministic lexical retrieval on the same filtered scope.
+- QA lexical fallback must not mix semantic and lexical result sets for one
+  request.
+- Workflow metadata records `retrieval_mode`,
+  `retrieval_fallback_reason`, `embedding_provider`,
+  `embedding_model`, `embedding_dimensions`, and
+  `vector_distance_metric`.
