@@ -51,3 +51,23 @@ What belongs here:
 - Downgrade removes the rollout column and indexes but intentionally leaves the
   `vector` extension installed, since extension state may be shared by other
   DB objects in the same PostgreSQL database.
+
+## Step 55 Live Smoke Procedure
+
+- The Step 55 smoke run is opt-in only. It must not be added to the default
+  unit suite or app startup path.
+- The smoke command is `uv run python tests/evals/live_vector_smoke.py`.
+- Required env:
+  `LEARNLOOP_RUN_LIVE_VECTOR_SMOKE=1` and `OPENAI_API_KEY`.
+- The command creates a temporary PostgreSQL database from
+  `LEARNLOOP_PGVECTOR_ADMIN_DATABASE_URL` when set, or from the default local
+  docker-compose admin URL:
+  `postgresql+psycopg://learnloop:learnloop@localhost:5432/postgres`.
+- After creating the temporary database, the smoke flow applies the project's
+  real Alembic migrations to `head` before any indexing or retrieval checks.
+- The temporary database is created only for the smoke run and is dropped at
+  the end unless `--keep-database-on-failure` is used for debugging.
+- The smoke run uses real OpenAI embeddings plus real PostgreSQL + pgvector,
+  but keeps the answer provider deterministic and local because this step is
+  verifying vector storage, DB-side retrieval, citation behavior, scoped-empty
+  insufficient-info behavior, and duplicate-safe re-indexing.

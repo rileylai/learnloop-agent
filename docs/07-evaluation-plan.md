@@ -160,6 +160,65 @@ Expected output includes:
 vector_retrieval_regression: pass (4/4)
 ```
 
+## Live PostgreSQL + OpenAI Vector Smoke Verification
+
+`tests/evals/live_vector_smoke.py` is the Step 55 opt-in live smoke command.
+It stays outside the default unit suite and only runs when a developer
+explicitly enables it.
+
+Purpose:
+
+- confirm shared page indexing stores live pgvector embeddings through the real
+  OpenAI embedding client
+- confirm PostgreSQL-side pgvector retrieval returns
+  `pgvector_exact_cosine`
+- confirm duplicate raw chunk hits collapse into unique citation paths
+- confirm scoped-empty QA requests return the deterministic
+  `insufficient_info` answer
+- confirm repeated page re-index does not create duplicate chunk rows
+
+This smoke step intentionally keeps the answer provider deterministic and local.
+The live dependency under test is the vector path:
+
+`NotionPageIndexOrchestrator -> OpenAIEmbeddingClient -> ChunkRepository -> PostgreSQL + pgvector -> ProductionChunkRetriever -> QAOrchestrator citations`
+
+The smoke command creates a temporary database, runs the project's real
+Alembic migrations to `head`, then executes the live checks against that
+isolated schema. It does not rely on partial `Base.metadata.create_all()`
+table creation.
+
+Prerequisites:
+
+- local PostgreSQL + pgvector is reachable, usually from
+  `docker compose up -d postgres`
+- `OPENAI_API_KEY` is set
+- the run is explicitly opted in with `LEARNLOOP_RUN_LIVE_VECTOR_SMOKE=1`
+
+Run:
+
+```bash
+LEARNLOOP_RUN_LIVE_VECTOR_SMOKE=1 \
+OPENAI_API_KEY=... \
+uv run python tests/evals/live_vector_smoke.py
+```
+
+Optional:
+
+```bash
+LEARNLOOP_RUN_LIVE_VECTOR_SMOKE=1 \
+OPENAI_API_KEY=... \
+uv run python tests/evals/live_vector_smoke.py --keep-database-on-failure
+```
+
+If local PostgreSQL is not on the default docker-compose URL, set
+`LEARNLOOP_PGVECTOR_ADMIN_DATABASE_URL` or pass `--admin-database-url`.
+
+Expected output includes:
+
+```text
+live_vector_smoke: pass (5/5)
+```
+
 ## Write Safety Evaluation
 
 `tests/evals/write_safety_eval.py` checks deterministic Notion write-safety
