@@ -39,7 +39,7 @@ class SourceDocumentRepository:
             source_document.id = self._allocate_source_document_id_for_sqlite()
 
         self._session.add(source_document)
-        self._session.commit()
+        self._session.flush()
         self._session.refresh(source_document)
         return source_document
 

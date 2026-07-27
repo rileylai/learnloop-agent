@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any, Dict, Optional
 
+from src.db.unit_of_work import UnitOfWorkFactory
 from src.orchestrators.notion_page_index_orchestrator import (
     SYNC_MODE_AUTO_AFTER_ACCEPT,
     NotionPageIndexError,
@@ -62,12 +63,14 @@ class SupplementReviewOrchestrator:
         *,
         change_request_repository: ChangeRequestRepository,
         notion_page_repository: NotionPageRepository,
+        unit_of_work_factory: UnitOfWorkFactory,
         tool_registry: ToolRegistry,
         page_index_orchestrator: NotionPageIndexOrchestrator,
         workflow_run_service: WorkflowRunService,
     ) -> None:
         self._change_request_repository = change_request_repository
         self._notion_page_repository = notion_page_repository
+        self._unit_of_work_factory = unit_of_work_factory
         self._tool_registry = tool_registry
         self._page_index_orchestrator = page_index_orchestrator
         self._workflow_run_service = workflow_run_service
@@ -184,13 +187,13 @@ class SupplementReviewOrchestrator:
                     failure_reason="CHANGE_REQUEST_NOT_FOUND",
                 )
 
-            current_status = change_request.status.strip().lower()
-            next_status = self._resolve_next_status(
-                review_action=review_action,
-                current_status=current_status,
-            )
             follow_up_metadata: Dict[str, Any] = {}
             if review_action == REVIEW_ACTION_ACCEPT:
+                current_status = change_request.status.strip().lower()
+                next_status = self._resolve_next_status(
+                    review_action=review_action,
+                    current_status=current_status,
+                )
                 follow_up_metadata = await self._append_and_reindex_after_accept(
                     change_request_id=change_request.id,
                     change_request_proposal_json=change_request.proposal_json,
@@ -198,23 +201,61 @@ class SupplementReviewOrchestrator:
                     request_workflow_id=request_workflow_id,
                 )
 
-            if next_status != current_status:
-                updated = self._change_request_repository.update_change_request_status(
-                    change_request_id,
-                    status=next_status,
-                    failure_reason=None,
-                )
-                if updated is None:
-                    raise SupplementReviewError(
-                        error_code="CHANGE_REQUEST_NOT_FOUND",
-                        message=(
-                            "Change request is not found during update: "
-                            f"change_request_id={change_request_id}"
-                        ),
-                        http_status_code=HTTPStatus.NOT_FOUND,
-                        failure_reason="CHANGE_REQUEST_NOT_FOUND",
+                with self._unit_of_work_factory() as unit_of_work:
+                    updated = unit_of_work.change_requests.update_change_request_status(
+                        change_request_id,
+                        status=next_status,
+                        failure_reason=None,
                     )
-                change_request = updated
+                    if updated is None:
+                        raise SupplementReviewError(
+                            error_code="CHANGE_REQUEST_NOT_FOUND",
+                            message=(
+                                "Change request is not found during update: "
+                                f"change_request_id={change_request_id}"
+                            ),
+                            http_status_code=HTTPStatus.NOT_FOUND,
+                            failure_reason="CHANGE_REQUEST_NOT_FOUND",
+                        )
+                    result_change_request_id = int(updated.id)
+                    result_change_request_status = updated.status
+            else:
+                with self._unit_of_work_factory() as unit_of_work:
+                    change_request = unit_of_work.change_requests.get_change_request_by_id(
+                        change_request_id
+                    )
+                    if change_request is None:
+                        raise SupplementReviewError(
+                            error_code="CHANGE_REQUEST_NOT_FOUND",
+                            message=(
+                                "Change request is not found: "
+                                f"change_request_id={change_request_id}"
+                            ),
+                            http_status_code=HTTPStatus.NOT_FOUND,
+                            failure_reason="CHANGE_REQUEST_NOT_FOUND",
+                        )
+                    current_status = change_request.status.strip().lower()
+                    next_status = self._resolve_next_status(
+                        review_action=review_action,
+                        current_status=current_status,
+                    )
+                    updated = unit_of_work.change_requests.update_change_request_status(
+                        change_request_id,
+                        status=next_status,
+                        failure_reason=None,
+                    )
+                    if updated is None:
+                        raise SupplementReviewError(
+                            error_code="CHANGE_REQUEST_NOT_FOUND",
+                            message=(
+                                "Change request is not found during update: "
+                                f"change_request_id={change_request_id}"
+                            ),
+                            http_status_code=HTTPStatus.NOT_FOUND,
+                            failure_reason="CHANGE_REQUEST_NOT_FOUND",
+                        )
+                    result_change_request_id = int(updated.id)
+                    result_change_request_status = updated.status
 
             self._workflow_run_service.mark_workflow_succeeded(
                 workflow_run.id,
@@ -222,8 +263,8 @@ class SupplementReviewOrchestrator:
                     {
                         "operation": "review_change_request",
                         "review_action": review_action,
-                        "change_request_id": change_request.id,
-                        "change_request_status": change_request.status,
+                        "change_request_id": result_change_request_id,
+                        "change_request_status": result_change_request_status,
                         "reviewer": normalized_reviewer,
                         "reason": reason,
                         "follow_up": follow_up_metadata or None,
@@ -235,8 +276,8 @@ class SupplementReviewOrchestrator:
             return SupplementReviewResult(
                 workflow_run_id=workflow_run.id,
                 status="succeeded",
-                change_request_id=change_request.id,
-                change_request_status=change_request.status,
+                change_request_id=result_change_request_id,
+                change_request_status=result_change_request_status,
                 review_action=review_action,
                 reviewer=normalized_reviewer,
                 reason=reason,

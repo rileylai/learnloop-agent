@@ -56,6 +56,7 @@ def _build_supplement_propose_orchestrator(
     *,
     db_session: Session,
     db_session_factory: SessionFactory,
+    unit_of_work_factory: UnitOfWorkFactory,
     provider_router: ProviderRouter,
     cost_tracker: CostTracker,
     prompt_template_loader: PromptTemplateLoader,
@@ -66,6 +67,7 @@ def _build_supplement_propose_orchestrator(
         prompt_template_loader=prompt_template_loader,
         source_document_repository=SourceDocumentRepository(db_session),
         change_request_repository=ChangeRequestRepository(db_session),
+        unit_of_work_factory=unit_of_work_factory,
         duplicate_checker=DuplicateKnowledgeChecker(
             chunk_repository=ChunkRepository(db_session),
         ),
@@ -92,6 +94,7 @@ def _build_supplement_review_orchestrator(
     return SupplementReviewOrchestrator(
         change_request_repository=ChangeRequestRepository(db_session),
         notion_page_repository=NotionPageRepository(db_session),
+        unit_of_work_factory=unit_of_work_factory,
         tool_registry=tool_registry,
         page_index_orchestrator=page_index_orchestrator,
         workflow_run_service=WorkflowRunService(db_session_factory),
@@ -104,6 +107,7 @@ async def propose_supplement_change_request(
     request: Request,
     db_session: Session = Depends(get_db_session),
     db_session_factory: SessionFactory = Depends(get_db_session_factory),
+    unit_of_work_factory: UnitOfWorkFactory = Depends(get_unit_of_work_factory),
     provider_router: ProviderRouter = Depends(get_provider_router),
     cost_tracker: CostTracker = Depends(get_cost_tracker),
     prompt_template_loader: PromptTemplateLoader = Depends(get_prompt_template_loader),
@@ -111,6 +115,7 @@ async def propose_supplement_change_request(
     orchestrator = _build_supplement_propose_orchestrator(
         db_session=db_session,
         db_session_factory=db_session_factory,
+        unit_of_work_factory=unit_of_work_factory,
         provider_router=provider_router,
         cost_tracker=cost_tracker,
         prompt_template_loader=prompt_template_loader,

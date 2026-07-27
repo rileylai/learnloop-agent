@@ -3,7 +3,11 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Optional
 
+from fastapi import Depends
+
 from src.app.config import get_settings
+from src.db.session import SessionFactory, UnitOfWorkFactory, get_db_session_factory
+from src.db.unit_of_work import SqlAlchemyUnitOfWork
 from src.providers import (
     EmbeddingClient,
     OpenAIClient,
@@ -31,6 +35,12 @@ from src.tools import (
     YouTubeTranscriptAPIClient,
     YouTubeTranscriptTool,
 )
+
+
+def get_business_unit_of_work_factory(
+    session_factory: SessionFactory = Depends(get_db_session_factory),
+) -> UnitOfWorkFactory:
+    return lambda: SqlAlchemyUnitOfWork(session_factory)
 
 
 @lru_cache(maxsize=1)

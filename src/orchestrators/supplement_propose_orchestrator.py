@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Optional
 
+from src.db.unit_of_work import UnitOfWorkFactory
 from src.orchestrators.supplement_proposal_schema import (
     SupplementProposalSchema,
     SupplementProposalValidationError,
@@ -77,6 +78,7 @@ class SupplementProposeOrchestrator:
         prompt_template_loader: PromptTemplateLoader,
         source_document_repository: SourceDocumentRepository,
         change_request_repository: ChangeRequestRepository,
+        unit_of_work_factory: UnitOfWorkFactory,
         duplicate_checker: DuplicateKnowledgeChecker,
         workflow_run_service: WorkflowRunService,
     ) -> None:
@@ -85,6 +87,7 @@ class SupplementProposeOrchestrator:
         self._prompt_template_loader = prompt_template_loader
         self._source_document_repository = source_document_repository
         self._change_request_repository = change_request_repository
+        self._unit_of_work_factory = unit_of_work_factory
         self._duplicate_checker = duplicate_checker
         self._workflow_run_service = workflow_run_service
 
@@ -230,20 +233,23 @@ class SupplementProposeOrchestrator:
                     duplicate_match=duplicate_match,
                 )
 
-            change_request = self._change_request_repository.create_change_request(
-                source_document_id=source_document.id,
-                target_notion_page_id=target_notion_page_id,
-                status=CHANGE_REQUEST_STATUS_PENDING,
-                proposal_json=json.dumps(proposal.model_dump(), sort_keys=True),
-                failure_reason=None,
-            )
+            with self._unit_of_work_factory() as unit_of_work:
+                change_request = unit_of_work.change_requests.create_change_request(
+                    source_document_id=source_document.id,
+                    target_notion_page_id=target_notion_page_id,
+                    status=CHANGE_REQUEST_STATUS_PENDING,
+                    proposal_json=json.dumps(proposal.model_dump(), sort_keys=True),
+                    failure_reason=None,
+                )
+                change_request_id = int(change_request.id)
+                change_request_status = change_request.status
 
             self._workflow_run_service.mark_workflow_succeeded(
                 workflow_run.id,
                 metadata_json=json.dumps(
                     {
                         "operation": "propose_change_request",
-                        "change_request_id": change_request.id,
+                        "change_request_id": change_request_id,
                         "source_document_id": source_document.id,
                         "change_request_status": CHANGE_REQUEST_STATUS_PENDING,
                         "duplicate_detected": duplicate_match is not None,
@@ -265,8 +271,8 @@ class SupplementProposeOrchestrator:
             return SupplementProposeResult(
                 workflow_run_id=workflow_run.id,
                 status="succeeded",
-                change_request_id=change_request.id,
-                change_request_status=change_request.status,
+                change_request_id=change_request_id,
+                change_request_status=change_request_status,
                 source_document_id=source_document.id,
                 duplicate_detected=duplicate_match is not None,
                 duplicate_notion_path=(

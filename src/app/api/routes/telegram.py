@@ -71,12 +71,12 @@ def _build_telegram_gateway_orchestrator(
         tool_registry=tool_registry,
         document_ingestion_orchestrator=DocumentIngestionOrchestrator(
             tool_registry=tool_registry,
-            source_document_repository=SourceDocumentRepository(db_session),
+            unit_of_work_factory=unit_of_work_factory,
             workflow_run_service=workflow_run_service,
         ),
         image_ocr_ingestion_orchestrator=ImageOCRIngestionOrchestrator(
             tool_registry=tool_registry,
-            source_document_repository=SourceDocumentRepository(db_session),
+            unit_of_work_factory=unit_of_work_factory,
             workflow_run_service=workflow_run_service,
         ),
         supplement_propose_orchestrator=SupplementProposeOrchestrator(
@@ -85,6 +85,7 @@ def _build_telegram_gateway_orchestrator(
             prompt_template_loader=prompt_template_loader,
             source_document_repository=SourceDocumentRepository(db_session),
             change_request_repository=ChangeRequestRepository(db_session),
+            unit_of_work_factory=unit_of_work_factory,
             duplicate_checker=DuplicateKnowledgeChecker(
                 chunk_repository=ChunkRepository(db_session),
             ),
@@ -107,6 +108,7 @@ def _build_telegram_gateway_orchestrator(
         supplement_review_orchestrator=SupplementReviewOrchestrator(
             change_request_repository=ChangeRequestRepository(db_session),
             notion_page_repository=NotionPageRepository(db_session),
+            unit_of_work_factory=unit_of_work_factory,
             tool_registry=tool_registry,
             page_index_orchestrator=NotionPageIndexOrchestrator(
                 tool_registry=tool_registry,

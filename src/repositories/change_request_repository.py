@@ -41,7 +41,7 @@ class ChangeRequestRepository:
             change_request.id = self._allocate_change_request_id_for_sqlite()
 
         self._session.add(change_request)
-        self._session.commit()
+        self._session.flush()
         self._session.refresh(change_request)
         return change_request
 
@@ -61,6 +61,6 @@ class ChangeRequestRepository:
 
         change_request.status = status
         change_request.failure_reason = failure_reason
-        self._session.commit()
+        self._session.flush()
         self._session.refresh(change_request)
         return change_request

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any, Dict, Optional
 
-from src.repositories import SourceDocumentRepository
+from src.db.unit_of_work import UnitOfWorkFactory
 from src.services import STANDARD_FAILURE_REASONS, WorkflowRunService
 from src.tools import ToolContext, ToolRegistry
 
@@ -52,11 +52,11 @@ class DocumentIngestionOrchestrator:
         self,
         *,
         tool_registry: ToolRegistry,
-        source_document_repository: SourceDocumentRepository,
+        unit_of_work_factory: UnitOfWorkFactory,
         workflow_run_service: WorkflowRunService,
     ) -> None:
         self._tool_registry = tool_registry
-        self._source_document_repository = source_document_repository
+        self._unit_of_work_factory = unit_of_work_factory
         self._workflow_run_service = workflow_run_service
 
     async def ingest_document(
@@ -108,19 +108,24 @@ class DocumentIngestionOrchestrator:
             )
             raw_text = self._extract_raw_text(parsed)
             content_hash = self._build_content_hash(raw_text)
-            source_document = self._source_document_repository.create_source_document(
-                source_type="pdf",
-                source_display_name=normalized_file_name,
-                raw_text=raw_text,
-                content_hash=content_hash,
-            )
+            with self._unit_of_work_factory() as unit_of_work:
+                source_document = unit_of_work.source_documents.create_source_document(
+                    source_type="pdf",
+                    source_display_name=normalized_file_name,
+                    raw_text=raw_text,
+                    content_hash=content_hash,
+                )
+                source_document_id = int(source_document.id)
+                persisted_source_type = source_document.source_type
+                persisted_display_name = source_document.source_display_name
+                persisted_content_hash = source_document.content_hash
 
             self._workflow_run_service.mark_workflow_succeeded(
                 workflow_run.id,
                 metadata_json=json.dumps(
                     {
                         "operation": "ingest_document",
-                        "source_document_id": source_document.id,
+                        "source_document_id": source_document_id,
                         "source_type": "pdf",
                         "source_display_name": normalized_file_name,
                         "content_hash": content_hash,
@@ -160,10 +165,10 @@ class DocumentIngestionOrchestrator:
         return DocumentIngestionResult(
             workflow_run_id=workflow_run.id,
             status="succeeded",
-            source_document_id=source_document.id,
-            source_type=source_document.source_type,
-            source_display_name=source_document.source_display_name,
-            content_hash=source_document.content_hash,
+            source_document_id=source_document_id,
+            source_type=persisted_source_type,
+            source_display_name=persisted_display_name,
+            content_hash=persisted_content_hash,
         )
 
     async def _parse_pdf(

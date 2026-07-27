@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Optional
 
-from src.repositories import SourceDocumentRepository
+from src.db.unit_of_work import UnitOfWorkFactory
 from src.services import WorkflowRunService
 
 MVP_CHAT_TEXT_MAX_CHARS = 10_000
@@ -45,10 +45,10 @@ class ChatTextIngestionOrchestrator:
     def __init__(
         self,
         *,
-        source_document_repository: SourceDocumentRepository,
+        unit_of_work_factory: UnitOfWorkFactory,
         workflow_run_service: WorkflowRunService,
     ) -> None:
-        self._source_document_repository = source_document_repository
+        self._unit_of_work_factory = unit_of_work_factory
         self._workflow_run_service = workflow_run_service
 
     async def ingest_chat_text(
@@ -96,18 +96,23 @@ class ChatTextIngestionOrchestrator:
 
         try:
             content_hash = self._build_content_hash(normalized_chat_text)
-            source_document = self._source_document_repository.create_source_document(
-                source_type="chat_text",
-                source_display_name=normalized_display_name,
-                raw_text=normalized_chat_text,
-                content_hash=content_hash,
-            )
+            with self._unit_of_work_factory() as unit_of_work:
+                source_document = unit_of_work.source_documents.create_source_document(
+                    source_type="chat_text",
+                    source_display_name=normalized_display_name,
+                    raw_text=normalized_chat_text,
+                    content_hash=content_hash,
+                )
+                source_document_id = int(source_document.id)
+                persisted_source_type = source_document.source_type
+                persisted_display_name = source_document.source_display_name
+                persisted_content_hash = source_document.content_hash
             self._workflow_run_service.mark_workflow_succeeded(
                 workflow_run.id,
                 metadata_json=json.dumps(
                     {
                         "operation": "ingest_chat_text",
-                        "source_document_id": source_document.id,
+                        "source_document_id": source_document_id,
                         "source_type": "chat_text",
                         "source_display_name": normalized_display_name,
                         "chat_text_length": len(normalized_chat_text),
@@ -140,10 +145,10 @@ class ChatTextIngestionOrchestrator:
         return ChatTextIngestionResult(
             workflow_run_id=workflow_run.id,
             status="succeeded",
-            source_document_id=source_document.id,
-            source_type=source_document.source_type,
-            source_display_name=source_document.source_display_name,
-            content_hash=source_document.content_hash,
+            source_document_id=source_document_id,
+            source_type=persisted_source_type,
+            source_display_name=persisted_display_name,
+            content_hash=persisted_content_hash,
         )
 
     def _build_content_hash(self, raw_text: str) -> str:

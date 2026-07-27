@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
-from sqlalchemy.orm import Session
 
-from src.app.dependencies import get_tool_registry
+from src.app.dependencies import get_business_unit_of_work_factory, get_tool_registry
 from src.app.schemas import (
     ChatTextIngestionRequest,
     SourceDocumentCreateRequest,
@@ -11,7 +10,11 @@ from src.app.schemas import (
     YouTubeIngestionRequest,
     URLIngestionRequest,
 )
-from src.db.session import SessionFactory, get_db_session, get_db_session_factory
+from src.db.session import (
+    SessionFactory,
+    UnitOfWorkFactory,
+    get_db_session_factory,
+)
 from src.orchestrators import (
     ChatTextIngestionError,
     ChatTextIngestionOrchestrator,
@@ -27,7 +30,6 @@ from src.orchestrators import (
     URLIngestionError,
     URLIngestionOrchestrator,
 )
-from src.repositories import SourceDocumentRepository
 from src.services import WorkflowRunService
 from src.tools import ToolRegistry
 
@@ -36,74 +38,74 @@ router = APIRouter()
 
 def _build_source_document_orchestrator(
     *,
-    db_session: Session,
     db_session_factory: SessionFactory,
+    unit_of_work_factory: UnitOfWorkFactory,
 ) -> SourceDocumentOrchestrator:
     return SourceDocumentOrchestrator(
-        source_document_repository=SourceDocumentRepository(db_session),
+        unit_of_work_factory=unit_of_work_factory,
         workflow_run_service=WorkflowRunService(db_session_factory),
     )
 
 
 def _build_chat_text_ingestion_orchestrator(
     *,
-    db_session: Session,
     db_session_factory: SessionFactory,
+    unit_of_work_factory: UnitOfWorkFactory,
 ) -> ChatTextIngestionOrchestrator:
     return ChatTextIngestionOrchestrator(
-        source_document_repository=SourceDocumentRepository(db_session),
+        unit_of_work_factory=unit_of_work_factory,
         workflow_run_service=WorkflowRunService(db_session_factory),
     )
 
 
 def _build_document_ingestion_orchestrator(
     *,
-    db_session: Session,
     db_session_factory: SessionFactory,
+    unit_of_work_factory: UnitOfWorkFactory,
     tool_registry: ToolRegistry,
 ) -> DocumentIngestionOrchestrator:
     return DocumentIngestionOrchestrator(
         tool_registry=tool_registry,
-        source_document_repository=SourceDocumentRepository(db_session),
+        unit_of_work_factory=unit_of_work_factory,
         workflow_run_service=WorkflowRunService(db_session_factory),
     )
 
 
 def _build_image_ocr_ingestion_orchestrator(
     *,
-    db_session: Session,
     db_session_factory: SessionFactory,
+    unit_of_work_factory: UnitOfWorkFactory,
     tool_registry: ToolRegistry,
 ) -> ImageOCRIngestionOrchestrator:
     return ImageOCRIngestionOrchestrator(
         tool_registry=tool_registry,
-        source_document_repository=SourceDocumentRepository(db_session),
+        unit_of_work_factory=unit_of_work_factory,
         workflow_run_service=WorkflowRunService(db_session_factory),
     )
 
 
 def _build_url_ingestion_orchestrator(
     *,
-    db_session: Session,
     db_session_factory: SessionFactory,
+    unit_of_work_factory: UnitOfWorkFactory,
     tool_registry: ToolRegistry,
 ) -> URLIngestionOrchestrator:
     return URLIngestionOrchestrator(
         tool_registry=tool_registry,
-        source_document_repository=SourceDocumentRepository(db_session),
+        unit_of_work_factory=unit_of_work_factory,
         workflow_run_service=WorkflowRunService(db_session_factory),
     )
 
 
 def _build_youtube_ingestion_orchestrator(
     *,
-    db_session: Session,
     db_session_factory: SessionFactory,
+    unit_of_work_factory: UnitOfWorkFactory,
     tool_registry: ToolRegistry,
 ) -> YouTubeIngestionOrchestrator:
     return YouTubeIngestionOrchestrator(
         tool_registry=tool_registry,
-        source_document_repository=SourceDocumentRepository(db_session),
+        unit_of_work_factory=unit_of_work_factory,
         workflow_run_service=WorkflowRunService(db_session_factory),
     )
 
@@ -112,12 +114,12 @@ def _build_youtube_ingestion_orchestrator(
 async def create_source_document(
     payload: SourceDocumentCreateRequest,
     request: Request,
-    db_session: Session = Depends(get_db_session),
     db_session_factory: SessionFactory = Depends(get_db_session_factory),
+    unit_of_work_factory: UnitOfWorkFactory = Depends(get_business_unit_of_work_factory),
 ) -> SourceDocumentCreateResponse:
     orchestrator = _build_source_document_orchestrator(
-        db_session=db_session,
         db_session_factory=db_session_factory,
+        unit_of_work_factory=unit_of_work_factory,
     )
     request_workflow_id = str(getattr(request.state, "workflow_id", ""))
 
@@ -153,13 +155,13 @@ async def create_source_document(
 async def ingest_url_article(
     payload: URLIngestionRequest,
     request: Request,
-    db_session: Session = Depends(get_db_session),
     db_session_factory: SessionFactory = Depends(get_db_session_factory),
+    unit_of_work_factory: UnitOfWorkFactory = Depends(get_business_unit_of_work_factory),
     tool_registry: ToolRegistry = Depends(get_tool_registry),
 ) -> SourceDocumentCreateResponse:
     orchestrator = _build_url_ingestion_orchestrator(
-        db_session=db_session,
         db_session_factory=db_session_factory,
+        unit_of_work_factory=unit_of_work_factory,
         tool_registry=tool_registry,
     )
     request_workflow_id = str(getattr(request.state, "workflow_id", ""))
@@ -194,13 +196,13 @@ async def ingest_url_article(
 async def ingest_pdf_document(
     request: Request,
     document: UploadFile = File(...),
-    db_session: Session = Depends(get_db_session),
     db_session_factory: SessionFactory = Depends(get_db_session_factory),
+    unit_of_work_factory: UnitOfWorkFactory = Depends(get_business_unit_of_work_factory),
     tool_registry: ToolRegistry = Depends(get_tool_registry),
 ) -> SourceDocumentCreateResponse:
     orchestrator = _build_document_ingestion_orchestrator(
-        db_session=db_session,
         db_session_factory=db_session_factory,
+        unit_of_work_factory=unit_of_work_factory,
         tool_registry=tool_registry,
     )
     request_workflow_id = str(getattr(request.state, "workflow_id", ""))
@@ -239,13 +241,13 @@ async def ingest_pdf_document(
 async def ingest_youtube_transcript(
     payload: YouTubeIngestionRequest,
     request: Request,
-    db_session: Session = Depends(get_db_session),
     db_session_factory: SessionFactory = Depends(get_db_session_factory),
+    unit_of_work_factory: UnitOfWorkFactory = Depends(get_business_unit_of_work_factory),
     tool_registry: ToolRegistry = Depends(get_tool_registry),
 ) -> SourceDocumentCreateResponse:
     orchestrator = _build_youtube_ingestion_orchestrator(
-        db_session=db_session,
         db_session_factory=db_session_factory,
+        unit_of_work_factory=unit_of_work_factory,
         tool_registry=tool_registry,
     )
     request_workflow_id = str(getattr(request.state, "workflow_id", ""))
@@ -280,12 +282,12 @@ async def ingest_youtube_transcript(
 async def ingest_chat_text(
     payload: ChatTextIngestionRequest,
     request: Request,
-    db_session: Session = Depends(get_db_session),
     db_session_factory: SessionFactory = Depends(get_db_session_factory),
+    unit_of_work_factory: UnitOfWorkFactory = Depends(get_business_unit_of_work_factory),
 ) -> SourceDocumentCreateResponse:
     orchestrator = _build_chat_text_ingestion_orchestrator(
-        db_session=db_session,
         db_session_factory=db_session_factory,
+        unit_of_work_factory=unit_of_work_factory,
     )
     request_workflow_id = str(getattr(request.state, "workflow_id", ""))
 
@@ -320,13 +322,13 @@ async def ingest_chat_text(
 async def ingest_image_ocr(
     request: Request,
     images: list[UploadFile] = File(...),
-    db_session: Session = Depends(get_db_session),
     db_session_factory: SessionFactory = Depends(get_db_session_factory),
+    unit_of_work_factory: UnitOfWorkFactory = Depends(get_business_unit_of_work_factory),
     tool_registry: ToolRegistry = Depends(get_tool_registry),
 ) -> SourceDocumentCreateResponse:
     orchestrator = _build_image_ocr_ingestion_orchestrator(
-        db_session=db_session,
         db_session_factory=db_session_factory,
+        unit_of_work_factory=unit_of_work_factory,
         tool_registry=tool_registry,
     )
     request_workflow_id = str(getattr(request.state, "workflow_id", ""))
