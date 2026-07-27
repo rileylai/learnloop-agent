@@ -317,7 +317,7 @@ class NotionPageIndexOrchestrator:
                     chunks=chunk_upserts,
                 )
 
-            return NotionIndexedPageSnapshot(
+            snapshot = NotionIndexedPageSnapshot(
                 notion_page_db_id=notion_page.id,
                 notion_page_id=notion_page.notion_page_id,
                 page_title=notion_page.title,
@@ -330,6 +330,7 @@ class NotionPageIndexOrchestrator:
                 embedding_token_input=embedding_metadata["embedding_token_input"],
                 embedding_estimated_cost=embedding_metadata["embedding_estimated_cost"],
             )
+        return snapshot
 
     def _http_status_for_tool_error(self, error_code: str) -> int:
         return TOOL_ERROR_TO_HTTP_STATUS.get(

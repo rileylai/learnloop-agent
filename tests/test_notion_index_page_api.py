@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
-from typing import Dict
+from types import TracebackType
+from typing import Dict, Optional, Type
 
 from fastapi.testclient import TestClient
 import pytest
@@ -14,8 +16,20 @@ from src.app.main import app
 from src.db.base import Base
 from src.db.models import KnowledgeChunk, NotionBlock, NotionPage, WorkflowRun
 from src.db.session import get_db_session, get_db_session_factory, get_unit_of_work_factory
-from src.db.unit_of_work import SqlAlchemyUnitOfWork
+from src.db.unit_of_work import SessionFactory, SqlAlchemyUnitOfWork
+from src.orchestrators.notion_page_index_orchestrator import (
+    NotionPageIndexError,
+    NotionPageIndexOrchestrator,
+)
 from src.providers import EmbeddingClient, EmbeddingRequest, EmbeddingResponse
+from src.repositories import (
+    ChunkRepository,
+    ChunkRepositoryError,
+    NotionBlockRepository,
+    NotionBlockSnapshot,
+    NotionChunkUpsert,
+)
+from src.services import WorkflowRunService
 from src.tools import (
     InMemoryNotionReaderClient,
     NotionBlockNode,
@@ -242,6 +256,214 @@ def _sample_legacy_backfill_page() -> NotionPageTree:
             )
         ],
     )
+
+
+def _rollback_tree_v2() -> NotionPageTree:
+    return NotionPageTree(
+        page_id="page-rollback",
+        title="Rollback Page Updated",
+        notion_path="Knowledge/Rollback/Updated",
+        blocks=[
+            NotionBlockNode(
+                block_id="blk-rollback-new",
+                block_type="paragraph",
+                content_text="New content should not survive rollback",
+                block_path="Knowledge/Rollback/Updated/New content",
+            )
+        ],
+    )
+
+
+def _seed_existing_rollback_page(session_factory: SessionFactory) -> None:
+    session: Session = session_factory()
+    try:
+        page = NotionPage(
+            id=11,
+            notion_page_id="page-rollback",
+            title="Rollback Page Original",
+            notion_path="Knowledge/Rollback/Original",
+        )
+        session.add(page)
+        session.flush()
+
+        block = NotionBlock(
+            id=21,
+            notion_block_id="blk-rollback-old",
+            notion_page_id=page.id,
+            parent_block_id=None,
+            block_type="paragraph",
+            content_text="Old content must remain",
+            block_path="Knowledge/Rollback/Original/Old content",
+            block_order=0,
+        )
+        session.add(block)
+        session.flush()
+
+        session.add(
+            KnowledgeChunk(
+                id=31,
+                source_document_id=None,
+                notion_block_id=block.id,
+                chunk_index=0,
+                chunk_text="Old content must remain",
+                notion_path="Knowledge/Rollback/Original/Old content",
+                embedding=_embedding_vector(8.0),
+                embedding_text=json.dumps(_embedding_vector(8.0)),
+                source_kind="notion",
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+
+def _assert_existing_rollback_page_is_unchanged(
+    session_factory: SessionFactory,
+) -> None:
+    session: Session = session_factory()
+    try:
+        page = (
+            session.query(NotionPage)
+            .filter(NotionPage.notion_page_id == "page-rollback")
+            .one()
+        )
+        assert page.title == "Rollback Page Original"
+        assert page.notion_path == "Knowledge/Rollback/Original"
+
+        blocks = (
+            session.query(NotionBlock)
+            .filter(NotionBlock.notion_page_id == page.id)
+            .order_by(NotionBlock.id.asc())
+            .all()
+        )
+        assert len(blocks) == 1
+        assert blocks[0].notion_block_id == "blk-rollback-old"
+        assert blocks[0].content_text == "Old content must remain"
+
+        chunks = (
+            session.query(KnowledgeChunk)
+            .join(NotionBlock, KnowledgeChunk.notion_block_id == NotionBlock.id)
+            .filter(NotionBlock.notion_page_id == page.id)
+            .order_by(KnowledgeChunk.id.asc())
+            .all()
+        )
+        assert len(chunks) == 1
+        assert chunks[0].chunk_text == "Old content must remain"
+        assert chunks[0].embedding == _embedding_vector(8.0)
+    finally:
+        session.close()
+
+
+class _FailingChunkRepository:
+    def __init__(self, repository: ChunkRepository, fail_stage: str) -> None:
+        self._repository = repository
+        self._fail_stage = fail_stage
+
+    def delete_page_chunks(self, *, notion_page_db_id: int) -> int:
+        deleted_count = self._repository.delete_page_chunks(
+            notion_page_db_id=notion_page_db_id
+        )
+        if self._fail_stage == "after_chunk_delete":
+            raise RuntimeError("injected failure after chunk deletion")
+        return deleted_count
+
+    def upsert_chunks(
+        self,
+        *,
+        notion_page_db_id: int,
+        chunks: list[NotionChunkUpsert],
+    ) -> list[KnowledgeChunk]:
+        inserted = self._repository.upsert_chunks(
+            notion_page_db_id=notion_page_db_id,
+            chunks=chunks,
+        )
+        if self._fail_stage == "during_chunk_insert":
+            raise ChunkRepositoryError("injected failure during chunk insert")
+        return inserted
+
+
+class _FailingNotionBlockRepository:
+    def __init__(self, repository: NotionBlockRepository, fail_stage: str) -> None:
+        self._repository = repository
+        self._fail_stage = fail_stage
+
+    def replace_page_blocks(
+        self,
+        *,
+        notion_page_db_id: int,
+        root_blocks: list[NotionBlockSnapshot],
+    ) -> list[NotionBlock]:
+        inserted = self._repository.replace_page_blocks(
+            notion_page_db_id=notion_page_db_id,
+            root_blocks=root_blocks,
+        )
+        if self._fail_stage == "after_block_replace":
+            raise RuntimeError("injected failure after block replacement")
+        return inserted
+
+
+class _FailingPageIndexUnitOfWork:
+    def __init__(self, session_factory: SessionFactory, fail_stage: str) -> None:
+        self._unit_of_work = SqlAlchemyUnitOfWork(session_factory)
+        self._fail_stage = fail_stage
+
+    def __enter__(self) -> "_FailingPageIndexUnitOfWork":
+        active_unit_of_work = self._unit_of_work.__enter__()
+        self.notion_pages = active_unit_of_work.notion_pages
+        self.notion_blocks = _FailingNotionBlockRepository(
+            active_unit_of_work.notion_blocks,
+            self._fail_stage,
+        )
+        self.chunks = _FailingChunkRepository(
+            active_unit_of_work.chunks,
+            self._fail_stage,
+        )
+        return self
+
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_value: Optional[BaseException],
+        traceback: Optional[TracebackType],
+    ) -> None:
+        self._unit_of_work.__exit__(exc_type, exc_value, traceback)
+
+
+@pytest.mark.parametrize(
+    ("fail_stage", "expected_error_code"),
+    [
+        ("after_chunk_delete", "INDEX_PAGE_PERSIST_FAILED"),
+        ("after_block_replace", "INDEX_PAGE_PERSIST_FAILED"),
+        ("during_chunk_insert", "VECTOR_UPSERT_FAILED"),
+    ],
+)
+def test_index_page_snapshot_rolls_back_page_mutations_when_persist_stage_fails(
+    fail_stage: str,
+    expected_error_code: str,
+) -> None:
+    session_factory = _build_session_factory()
+    _seed_existing_rollback_page(session_factory)
+
+    orchestrator = NotionPageIndexOrchestrator(
+        tool_registry=_build_tool_registry({"page-rollback": _rollback_tree_v2()}),
+        unit_of_work_factory=lambda: _FailingPageIndexUnitOfWork(
+            session_factory,
+            fail_stage,
+        ),
+        workflow_run_service=WorkflowRunService(session_factory),
+        embedding_client=_FakeEmbeddingClient(),
+    )
+
+    with pytest.raises(NotionPageIndexError) as exc_info:
+        asyncio.run(
+            orchestrator.index_page_snapshot(
+                page_id="page-rollback",
+                request_workflow_id="wf-rollback",
+            )
+        )
+
+    assert exc_info.value.error_code == expected_error_code
+    _assert_existing_rollback_page_is_unchanged(session_factory)
 
 
 def test_index_page_api_persists_page_and_nested_blocks() -> None:
