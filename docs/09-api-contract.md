@@ -27,7 +27,10 @@ Current contract gaps:
 - Notion index routes use the bundled mock reader in default runtime wiring;
   setting `NOTION_BACKEND=live` selects the read-only Notion REST adapter and
   append-only writer together, and requires `NOTION_TOKEN` without fallback.
-- API routes and the Telegram webhook are unauthenticated.
+- API routes and the Telegram webhook have optional configured trust boundaries:
+  API bearer authentication, Telegram webhook secret validation, and an
+  allowed-chat policy. Missing optional settings preserve local/test
+  compatibility and are reported by preflight.
 - `/health` is shallow liveness. `/ready` is implemented with deterministic
   dependency checks; `/metrics` is not implemented.
 
@@ -36,6 +39,30 @@ do not by themselves prove live Notion, Telegram, OpenAI, parser, or worker
 integration.
 
 ## Ops APIs
+
+## Trust Boundaries
+
+Protected API routes are all `/api` routes except the Telegram webhook. When
+`API_BEARER_TOKEN` is set, callers must send:
+
+```text
+Authorization: Bearer <configured token>
+```
+
+Missing or invalid credentials return `401` with `error_code=API_UNAUTHORIZED`
+and `failure_reason=AUTHENTICATION_FAILED`. `/health` and `/ready` remain public
+operational endpoints.
+
+The Telegram webhook accepts
+`X-Telegram-Bot-Api-Secret-Token: <configured secret>` when
+`TELEGRAM_WEBHOOK_SECRET` is set. Missing or invalid values return `403` with
+`error_code=TELEGRAM_WEBHOOK_FORBIDDEN`. When
+`TELEGRAM_ALLOWED_CHAT_IDS` contains comma-separated chat ids, updates from
+other chats return `403` with `error_code=TELEGRAM_CHAT_NOT_ALLOWED` before a
+workflow run starts or a reply is sent.
+
+These checks are deterministic backend policy. They do not inspect or delegate
+authorization decisions to the LLM.
 
 ### GET `/health`
 

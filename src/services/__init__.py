@@ -35,6 +35,7 @@ from src.services.workflow_run_service import (
     WorkflowRunServiceError,
     WorkflowRunValidationError,
 )
+from src.services.trust_boundary import TrustBoundaryError, TrustBoundaryService
 
 __all__ = [
     "CostTracker",
@@ -64,4 +65,6 @@ __all__ = [
     "WorkflowRunService",
     "WorkflowRunServiceError",
     "WorkflowRunValidationError",
+    "TrustBoundaryError",
+    "TrustBoundaryService",
 ]

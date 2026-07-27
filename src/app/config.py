@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
-from typing import Optional
+from typing import FrozenSet, Optional
 
 from pydantic import BaseModel, Field
 
@@ -27,6 +27,13 @@ def _read_optional_env(name: str) -> Optional[str]:
     return stripped or None
 
 
+def _read_csv_env(name: str) -> FrozenSet[str]:
+    value = _read_optional_env(name)
+    if value is None:
+        return frozenset()
+    return frozenset(item.strip() for item in value.split(",") if item.strip())
+
+
 class Settings(BaseModel):
     app_env: str = Field(default="local")
     log_level: str = Field(default="INFO")
@@ -37,6 +44,9 @@ class Settings(BaseModel):
     notion_token: Optional[str] = None
     openai_api_key: Optional[str] = None
     telegram_bot_token: Optional[str] = None
+    api_bearer_token: Optional[str] = None
+    telegram_webhook_secret: Optional[str] = None
+    telegram_allowed_chat_ids: FrozenSet[str] = Field(default_factory=frozenset)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -51,6 +61,9 @@ class Settings(BaseModel):
             notion_token=_read_optional_env("NOTION_TOKEN"),
             openai_api_key=_read_optional_env("OPENAI_API_KEY"),
             telegram_bot_token=_read_optional_env("TELEGRAM_BOT_TOKEN"),
+            api_bearer_token=_read_optional_env("API_BEARER_TOKEN"),
+            telegram_webhook_secret=_read_optional_env("TELEGRAM_WEBHOOK_SECRET"),
+            telegram_allowed_chat_ids=_read_csv_env("TELEGRAM_ALLOWED_CHAT_IDS"),
         )
 
 

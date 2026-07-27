@@ -129,7 +129,10 @@ boundaries and the target MVP integration shape. Current runtime wiring is:
 - `RQQueueClient` exists behind `QueueClient`, but runtime dependencies do not
   enqueue work and the repository has no worker entrypoint. Redis is therefore
   not part of current request execution.
-- API and Telegram orchestration are synchronous and unauthenticated.
+- API routes support a configured bearer-token boundary. Telegram webhook
+  requests support a configured secret-token boundary and optional allowed-chat
+  policy. Local/test compatibility remains available when these optional
+  settings are absent; preflight reports the missing protections.
 - Parser and Telegram HTTP adapters exist, but external-service E2E remains
   live verification work.
 

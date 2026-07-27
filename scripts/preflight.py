@@ -54,6 +54,9 @@ CONFIGURATION_KEYS: Tuple[str, ...] = (
     "OPENAI_API_KEY",
     "NOTION_TOKEN",
     "TELEGRAM_BOT_TOKEN",
+    "API_BEARER_TOKEN",
+    "TELEGRAM_WEBHOOK_SECRET",
+    "TELEGRAM_ALLOWED_CHAT_IDS",
 )
 
 
@@ -199,6 +202,30 @@ def _check_configuration(
                 status = "pass" if not configured else "warn"
                 detail = "not required by mock backend" if not configured else "configured but unused by mock backend"
                 required = False
+        elif key == "API_BEARER_TOKEN":
+            status = "pass" if configured else "warn"
+            detail = (
+                "configured"
+                if configured
+                else "missing; API routes remain in local compatibility mode"
+            )
+            required = False
+        elif key == "TELEGRAM_WEBHOOK_SECRET":
+            status = "pass" if configured else "warn"
+            detail = (
+                "configured"
+                if configured
+                else "missing; Telegram webhook secret validation is disabled"
+            )
+            required = False
+        elif key == "TELEGRAM_ALLOWED_CHAT_IDS":
+            status = "pass" if configured else "warn"
+            detail = (
+                "configured"
+                if configured
+                else "missing; Telegram accepts all chats after webhook authentication"
+            )
+            required = False
         else:
             status = "pass" if configured else "warn"
             detail = "configured" if configured else "missing; Telegram live transport is disabled"

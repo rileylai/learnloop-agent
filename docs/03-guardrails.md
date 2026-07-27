@@ -36,6 +36,7 @@ verification; it must not replace deterministic policy with prompt behavior.
 | Manual sync after manual edits | User manual Notion edits, deletes, and merges require `/api/notion/index/incremental`. |
 | Auto re-index after accept | Accepted agent appends must trigger immediate page re-index. |
 | No secret or raw private content logs | Never log secrets, API keys, or private raw source content. |
+| Caller trust boundaries | Enforce configured API bearer, Telegram webhook secret, and allowed-chat policy in deterministic backend code before business work. |
 
 ## Write Policy
 The only allowed AI write path is:
@@ -145,6 +146,7 @@ Use this checklist before demos and release-style local runs.
 | Secret files | `.env` and `.env.*` stay ignored by Git. Only `.env.example` may be tracked. |
 | Structured logs | Logs emit only approved request fields plus sanitized event text. |
 | API keys and tokens | Bearer tokens, API keys, and Telegram bot tokens must be redacted from logs and surfaced error messages. |
+| Caller authentication | Configured API bearer and Telegram webhook secret failures return deterministic 401/403 responses before workflow creation. |
 | Raw private source content | `raw_text` and `source_text` values must not appear in logs or surfaced error messages. |
 | Workflow metadata | Metadata may include workflow IDs, provider/model names, prompt version, token counts, and cost. It must not include secrets or raw source text. |
 | Production RAG | Development docs, `pending`, and `rejected` change requests remain excluded from production retrieval. |

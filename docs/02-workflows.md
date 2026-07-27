@@ -175,6 +175,7 @@ Rules:
 
 ```text
 POST /api/telegram/webhook
+-> Validate webhook secret and allowed chat policy
 -> Validate webhook payload
 -> Start workflow_run (workflow_type=telegram)
 -> Parse command from message text
@@ -191,6 +192,8 @@ Rules:
 - API route calls orchestrator only.
 - Route and orchestrator do not call Telegram API SDK/client directly.
 - Bot gateway keeps no ingestion/QA/review business logic in Step 32.
+- Secret and allowed-chat checks happen before a Telegram workflow starts; a
+  rejected caller does not create a workflow run or send a reply.
 
 ## Telegram Ingestion Workflow (Step 33)
 

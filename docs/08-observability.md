@@ -103,6 +103,8 @@ mode-specific provider configuration is unavailable.
 
 - Request logs stay minimal: `workflow_id`, path, method, status code, duration,
   and a short event name.
+- Trust-boundary failures use the same minimal request log shape and do not
+  create a workflow run before authentication or Telegram chat authorization.
 - Log formatter output must redact bearer tokens, API keys, Notion tokens,
   Telegram bot tokens, and other surfaced secret assignments.
 - Log formatter output must redact `raw_text` and `source_text` values because
@@ -122,6 +124,7 @@ mode-specific provider configuration is unavailable.
   `URL_FETCH_FAILED`, `YOUTUBE_TRANSCRIPT_NOT_FOUND`,
   `PROVIDER_NOT_FOUND`, `LLM_PROVIDER_ERROR`, `LLM_OUTPUT_INVALID`,
   `EMBEDDING_PROVIDER_NOT_CONFIGURED`, `EMBEDDING_PROVIDER_ERROR`,
+  `AUTHENTICATION_FAILED`, `AUTHORIZATION_FAILED`,
   `VECTOR_DIMENSION_MISMATCH`, `VECTOR_QUERY_FAILED`,
   `VECTOR_UPSERT_FAILED`, `TELEGRAM_NOT_CONFIGURED`,
   `TELEGRAM_SEND_FAILED`, `TELEGRAM_FILE_DOWNLOAD_FAILED`, and

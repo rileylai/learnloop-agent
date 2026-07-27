@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Optional, Tuple
 
-from fastapi import Depends
+from fastapi import Depends, Header, HTTPException
 
 from src.app.config import (
     NOTION_BACKEND_LIVE,
@@ -25,7 +25,13 @@ from src.providers import (
     OpenAIEmbeddingClient,
     ProviderRouter,
 )
-from src.services import CostTracker, PromptTemplateLoader, ReadinessService
+from src.services import (
+    CostTracker,
+    PromptTemplateLoader,
+    ReadinessService,
+    TrustBoundaryError,
+    TrustBoundaryService,
+)
 from src.tools import (
     DEFAULT_MOCK_NOTION_DATA_DIR,
     DisabledTelegramBotClient,
@@ -66,6 +72,34 @@ def get_readiness_service() -> ReadinessService:
         mode=settings.app_env,
         openai_configured=bool(settings.openai_api_key),
     )
+
+
+def get_trust_boundary() -> TrustBoundaryService:
+    settings = get_settings()
+    return TrustBoundaryService(
+        api_bearer_token=settings.api_bearer_token,
+        telegram_webhook_secret=settings.telegram_webhook_secret,
+        telegram_allowed_chat_ids=settings.telegram_allowed_chat_ids,
+    )
+
+
+def require_api_bearer_token(
+    authorization_header: Optional[str] = Header(default=None, alias="Authorization"),
+    trust_boundary: TrustBoundaryService = Depends(get_trust_boundary),
+) -> None:
+    try:
+        trust_boundary.require_api_bearer(authorization_header)
+    except TrustBoundaryError as exc:
+        raise HTTPException(
+            status_code=exc.http_status_code,
+            detail={
+                "error_code": exc.error_code,
+                "message": exc.message,
+                "failure_reason": exc.failure_reason,
+                "workflow_run_id": None,
+            },
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
 
 
 def _build_mock_notion_clients(

@@ -10,7 +10,7 @@ _TELEGRAM_BOT_URL_PATTERN = re.compile(
     r"(?i)(https://api\.telegram\.org/(?:file/)?bot)[^/\s]+"
 )
 _SECRET_ASSIGNMENT_PATTERN = re.compile(
-    r"(?i)(?P<key>\b(?:openai_api_key|api_key|notion_token|telegram_bot_token|bot_token|authorization)\b)"
+    r"(?i)(?P<key>\b(?:openai_api_key|api_key|notion_token|telegram_bot_token|bot_token|authorization|api_bearer_token|telegram_webhook_secret)\b)"
     r"(?P<separator>\s*[:=]\s*)"
     r"(?P<value>Bearer\s+[^\s,}]+|\"[^\"]*\"|'[^']*'|[^,\s}]+)"
 )

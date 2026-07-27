@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from src.app.dependencies import (
@@ -10,6 +10,7 @@ from src.app.dependencies import (
     get_embedding_client,
     get_prompt_template_loader,
     get_provider_router,
+    get_trust_boundary,
     get_tool_registry,
 )
 from src.app.schemas import TelegramWebhookRequest, TelegramWebhookResponse
@@ -49,6 +50,8 @@ from src.services import (
     CostTracker,
     DuplicateKnowledgeChecker,
     PromptTemplateLoader,
+    TrustBoundaryError,
+    TrustBoundaryService,
     WorkflowRunService,
 )
 from src.tools import ToolRegistry
@@ -66,6 +69,7 @@ def _build_telegram_gateway_orchestrator(
     embedding_client: Optional[EmbeddingClient],
     cost_tracker: CostTracker,
     prompt_template_loader: PromptTemplateLoader,
+    trust_boundary: TrustBoundaryService,
 ) -> TelegramGatewayOrchestrator:
     workflow_run_service = WorkflowRunService(db_session_factory)
 
@@ -138,6 +142,7 @@ def _build_telegram_gateway_orchestrator(
         telegram_qa_orchestrator=telegram_qa_orchestrator,
         telegram_review_orchestrator=telegram_review_orchestrator,
         telegram_page_orchestrator=telegram_page_orchestrator,
+        trust_boundary=trust_boundary,
     )
 
 
@@ -153,7 +158,25 @@ async def handle_telegram_webhook(
     embedding_client: Optional[EmbeddingClient] = Depends(get_embedding_client),
     cost_tracker: CostTracker = Depends(get_cost_tracker),
     prompt_template_loader: PromptTemplateLoader = Depends(get_prompt_template_loader),
+    telegram_webhook_secret: Optional[str] = Header(
+        default=None,
+        alias="X-Telegram-Bot-Api-Secret-Token",
+    ),
+    trust_boundary: TrustBoundaryService = Depends(get_trust_boundary),
 ) -> TelegramWebhookResponse:
+    try:
+        trust_boundary.require_telegram_webhook_secret(telegram_webhook_secret)
+    except TrustBoundaryError as exc:
+        raise HTTPException(
+            status_code=exc.http_status_code,
+            detail={
+                "error_code": exc.error_code,
+                "message": exc.message,
+                "failure_reason": exc.failure_reason,
+                "workflow_run_id": None,
+            },
+        ) from exc
+
     orchestrator = _build_telegram_gateway_orchestrator(
         db_session=db_session,
         db_session_factory=db_session_factory,
@@ -163,6 +186,7 @@ async def handle_telegram_webhook(
         embedding_client=embedding_client,
         cost_tracker=cost_tracker,
         prompt_template_loader=prompt_template_loader,
+        trust_boundary=trust_boundary,
     )
     request_workflow_id = str(getattr(request.state, "workflow_id", ""))
     message = payload.message

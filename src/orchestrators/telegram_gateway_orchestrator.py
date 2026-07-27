@@ -26,6 +26,8 @@ from src.services import (
     STANDARD_FAILURE_REASONS,
     WorkflowRunAuditUpdateError,
     WorkflowRunService,
+    TrustBoundaryError,
+    TrustBoundaryService,
 )
 from src.tools import ToolContext, ToolRegistry
 
@@ -81,6 +83,7 @@ class TelegramGatewayOrchestrator:
         telegram_qa_orchestrator: Optional[TelegramQAOrchestrator] = None,
         telegram_review_orchestrator: Optional[TelegramReviewOrchestrator] = None,
         telegram_page_orchestrator: Optional[TelegramPageOrchestrator] = None,
+        trust_boundary: Optional[TrustBoundaryService] = None,
     ) -> None:
         self._tool_registry = tool_registry
         self._workflow_run_service = workflow_run_service
@@ -88,6 +91,7 @@ class TelegramGatewayOrchestrator:
         self._telegram_qa_orchestrator = telegram_qa_orchestrator
         self._telegram_review_orchestrator = telegram_review_orchestrator
         self._telegram_page_orchestrator = telegram_page_orchestrator
+        self._trust_boundary = trust_boundary
 
     async def handle_webhook(
         self,
@@ -100,6 +104,17 @@ class TelegramGatewayOrchestrator:
         photos: list[TelegramPhotoAttachment],
         request_workflow_id: str,
     ) -> TelegramGatewayResult:
+        if self._trust_boundary is not None:
+            try:
+                self._trust_boundary.require_allowed_telegram_chat(chat_id)
+            except TrustBoundaryError as exc:
+                raise TelegramGatewayError(
+                    error_code=exc.error_code,
+                    message=exc.message,
+                    http_status_code=exc.http_status_code,
+                    failure_reason=exc.failure_reason,
+                ) from exc
+
         workflow_run = self._workflow_run_service.start_workflow(
             workflow_type="telegram",
             metadata_json=json.dumps(

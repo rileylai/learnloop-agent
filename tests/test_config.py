@@ -16,6 +16,9 @@ def test_settings_load_without_optional_env(monkeypatch) -> None:
         "NOTION_TOKEN",
         "OPENAI_API_KEY",
         "TELEGRAM_BOT_TOKEN",
+        "API_BEARER_TOKEN",
+        "TELEGRAM_WEBHOOK_SECRET",
+        "TELEGRAM_ALLOWED_CHAT_IDS",
     ]
     for key in env_keys:
         monkeypatch.delenv(key, raising=False)
@@ -32,6 +35,9 @@ def test_settings_load_without_optional_env(monkeypatch) -> None:
     assert settings.notion_token is None
     assert settings.openai_api_key is None
     assert settings.telegram_bot_token is None
+    assert settings.api_bearer_token is None
+    assert settings.telegram_webhook_secret is None
+    assert settings.telegram_allowed_chat_ids == frozenset()
 
 
 def test_settings_load_with_env_override(monkeypatch) -> None:
@@ -44,6 +50,9 @@ def test_settings_load_with_env_override(monkeypatch) -> None:
     monkeypatch.setenv("NOTION_TOKEN", "placeholder-notion-token")
     monkeypatch.setenv("OPENAI_API_KEY", "placeholder-openai-key")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "placeholder-telegram-token")
+    monkeypatch.setenv("API_BEARER_TOKEN", "placeholder-api-token")
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "placeholder-webhook-secret")
+    monkeypatch.setenv("TELEGRAM_ALLOWED_CHAT_IDS", "555, -100123, 555")
 
     _clear_settings_cache()
     settings = get_settings()
@@ -57,3 +66,6 @@ def test_settings_load_with_env_override(monkeypatch) -> None:
     assert settings.notion_token == "placeholder-notion-token"
     assert settings.openai_api_key == "placeholder-openai-key"
     assert settings.telegram_bot_token == "placeholder-telegram-token"
+    assert settings.api_bearer_token == "placeholder-api-token"
+    assert settings.telegram_webhook_secret == "placeholder-webhook-secret"
+    assert settings.telegram_allowed_chat_ids == frozenset({"555", "-100123"})

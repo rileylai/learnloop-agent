@@ -1,7 +1,7 @@
 from time import perf_counter
 from uuid import uuid4
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from src.app.api import (
@@ -13,6 +13,7 @@ from src.app.api import (
     telegram_router,
 )
 from src.app.config import get_settings
+from src.app.dependencies import require_api_bearer_token
 from src.observability.logger import configure_logging, get_logger
 from src.services import WorkflowRunAuditUpdateError
 
@@ -21,11 +22,13 @@ configure_logging(settings.log_level)
 request_logger = get_logger("learnloop.request")
 
 app = FastAPI(title="LearnLoop Agent")
-app.include_router(notion_index_router)
+protected_api_dependency = [Depends(require_api_bearer_token)]
+
+app.include_router(notion_index_router, dependencies=protected_api_dependency)
 app.include_router(ops_router)
-app.include_router(qa_router)
-app.include_router(source_ingest_router)
-app.include_router(supplement_router)
+app.include_router(qa_router, dependencies=protected_api_dependency)
+app.include_router(source_ingest_router, dependencies=protected_api_dependency)
+app.include_router(supplement_router, dependencies=protected_api_dependency)
 app.include_router(telegram_router)
 
 

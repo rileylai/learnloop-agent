@@ -199,6 +199,7 @@ Telegram Bot
   ↓
 Agent Gateway
   - auth
+  - Telegram webhook secret and allowed-chat policy
   - request parsing
   - source type detection
   - idempotency key
@@ -527,6 +528,17 @@ Metadata note:
 | Method | Endpoint | Description |
 |---|---|---|
 | POST | `/api/telegram/webhook` | Handle Telegram webhook update for `/help`, `/health`, `/pages`, target-aware `/ingest`, scoped `/ask` QA, and command-based accept/reject review. |
+
+Trust boundary rules:
+- API routes under `/api` use `Authorization: Bearer <API_BEARER_TOKEN>` when
+  `API_BEARER_TOKEN` is configured. `/health` and `/ready` remain public ops
+  surfaces.
+- The Telegram webhook uses
+  `X-Telegram-Bot-Api-Secret-Token` when `TELEGRAM_WEBHOOK_SECRET` is
+  configured, then applies the optional comma-separated
+  `TELEGRAM_ALLOWED_CHAT_IDS` policy before starting a workflow.
+- Authentication and chat authorization stay deterministic backend checks and
+  never depend on an LLM response.
 
 Production-RAG invariant:
 - `pending` and `rejected` change requests are never used in production RAG.
