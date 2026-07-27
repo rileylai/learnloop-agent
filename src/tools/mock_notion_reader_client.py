@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Optional
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
@@ -50,6 +51,7 @@ class _MockPagePayload(BaseModel):
     page_id: str = Field(min_length=1)
     title: str = Field(min_length=1)
     notion_path: str = Field(min_length=1)
+    last_edited_time: Optional[datetime] = None
     demo_metadata: _MockPageMetadata
     blocks: List[_MockBlockPayload] = Field(default_factory=list)
 
@@ -112,6 +114,7 @@ def _load_mock_page_tree(json_path: Path) -> NotionPageTree:
         page_id=payload.page_id,
         title=payload.title,
         notion_path=payload.notion_path,
+        last_edited_time=payload.last_edited_time,
         blocks=[_to_notion_block_node(block) for block in block_paths],
     )
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
@@ -18,6 +19,14 @@ class NotionWriterPageNotFoundError(NotionWriterClientError):
 
 class NotionWritePolicyViolationError(NotionWriterClientError):
     pass
+
+
+class NotionAppendVerificationError(NotionWriterClientError):
+    pass
+
+
+NOTION_APPEND_VERIFICATION_ATTEMPTS = 3
+NOTION_APPEND_IDENTITY_PREFIX = "LearnLoop Change Request: "
 
 
 @dataclass
@@ -56,6 +65,8 @@ class InMemoryAISupplementEntry:
     target_path: str
     idempotency_key: str
     section_lines: List[str]
+    appended_block_count: int
+    created_date_group: bool
 
 
 @dataclass
@@ -86,6 +97,14 @@ class NotionWriterClient:
     ) -> NotionAppendResult:
         raise NotImplementedError
 
+    def find_ai_supplement_by_identity(
+        self,
+        *,
+        page_id: str,
+        idempotency_key: str,
+    ) -> Optional[NotionAppendResult]:
+        raise NotImplementedError
+
 
 class InMemoryNotionWriterClient(NotionWriterClient):
     def __init__(self, pages: Dict[str, InMemoryNotionPageSnapshot]) -> None:
@@ -114,6 +133,13 @@ class InMemoryNotionWriterClient(NotionWriterClient):
         existing_result = self._idempotent_results.get(idempotency_scope)
         if existing_result is not None:
             return replace(existing_result, idempotent_replay=True)
+        durable_result = self.find_ai_supplement_by_identity(
+            page_id=request.page_id,
+            idempotency_key=request.idempotency_key,
+        )
+        if durable_result is not None:
+            self._idempotent_results[idempotency_scope] = durable_result
+            return durable_result
 
         target_path = (
             f"{normalized_page_path}/AI Supplement Zone/"
@@ -128,7 +154,7 @@ class InMemoryNotionWriterClient(NotionWriterClient):
             entry.append_date == request.append_date for entry in page.ai_supplement_entries
         )
         section_lines = self._build_section_lines(request=request)
-        appended_block_count = 5 + (1 if created_date_group else 0)
+        appended_block_count = 6 + (1 if created_date_group else 0)
 
         page.ai_supplement_entries.append(
             InMemoryAISupplementEntry(
@@ -142,6 +168,8 @@ class InMemoryNotionWriterClient(NotionWriterClient):
                 target_path=target_path,
                 idempotency_key=request.idempotency_key,
                 section_lines=section_lines,
+                appended_block_count=appended_block_count,
+                created_date_group=created_date_group,
             )
         )
         result = NotionAppendResult(
@@ -167,6 +195,32 @@ class InMemoryNotionWriterClient(NotionWriterClient):
         )
         return result
 
+    def find_ai_supplement_by_identity(
+        self,
+        *,
+        page_id: str,
+        idempotency_key: str,
+    ) -> Optional[NotionAppendResult]:
+        page = self._pages.get(page_id)
+        if page is None:
+            raise NotionWriterPageNotFoundError(
+                f"Notion page is not found: page_id={page_id}"
+            )
+
+        for entry in page.ai_supplement_entries:
+            if entry.idempotency_key != idempotency_key:
+                continue
+            return NotionAppendResult(
+                page_id=page_id,
+                change_request_id=entry.change_request_id,
+                target_path=entry.target_path,
+                appended_block_count=entry.appended_block_count,
+                created_date_group=entry.created_date_group,
+                idempotent_replay=True,
+                section_lines=list(entry.section_lines),
+            )
+        return None
+
     def get_page_snapshot(self, page_id: str) -> Optional[InMemoryNotionPageSnapshot]:
         return self._pages.get(page_id)
 
@@ -187,6 +241,7 @@ class InMemoryNotionWriterClient(NotionWriterClient):
             f"Summary: {request.summary}",
             f"Key Concepts: {concepts_text}",
             f"Notes: {notes_text}",
+            f"{NOTION_APPEND_IDENTITY_PREFIX}{request.idempotency_key}",
         ]
 
 
@@ -300,6 +355,10 @@ class NotionWriterTool(Tool):
             append_result = self._notion_writer_client.append_to_ai_supplement_zone(
                 request=request
             )
+            append_result = await self._verify_append_visibility(
+                request=request,
+                append_result=append_result,
+            )
         except NotionWriterPageNotFoundError as exc:
             return ToolResult.failure(
                 code="NOTION_PAGE_NOT_FOUND",
@@ -308,6 +367,11 @@ class NotionWriterTool(Tool):
         except NotionWritePolicyViolationError as exc:
             return ToolResult.failure(
                 code="WRITE_POLICY_VIOLATION",
+                message=str(exc),
+            )
+        except NotionAppendVerificationError as exc:
+            return ToolResult.failure(
+                code="NOTION_APPEND_NOT_VERIFIED",
                 message=str(exc),
             )
         except NotionWriterClientError as exc:
@@ -330,6 +394,33 @@ class NotionWriterTool(Tool):
                 "idempotent_replay": append_result.idempotent_replay,
                 "section_lines": append_result.section_lines,
             },
+        )
+
+    async def _verify_append_visibility(
+        self,
+        *,
+        request: NotionAppendRequest,
+        append_result: NotionAppendResult,
+    ) -> NotionAppendResult:
+        for attempt in range(NOTION_APPEND_VERIFICATION_ATTEMPTS):
+            visible_result = self._notion_writer_client.find_ai_supplement_by_identity(
+                page_id=request.page_id,
+                idempotency_key=request.idempotency_key,
+            )
+            if visible_result is not None:
+                if visible_result.change_request_id != request.change_request_id:
+                    raise NotionAppendVerificationError(
+                        "Notion append identity belongs to a different change request"
+                    )
+                return replace(
+                    visible_result,
+                    idempotent_replay=append_result.idempotent_replay,
+                )
+            if attempt < NOTION_APPEND_VERIFICATION_ATTEMPTS - 1:
+                await asyncio.sleep(0)
+
+        raise NotionAppendVerificationError(
+            "Notion append was not visible after bounded verification"
         )
 
     def _require_non_empty_string(self, arguments: Dict[str, Any], key: str) -> str:

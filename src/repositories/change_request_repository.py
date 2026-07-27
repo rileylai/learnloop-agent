@@ -48,6 +48,17 @@ class ChangeRequestRepository:
     def get_change_request_by_id(self, change_request_id: int) -> Optional[ChangeRequest]:
         return self._session.get(ChangeRequest, change_request_id)
 
+    def get_change_request_by_id_for_update(
+        self,
+        change_request_id: int,
+    ) -> Optional[ChangeRequest]:
+        return (
+            self._session.query(ChangeRequest)
+            .filter(ChangeRequest.id == change_request_id)
+            .with_for_update()
+            .one_or_none()
+        )
+
     def update_change_request_status(
         self,
         change_request_id: int,

@@ -9,7 +9,10 @@ from src.repositories.chunk_repository import (
     SemanticChunkMatch,
 )
 from src.repositories.notion_block_repository import NotionBlockRepository, NotionBlockSnapshot
-from src.repositories.notion_page_repository import NotionPageRepository
+from src.repositories.notion_page_repository import (
+    NotionPageRepository,
+    StaleNotionPageSnapshotError,
+)
 from src.repositories.source_document_repository import SourceDocumentRepository
 from src.repositories.workflow_run_repository import WorkflowRunRepository
 
@@ -25,6 +28,7 @@ __all__ = [
     "SemanticChunkMatch",
     "NotionBlockSnapshot",
     "NotionPageRepository",
+    "StaleNotionPageSnapshotError",
     "SourceDocumentRepository",
     "WorkflowRunRepository",
 ]

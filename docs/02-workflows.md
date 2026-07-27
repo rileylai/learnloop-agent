@@ -64,8 +64,8 @@ Rules:
 NotionWriterTool (local tool adapter)
 -> Validate append arguments (page_id/change_request_id/topic/source/summary/concepts/notes)
 -> Build append target under AI Supplement Zone
--> Apply idempotency key per page/change request
--> Append fixed supplement lines only
+-> Apply durable identity `change-request-<id>` per page/change request
+-> Append the identity line plus fixed supplement content lines
 -> Return append metadata (target path, block count, idempotent replay flag)
 ```
 
@@ -73,7 +73,10 @@ Rules:
 - The tool exposes append-only behavior; there is no update or delete operation.
 - The append target must stay under `AI Supplement Zone`.
 - Existing page content stays unchanged; only new supplement entries are appended.
-- Idempotency prevents duplicate append entries on retry with the same idempotency key.
+- The visible identity is the durable idempotency record; retry detection must
+  not depend only on in-memory client state.
+- The writer performs bounded read-after-write verification before returning
+  append success. An unverified append fails closed for safe retry.
 
 ## Accept + Append + Re-index Workflow (Step 31)
 
@@ -85,18 +88,29 @@ POST /api/supplement/accept
 -> Enforce legal transition from pending state
 -> Validate accepted write preconditions (target page + proposal payload)
 -> Append to AI Supplement Zone through NotionWriterTool
--> Trigger immediate page re-index (sync_mode=auto_after_accept)
--> Update change request status to accepted
+-> Verify append visibility by durable change-request identity
+-> Prepare the page re-index snapshot outside the DB transaction
+-> Open one business transaction
+   - Reload and lock the change request with `SELECT ... FOR UPDATE`
+   - Revalidate that status is still `pending`
+   - Persist page/block/chunk replacement
+   - Update change request status to `accepted`
 -> Mark workflow succeeded
 ```
 
 Failure path:
 - If target page is missing, fail closed with `WRITE_POLICY_VIOLATION`.
-- If append fails or re-index fails, mark workflow failed and keep change request `pending` for safe retry.
+- If append fails, append visibility cannot be verified, or re-index fails,
+  mark workflow failed and keep change request `pending` for safe retry.
+- A retry after a durable append reuses the existing Notion supplement and
+  never creates a duplicate entry.
 
 Rules:
 - Accept path must follow `Change Request -> Human Accept -> Append to AI Supplement Zone`.
-- Accepted status is committed only after append and re-index both succeed.
+- Accepted status is committed only after append visibility is verified and
+  the page re-index mutation set commits in the same business transaction.
+- Concurrent accept attempts revalidate `pending` while holding the row lock;
+  only one attempt may commit `accepted`.
 - Reject and edit-later paths keep Step 29 behavior and do not call Notion write adapters.
 
 ## Telegram Entrypoint Workflow (Step 32)
@@ -213,3 +227,16 @@ Rules:
 - Telegram gateway metadata records review action/status/workflow id only, not
   the reject reason.
 - Inline review buttons remain deferred.
+
+## Same-page Snapshot Safety (Step 62)
+
+- The reader includes the Notion page `last_edited_time` in every page snapshot
+  when the source provides it.
+- Page persistence takes a PostgreSQL transaction-scoped advisory lock keyed by
+  the stable Notion page id before checking the stored snapshot.
+- A prepared snapshot with an older non-NULL `last_edited_time` fails with
+  `STALE_PAGE_SNAPSHOT` before blocks or chunks are replaced.
+- Legacy rows with a NULL timestamp accept the first timestamped snapshot;
+  timestamp-less legacy readers do not erase an existing timestamp.
+- SQLite test backends skip the PostgreSQL-only advisory lock but exercise the
+  same deterministic stale-snapshot comparison.

@@ -27,6 +27,9 @@ def test_pgvector_migration_upgrades_and_downgrades_fresh_sqlite_db(
 
     engine = create_engine(database_url)
     inspector = inspect(engine)
+    notion_page_columns = {
+        column["name"]: column for column in inspector.get_columns("notion_pages")
+    }
     column_names = {column["name"] for column in inspector.get_columns("knowledge_chunks")}
     knowledge_chunk_indexes = {
         index["name"] for index in inspector.get_indexes("knowledge_chunks")
@@ -37,6 +40,7 @@ def test_pgvector_migration_upgrades_and_downgrades_fresh_sqlite_db(
 
     assert "embedding" in column_names
     assert "embedding_text" in column_names
+    assert notion_page_columns["last_edited_time"]["nullable"] is True
     assert "ix_knowledge_chunks_source_kind" in knowledge_chunk_indexes
     assert "ix_knowledge_chunks_notion_block_id" in knowledge_chunk_indexes
     assert "ix_knowledge_chunks_notion_path" in knowledge_chunk_indexes

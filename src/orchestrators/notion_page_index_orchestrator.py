@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from http import HTTPStatus
 from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field, ValidationError
 
-from src.db.unit_of_work import UnitOfWorkFactory
+from src.db.unit_of_work import SqlAlchemyUnitOfWork, UnitOfWorkFactory
 from src.providers import EmbeddingClient, EmbeddingClientError, EmbeddingRequest
 from src.rag import (
     BlockPathNode,
@@ -21,6 +22,7 @@ from src.repositories import (
     ChunkRepositoryError,
     NotionBlockSnapshot,
     NotionChunkUpsert,
+    StaleNotionPageSnapshotError,
 )
 from src.services import CostTracker, STANDARD_FAILURE_REASONS, WorkflowRunService
 from src.tools import ToolContext, ToolRegistry
@@ -56,11 +58,20 @@ class NotionIndexedPageSnapshot:
     notion_path: str
     indexed_block_count: int
     indexed_chunk_count: int
+    last_edited_time: Optional[datetime] = None
     embedding_provider: Optional[str] = None
     embedding_model: Optional[str] = None
     embedding_dimensions: Optional[int] = None
     embedding_token_input: Optional[int] = None
     embedding_estimated_cost: Optional[float] = None
+
+
+@dataclass
+class PreparedNotionPageSnapshot:
+    page_payload: _ToolPagePayload
+    block_paths: List[BlockPathSnapshot]
+    chunk_upserts: List[NotionChunkUpsert]
+    embedding_metadata: Dict[str, Optional[object]]
 
 
 class NotionPageIndexError(Exception):
@@ -85,6 +96,7 @@ class _ToolPagePayload(BaseModel):
     page_id: str
     title: str
     notion_path: str
+    last_edited_time: Optional[datetime] = None
 
 
 class _ToolBlockPayload(BaseModel):
@@ -109,6 +121,71 @@ class NotionPageIndexOrchestrator:
         self._workflow_run_service = workflow_run_service
         self._embedding_client = embedding_client
         self._cost_tracker = cost_tracker
+
+    def start_indexing_workflow(
+        self,
+        *,
+        page_id: str,
+        request_workflow_id: str,
+        sync_mode: str,
+    ) -> int:
+        workflow_run = self._workflow_run_service.start_workflow(
+            workflow_type="indexing",
+            metadata_json=json.dumps(
+                {
+                    "sync_mode": sync_mode,
+                    "operation": "index_page",
+                    "page_id": page_id,
+                    "request_workflow_id": request_workflow_id,
+                },
+                sort_keys=True,
+            ),
+        )
+        return int(workflow_run.id)
+
+    def mark_indexing_workflow_succeeded(
+        self,
+        *,
+        workflow_run_id: int,
+        page_id: str,
+        sync_mode: str,
+        snapshot: NotionIndexedPageSnapshot,
+    ) -> None:
+        self._workflow_run_service.mark_workflow_succeeded(
+            workflow_run_id,
+            metadata_json=json.dumps(
+                self._build_success_metadata(
+                    operation="index_page",
+                    sync_mode=sync_mode,
+                    page_id=page_id,
+                    snapshot=snapshot,
+                ),
+                sort_keys=True,
+            ),
+        )
+
+    def mark_indexing_workflow_failed(
+        self,
+        *,
+        workflow_run_id: int,
+        page_id: str,
+        sync_mode: str,
+        error_code: str,
+        failure_reason: str,
+    ) -> None:
+        self._workflow_run_service.mark_workflow_failed(
+            workflow_run_id,
+            failure_reason=failure_reason,
+            metadata_json=json.dumps(
+                {
+                    "operation": "index_page",
+                    "sync_mode": sync_mode,
+                    "page_id": page_id,
+                    "error_code": error_code,
+                },
+                sort_keys=True,
+            ),
+        )
 
     async def index_page(
         self,
@@ -137,17 +214,10 @@ class NotionPageIndexOrchestrator:
                 failure_reason="UNKNOWN_ERROR",
             )
 
-        workflow_run = self._workflow_run_service.start_workflow(
-            workflow_type="indexing",
-            metadata_json=json.dumps(
-                {
-                    "sync_mode": normalized_sync_mode,
-                    "operation": "index_page",
-                    "page_id": normalized_page_id,
-                    "request_workflow_id": request_workflow_id,
-                },
-                sort_keys=True,
-            ),
+        workflow_run_id = self.start_indexing_workflow(
+            page_id=normalized_page_id,
+            request_workflow_id=request_workflow_id,
+            sync_mode=normalized_sync_mode,
         )
 
         try:
@@ -155,42 +225,30 @@ class NotionPageIndexOrchestrator:
                 page_id=normalized_page_id,
                 request_workflow_id=request_workflow_id,
             )
-            self._workflow_run_service.mark_workflow_succeeded(
-                workflow_run.id,
-                metadata_json=json.dumps(
-                    self._build_success_metadata(
-                        operation="index_page",
-                        sync_mode=normalized_sync_mode,
-                        page_id=normalized_page_id,
-                        snapshot=snapshot,
-                    ),
-                    sort_keys=True,
-                ),
+            self.mark_indexing_workflow_succeeded(
+                workflow_run_id=workflow_run_id,
+                page_id=normalized_page_id,
+                sync_mode=normalized_sync_mode,
+                snapshot=snapshot,
             )
         except NotionPageIndexError as exc:
-            self._workflow_run_service.mark_workflow_failed(
-                workflow_run.id,
+            self.mark_indexing_workflow_failed(
+                workflow_run_id=workflow_run_id,
+                page_id=normalized_page_id,
+                sync_mode=normalized_sync_mode,
+                error_code=exc.error_code,
                 failure_reason=exc.failure_reason,
-                metadata_json=json.dumps(
-                    {
-                        "operation": "index_page",
-                        "sync_mode": normalized_sync_mode,
-                        "page_id": normalized_page_id,
-                        "error_code": exc.error_code,
-                    },
-                    sort_keys=True,
-                ),
             )
             raise NotionPageIndexError(
                 error_code=exc.error_code,
                 message=exc.message,
                 http_status_code=exc.http_status_code,
                 failure_reason=exc.failure_reason,
-                workflow_run_id=workflow_run.id,
+                workflow_run_id=workflow_run_id,
             ) from exc
 
         return NotionPageIndexResult(
-            workflow_run_id=workflow_run.id,
+            workflow_run_id=workflow_run_id,
             status="succeeded",
             notion_page_id=snapshot.notion_page_id,
             page_title=snapshot.page_title,
@@ -204,6 +262,20 @@ class NotionPageIndexOrchestrator:
         page_id: str,
         request_workflow_id: str,
     ) -> NotionIndexedPageSnapshot:
+        prepared_snapshot = await self.prepare_page_snapshot(
+            page_id=page_id,
+            request_workflow_id=request_workflow_id,
+        )
+        return self.persist_prepared_page_snapshot(
+            prepared_snapshot=prepared_snapshot,
+        )
+
+    async def prepare_page_snapshot(
+        self,
+        *,
+        page_id: str,
+        request_workflow_id: str,
+    ) -> PreparedNotionPageSnapshot:
         normalized_page_id = page_id.strip()
         if not normalized_page_id:
             raise NotionPageIndexError(
@@ -262,7 +334,7 @@ class NotionPageIndexOrchestrator:
                     chunk_upserts=chunk_upserts,
                 )
 
-            snapshot = self._persist_indexed_page(
+            return PreparedNotionPageSnapshot(
                 page_payload=page_payload,
                 block_paths=block_paths,
                 chunk_upserts=embedded_chunk_upserts,
@@ -270,6 +342,40 @@ class NotionPageIndexOrchestrator:
             )
         except NotionPageIndexError:
             raise
+        except Exception as exc:
+            raise NotionPageIndexError(
+                error_code="INDEX_PAGE_PREPARATION_FAILED",
+                message=f"Failed to prepare indexed page: {exc}",
+                http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                failure_reason="UNKNOWN_ERROR",
+            ) from exc
+
+    def persist_prepared_page_snapshot(
+        self,
+        *,
+        prepared_snapshot: PreparedNotionPageSnapshot,
+        unit_of_work: Optional[SqlAlchemyUnitOfWork] = None,
+    ) -> NotionIndexedPageSnapshot:
+        try:
+            if unit_of_work is not None:
+                return self._persist_indexed_page_in_unit_of_work(
+                    prepared_snapshot=prepared_snapshot,
+                    unit_of_work=unit_of_work,
+                )
+            with self._unit_of_work_factory() as owned_unit_of_work:
+                return self._persist_indexed_page_in_unit_of_work(
+                    prepared_snapshot=prepared_snapshot,
+                    unit_of_work=owned_unit_of_work,
+                )
+        except NotionPageIndexError:
+            raise
+        except StaleNotionPageSnapshotError as exc:
+            raise NotionPageIndexError(
+                error_code="STALE_PAGE_SNAPSHOT",
+                message=str(exc),
+                http_status_code=HTTPStatus.CONFLICT,
+                failure_reason="STALE_PAGE_SNAPSHOT",
+            ) from exc
         except ChunkRepositoryError as exc:
             raise NotionPageIndexError(
                 error_code="VECTOR_UPSERT_FAILED",
@@ -285,7 +391,57 @@ class NotionPageIndexOrchestrator:
                 failure_reason="UNKNOWN_ERROR",
             ) from exc
 
-        return snapshot
+    def _persist_indexed_page_in_unit_of_work(
+        self,
+        *,
+        prepared_snapshot: PreparedNotionPageSnapshot,
+        unit_of_work: SqlAlchemyUnitOfWork,
+    ) -> NotionIndexedPageSnapshot:
+        page_payload = prepared_snapshot.page_payload
+        notion_page = unit_of_work.notion_pages.upsert_page_snapshot(
+            notion_page_id=page_payload.page_id,
+            title=page_payload.title,
+            notion_path=page_payload.notion_path,
+            last_edited_time=page_payload.last_edited_time,
+        )
+        unit_of_work.chunks.delete_page_chunks(
+            notion_page_db_id=notion_page.id,
+        )
+        inserted_blocks = unit_of_work.notion_blocks.replace_page_blocks(
+            notion_page_db_id=notion_page.id,
+            root_blocks=[
+                self._to_block_snapshot(block_snapshot)
+                for block_snapshot in prepared_snapshot.block_paths
+            ],
+        )
+        if prepared_snapshot.chunk_upserts:
+            unit_of_work.chunks.upsert_chunks(
+                notion_page_db_id=notion_page.id,
+                chunks=prepared_snapshot.chunk_upserts,
+            )
+
+        return NotionIndexedPageSnapshot(
+            notion_page_db_id=notion_page.id,
+            notion_page_id=notion_page.notion_page_id,
+            page_title=notion_page.title,
+            notion_path=notion_page.notion_path,
+            last_edited_time=notion_page.last_edited_time,
+            indexed_block_count=len(inserted_blocks),
+            indexed_chunk_count=len(prepared_snapshot.chunk_upserts),
+            embedding_provider=prepared_snapshot.embedding_metadata[
+                "embedding_provider"
+            ],
+            embedding_model=prepared_snapshot.embedding_metadata["embedding_model"],
+            embedding_dimensions=prepared_snapshot.embedding_metadata[
+                "embedding_dimensions"
+            ],
+            embedding_token_input=prepared_snapshot.embedding_metadata[
+                "embedding_token_input"
+            ],
+            embedding_estimated_cost=prepared_snapshot.embedding_metadata[
+                "embedding_estimated_cost"
+            ],
+        )
 
     def _persist_indexed_page(
         self,
@@ -295,42 +451,15 @@ class NotionPageIndexOrchestrator:
         chunk_upserts: List[NotionChunkUpsert],
         embedding_metadata: Dict[str, Optional[object]],
     ) -> NotionIndexedPageSnapshot:
-        with self._unit_of_work_factory() as unit_of_work:
-            notion_page = unit_of_work.notion_pages.upsert_page_snapshot(
-                notion_page_id=page_payload.page_id,
-                title=page_payload.title,
-                notion_path=page_payload.notion_path,
-            )
-            unit_of_work.chunks.delete_page_chunks(
-                notion_page_db_id=notion_page.id,
-            )
-            inserted_blocks = unit_of_work.notion_blocks.replace_page_blocks(
-                notion_page_db_id=notion_page.id,
-                root_blocks=[
-                    self._to_block_snapshot(block_snapshot)
-                    for block_snapshot in block_paths
-                ],
-            )
-            if chunk_upserts:
-                unit_of_work.chunks.upsert_chunks(
-                    notion_page_db_id=notion_page.id,
-                    chunks=chunk_upserts,
-                )
-
-            snapshot = NotionIndexedPageSnapshot(
-                notion_page_db_id=notion_page.id,
-                notion_page_id=notion_page.notion_page_id,
-                page_title=notion_page.title,
-                notion_path=notion_page.notion_path,
-                indexed_block_count=len(inserted_blocks),
-                indexed_chunk_count=len(chunk_upserts),
-                embedding_provider=embedding_metadata["embedding_provider"],
-                embedding_model=embedding_metadata["embedding_model"],
-                embedding_dimensions=embedding_metadata["embedding_dimensions"],
-                embedding_token_input=embedding_metadata["embedding_token_input"],
-                embedding_estimated_cost=embedding_metadata["embedding_estimated_cost"],
-            )
-        return snapshot
+        prepared_snapshot = PreparedNotionPageSnapshot(
+            page_payload=page_payload,
+            block_paths=block_paths,
+            chunk_upserts=chunk_upserts,
+            embedding_metadata=embedding_metadata,
+        )
+        return self.persist_prepared_page_snapshot(
+            prepared_snapshot=prepared_snapshot,
+        )
 
     def _http_status_for_tool_error(self, error_code: str) -> int:
         return TOOL_ERROR_TO_HTTP_STATUS.get(

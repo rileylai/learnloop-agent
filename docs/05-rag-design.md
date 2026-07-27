@@ -359,3 +359,14 @@ Rules:
   `retrieval_fallback_reason`, `embedding_provider`,
   `embedding_model`, `embedding_dimensions`, and
   `vector_distance_metric`.
+
+## Same-page Snapshot Safety (Step 62)
+
+- Build and embed the complete page snapshot before entering the short DB
+  transaction, then lock the page key before replacing stored blocks/chunks.
+- Compare timestamps in UTC. An older prepared snapshot is rejected with
+  `STALE_PAGE_SNAPSHOT`, so stale content cannot delete or replace current RAG
+  rows.
+- Existing pages with NULL `last_edited_time` are accepted deterministically;
+  a timestamp-less reader update preserves a timestamp already stored for the
+  page.

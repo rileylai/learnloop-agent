@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 
 from src.tools import (
     InMemoryNotionReaderClient,
@@ -19,6 +20,7 @@ def _sample_page_tree() -> NotionPageTree:
         page_id="page-nlp-week5",
         title="NLP Week 5",
         notion_path="Knowledge/NLP/Week5",
+        last_edited_time=datetime(2026, 7, 27, 12, tzinfo=timezone.utc),
         blocks=[
             NotionBlockNode(
                 block_id="blk-attention",
@@ -48,6 +50,10 @@ def test_notion_reader_tool_reads_block_tree_and_paths() -> None:
     assert result.is_error is False
     assert result.structured_content is not None
     assert result.structured_content["page"]["notion_path"] == "Knowledge/NLP/Week5"
+    assert (
+        result.structured_content["page"]["last_edited_time"]
+        == "2026-07-27T12:00:00+00:00"
+    )
     assert result.content is not None
     assert "Path: Knowledge/NLP/Week5" in result.content
     assert "path=Knowledge/NLP/Week5/Attention" in result.content

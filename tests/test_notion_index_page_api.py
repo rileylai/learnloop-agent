@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timezone
 from types import TracebackType
 from typing import Dict, Optional, Type
 
@@ -313,6 +314,90 @@ def _seed_existing_rollback_page(session_factory: SessionFactory) -> None:
             )
         )
         session.commit()
+    finally:
+        session.close()
+
+
+def _seed_existing_stale_page(session_factory: SessionFactory) -> None:
+    session: Session = session_factory()
+    try:
+        page = NotionPage(
+            id=41,
+            notion_page_id="page-stale",
+            title="Current Page",
+            notion_path="Knowledge/Current",
+            last_edited_time=datetime(2026, 7, 27, 12, tzinfo=timezone.utc),
+        )
+        session.add(page)
+        session.flush()
+        session.add(
+            NotionBlock(
+                id=42,
+                notion_block_id="blk-current",
+                notion_page_id=page.id,
+                parent_block_id=None,
+                block_type="paragraph",
+                content_text="Current content",
+                block_path="Knowledge/Current/Current content",
+                block_order=0,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+
+def test_index_page_snapshot_rejects_stale_reader_payload_without_replacement() -> None:
+    session_factory = _build_session_factory()
+    _seed_existing_stale_page(session_factory)
+    stale_tree = NotionPageTree(
+        page_id="page-stale",
+        title="Older Page",
+        notion_path="Knowledge/Older",
+        last_edited_time=datetime(2026, 7, 27, 11, tzinfo=timezone.utc),
+        blocks=[
+            NotionBlockNode(
+                block_id="blk-older",
+                block_type="paragraph",
+                content_text="Older content",
+                block_path="Knowledge/Older/Older content",
+            )
+        ],
+    )
+    orchestrator = NotionPageIndexOrchestrator(
+        tool_registry=_build_tool_registry({"page-stale": stale_tree}),
+        unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(session_factory),
+        workflow_run_service=WorkflowRunService(session_factory),
+        embedding_client=_FakeEmbeddingClient(),
+    )
+
+    with pytest.raises(NotionPageIndexError) as exc_info:
+        asyncio.run(
+            orchestrator.index_page_snapshot(
+                page_id="page-stale",
+                request_workflow_id="wf-stale",
+            )
+        )
+
+    assert exc_info.value.error_code == "STALE_PAGE_SNAPSHOT"
+    assert exc_info.value.http_status_code == 409
+
+    session = session_factory()
+    try:
+        page = (
+            session.query(NotionPage)
+            .filter(NotionPage.notion_page_id == "page-stale")
+            .one()
+        )
+        block = (
+            session.query(NotionBlock)
+            .filter(NotionBlock.notion_page_id == page.id)
+            .one()
+        )
+        assert page.title == "Current Page"
+        assert page.notion_path == "Knowledge/Current"
+        assert block.notion_block_id == "blk-current"
+        assert block.content_text == "Current content"
     finally:
         session.close()
 

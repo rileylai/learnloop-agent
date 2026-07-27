@@ -59,12 +59,17 @@ Original page/toggle/section
             - Summary: ...
             - Key Concepts: ...
             - Notes: ...
+            - LearnLoop Change Request: change-request-<id>
 ```
 
 Rules:
 - Do not create excessive nested toggles.
 - Group supplements by date, then topic.
-- The four fixed lines are `Source`, `Summary`, `Key Concepts`, and `Notes`.
+- The four fixed content lines are `Source`, `Summary`, `Key Concepts`, and `Notes`.
+- Every accepted supplement also includes a visible deterministic identity line:
+  `LearnLoop Change Request: change-request-<id>`.
+- The identity line is used for bounded read-after-write verification and
+  durable retry detection across writer/client instances.
 - `Source` display rules:
 - PDF: show PDF filename.
 - URL source: show full URL.
@@ -80,6 +85,9 @@ Change Request
 -> Human Accept
 -> Append to AI Supplement Zone
 -> Immediate page re-index job
+-> Verify the append is visible by its durable change-request identity
+-> In one DB transaction, lock and revalidate `pending`, persist the page
+   re-index mutation set, and set the change request to `accepted`
 -> New accepted supplement becomes available in production RAG
 ```
 

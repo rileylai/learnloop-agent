@@ -39,6 +39,13 @@ class SupplementReviewResult:
     reason: Optional[str]
 
 
+@dataclass
+class _AcceptMutationResult:
+    change_request_id: int
+    change_request_status: str
+    follow_up_metadata: Dict[str, Any]
+
+
 class SupplementReviewError(Exception):
     def __init__(
         self,
@@ -190,35 +197,19 @@ class SupplementReviewOrchestrator:
             follow_up_metadata: Dict[str, Any] = {}
             if review_action == REVIEW_ACTION_ACCEPT:
                 current_status = change_request.status.strip().lower()
-                next_status = self._resolve_next_status(
+                self._resolve_next_status(
                     review_action=review_action,
                     current_status=current_status,
                 )
-                follow_up_metadata = await self._append_and_reindex_after_accept(
+                accept_result = await self._append_and_reindex_after_accept(
                     change_request_id=change_request.id,
                     change_request_proposal_json=change_request.proposal_json,
                     target_notion_page_db_id=change_request.target_notion_page_id,
                     request_workflow_id=request_workflow_id,
                 )
-
-                with self._unit_of_work_factory() as unit_of_work:
-                    updated = unit_of_work.change_requests.update_change_request_status(
-                        change_request_id,
-                        status=next_status,
-                        failure_reason=None,
-                    )
-                    if updated is None:
-                        raise SupplementReviewError(
-                            error_code="CHANGE_REQUEST_NOT_FOUND",
-                            message=(
-                                "Change request is not found during update: "
-                                f"change_request_id={change_request_id}"
-                            ),
-                            http_status_code=HTTPStatus.NOT_FOUND,
-                            failure_reason="CHANGE_REQUEST_NOT_FOUND",
-                        )
-                    result_change_request_id = int(updated.id)
-                    result_change_request_status = updated.status
+                follow_up_metadata = accept_result.follow_up_metadata
+                result_change_request_id = accept_result.change_request_id
+                result_change_request_status = accept_result.change_request_status
             else:
                 with self._unit_of_work_factory() as unit_of_work:
                     change_request = unit_of_work.change_requests.get_change_request_by_id(
@@ -318,7 +309,7 @@ class SupplementReviewOrchestrator:
         change_request_proposal_json: str,
         target_notion_page_db_id: Optional[int],
         request_workflow_id: str,
-    ) -> Dict[str, Any]:
+    ) -> _AcceptMutationResult:
         if target_notion_page_db_id is None:
             raise SupplementReviewError(
                 error_code="WRITE_POLICY_VIOLATION",
@@ -363,13 +354,24 @@ class SupplementReviewOrchestrator:
             notes=proposal.notes,
         )
 
+        index_workflow_id = self._page_index_orchestrator.start_indexing_workflow(
+            page_id=notion_page.notion_page_id,
+            request_workflow_id=request_workflow_id,
+            sync_mode=SYNC_MODE_AUTO_AFTER_ACCEPT,
+        )
         try:
-            reindex_result = await self._page_index_orchestrator.index_page(
+            prepared_snapshot = await self._page_index_orchestrator.prepare_page_snapshot(
                 page_id=notion_page.notion_page_id,
                 request_workflow_id=request_workflow_id,
-                sync_mode=SYNC_MODE_AUTO_AFTER_ACCEPT,
             )
         except NotionPageIndexError as exc:
+            self._page_index_orchestrator.mark_indexing_workflow_failed(
+                workflow_run_id=index_workflow_id,
+                page_id=notion_page.notion_page_id,
+                sync_mode=SYNC_MODE_AUTO_AFTER_ACCEPT,
+                error_code=exc.error_code,
+                failure_reason=self._normalize_failure_reason(exc.failure_reason),
+            )
             raise SupplementReviewError(
                 error_code="PAGE_REINDEX_FAILED",
                 message=f"Failed to re-index appended page: {exc.message}",
@@ -377,15 +379,107 @@ class SupplementReviewOrchestrator:
                 failure_reason=self._normalize_failure_reason(exc.failure_reason),
             ) from exc
 
-        return {
-            "append_result": append_result,
-            "reindex_result": {
-                "workflow_run_id": reindex_result.workflow_run_id,
-                "status": reindex_result.status,
-                "page_id": reindex_result.notion_page_id,
-                "indexed_block_count": reindex_result.indexed_block_count,
+        try:
+            with self._unit_of_work_factory() as unit_of_work:
+                locked_change_request = (
+                    unit_of_work.change_requests.get_change_request_by_id_for_update(
+                        change_request_id
+                    )
+                )
+                if locked_change_request is None:
+                    raise SupplementReviewError(
+                        error_code="CHANGE_REQUEST_NOT_FOUND",
+                        message=(
+                            "Change request is not found during accept revalidation: "
+                            f"change_request_id={change_request_id}"
+                        ),
+                        http_status_code=HTTPStatus.NOT_FOUND,
+                        failure_reason="CHANGE_REQUEST_NOT_FOUND",
+                    )
+
+                self._resolve_next_status(
+                    review_action=REVIEW_ACTION_ACCEPT,
+                    current_status=locked_change_request.status.strip().lower(),
+                )
+                reindex_result = self._page_index_orchestrator.persist_prepared_page_snapshot(
+                    prepared_snapshot=prepared_snapshot,
+                    unit_of_work=unit_of_work,
+                )
+                updated = unit_of_work.change_requests.update_change_request_status(
+                    change_request_id,
+                    status=CHANGE_REQUEST_STATUS_ACCEPTED,
+                    failure_reason=None,
+                )
+                if updated is None:
+                    raise SupplementReviewError(
+                        error_code="CHANGE_REQUEST_NOT_FOUND",
+                        message=(
+                            "Change request is not found during accept update: "
+                            f"change_request_id={change_request_id}"
+                        ),
+                        http_status_code=HTTPStatus.NOT_FOUND,
+                        failure_reason="CHANGE_REQUEST_NOT_FOUND",
+                    )
+                result_change_request_id = int(updated.id)
+                result_change_request_status = updated.status
+        except NotionPageIndexError as exc:
+            self._page_index_orchestrator.mark_indexing_workflow_failed(
+                workflow_run_id=index_workflow_id,
+                page_id=notion_page.notion_page_id,
+                sync_mode=SYNC_MODE_AUTO_AFTER_ACCEPT,
+                error_code=exc.error_code,
+                failure_reason=self._normalize_failure_reason(exc.failure_reason),
+            )
+            raise SupplementReviewError(
+                error_code="PAGE_REINDEX_FAILED",
+                message=f"Failed to re-index appended page: {exc.message}",
+                http_status_code=exc.http_status_code,
+                failure_reason=self._normalize_failure_reason(exc.failure_reason),
+            ) from exc
+        except SupplementReviewError as exc:
+            self._page_index_orchestrator.mark_indexing_workflow_failed(
+                workflow_run_id=index_workflow_id,
+                page_id=notion_page.notion_page_id,
+                sync_mode=SYNC_MODE_AUTO_AFTER_ACCEPT,
+                error_code=exc.error_code,
+                failure_reason=self._normalize_failure_reason(exc.failure_reason),
+            )
+            raise
+        except Exception as exc:
+            self._page_index_orchestrator.mark_indexing_workflow_failed(
+                workflow_run_id=index_workflow_id,
+                page_id=notion_page.notion_page_id,
+                sync_mode=SYNC_MODE_AUTO_AFTER_ACCEPT,
+                error_code="PAGE_REINDEX_FAILED",
+                failure_reason="UNKNOWN_ERROR",
+            )
+            raise SupplementReviewError(
+                error_code="PAGE_REINDEX_FAILED",
+                message=f"Failed to re-index appended page: {exc}",
+                http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                failure_reason="UNKNOWN_ERROR",
+            ) from exc
+
+        self._page_index_orchestrator.mark_indexing_workflow_succeeded(
+            workflow_run_id=index_workflow_id,
+            page_id=notion_page.notion_page_id,
+            sync_mode=SYNC_MODE_AUTO_AFTER_ACCEPT,
+            snapshot=reindex_result,
+        )
+
+        return _AcceptMutationResult(
+            change_request_id=result_change_request_id,
+            change_request_status=result_change_request_status,
+            follow_up_metadata={
+                "append_result": append_result,
+                "reindex_result": {
+                    "workflow_run_id": index_workflow_id,
+                    "status": "succeeded",
+                    "page_id": reindex_result.notion_page_id,
+                    "indexed_block_count": reindex_result.indexed_block_count,
+                },
             },
-        }
+        )
 
     async def _append_to_ai_supplement_zone(
         self,

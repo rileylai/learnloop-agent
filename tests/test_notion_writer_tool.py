@@ -61,6 +61,7 @@ def test_notion_writer_tool_appends_only_under_ai_supplement_zone() -> None:
         "Summary: Adds concise positional encoding notes for Week 5.",
         "Key Concepts: positional encoding; length generalization",
         "Notes: Compare sinusoidal and learned embeddings.",
+        "LearnLoop Change Request: change-request-21",
     ]
 
     page_snapshot = client.get_page_snapshot("page-nlp-week5")
@@ -104,6 +105,52 @@ def test_notion_writer_tool_is_idempotent_per_change_request() -> None:
     assert page_snapshot is not None
     assert len(page_snapshot.ai_supplement_entries) == 1
     assert len(client.list_operations(page_id="page-nlp-week5")) == 1
+
+
+def test_notion_writer_tool_detects_durable_append_with_fresh_client() -> None:
+    pages = {
+        "page-nlp-week5": InMemoryNotionPageSnapshot(
+            page_id="page-nlp-week5",
+            title="NLP Week 5",
+            notion_path="Knowledge/NLP/Week5",
+        )
+    }
+    first_client = InMemoryNotionWriterClient(pages)
+    first_tool = NotionWriterTool(first_client)
+    arguments = {
+        "page_id": "page-nlp-week5",
+        "change_request_id": 23,
+        "topic_title": "Durable Identity",
+        "source_display_name": "source",
+        "summary": "The identity survives a client restart.",
+        "concepts": ["retry safety"],
+        "notes": [],
+        "append_date": "2026-05-27",
+    }
+
+    first = asyncio.run(
+        first_tool.run(
+            context=ToolContext(workflow_id="wf-append-005"),
+            arguments=arguments,
+        )
+    )
+
+    second_client = InMemoryNotionWriterClient(pages)
+    second_tool = NotionWriterTool(second_client)
+    second = asyncio.run(
+        second_tool.run(
+            context=ToolContext(workflow_id="wf-append-006"),
+            arguments=arguments,
+        )
+    )
+
+    assert first.is_error is False
+    assert second.is_error is False
+    assert second.structured_content is not None
+    assert second.structured_content["idempotent_replay"] is True
+    assert len(pages["page-nlp-week5"].ai_supplement_entries) == 1
+    assert first_client.list_operations(page_id="page-nlp-week5")
+    assert second_client.list_operations(page_id="page-nlp-week5") == []
 
 
 def test_notion_writer_tool_returns_not_found_for_missing_page() -> None:

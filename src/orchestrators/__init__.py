@@ -25,6 +25,7 @@ from src.orchestrators.notion_page_index_orchestrator import (
     NotionPageIndexError,
     NotionPageIndexOrchestrator,
     NotionPageIndexResult,
+    PreparedNotionPageSnapshot,
 )
 from src.orchestrators.qa_orchestrator import (
     QAOrchestrator,
@@ -113,6 +114,7 @@ __all__ = [
     "NotionPageIndexError",
     "NotionPageIndexOrchestrator",
     "NotionPageIndexResult",
+    "PreparedNotionPageSnapshot",
     "QACitationResult",
     "QAOrchestrator",
     "QAOrchestratorError",

@@ -45,7 +45,16 @@ Rules:
 - `rejected` change requests stay available for audit and evaluation only and are excluded from production RAG.
 - `accepted` change requests may be appended only to `AI Supplement Zone`.
 - The agent may append accepted content, but must not update or delete original blocks or old AI supplement blocks.
-- If a retry happens after an accepted append, idempotency must prevent duplicate writes.
+- Accepted supplement content includes a visible deterministic identity line
+  (`LearnLoop Change Request: change-request-<id>`).
+- The writer must verify that identity is visible after append using a bounded
+  read-after-write check. If verification fails, the workflow fails closed and
+  keeps the change request retryable.
+- If a retry happens after an append or a lost writer response, durable identity
+  detection must prevent duplicate writes even with a fresh client instance.
+- The accept transaction must reload and lock the change request, revalidate
+  `pending`, persist the page re-index mutation set, and update `accepted` in
+  one business transaction. This does not claim cross-system atomicity with Notion.
 
 ## Manual Notion Edits
 Users may manually edit Notion because Notion is the source of truth.

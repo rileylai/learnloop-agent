@@ -28,6 +28,7 @@ from src.db.session import get_db_session, get_db_session_factory, get_unit_of_w
 from src.db.unit_of_work import SqlAlchemyUnitOfWork
 from src.providers import (
     EmbeddingClient,
+    EmbeddingClientError,
     EmbeddingRequest,
     EmbeddingResponse,
     LLMProvider,
@@ -130,6 +131,17 @@ class _FakeEmbeddingClient(EmbeddingClient):
             embeddings=embeddings,
             token_input=len(request.inputs) * 10,
         )
+
+
+class _FailOnceEmbeddingClient(_FakeEmbeddingClient):
+    def __init__(self) -> None:
+        self._failed = False
+
+    async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
+        if not self._failed:
+            self._failed = True
+            raise EmbeddingClientError("injected re-index failure")
+        return await super().embed(request)
 
 
 def _build_review_tool_registry(
@@ -798,6 +810,104 @@ def test_supplement_accept_api_requires_target_page_for_safe_append() -> None:
             assert len(indexing_runs) == 0
         finally:
             verify_session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_supplement_accept_retry_reuses_verified_append_after_reindex_failure() -> None:
+    session_factory = _build_session_factory()
+    seed_session = session_factory()
+    snapshot_pages = {
+        "page-accept-retry": InMemoryNotionPageSnapshot(
+            page_id="page-accept-retry",
+            title="Retry Page",
+            notion_path="Knowledge/Retry",
+            original_blocks=["Original note remains unchanged."],
+        )
+    }
+    writer_client = InMemoryNotionWriterClient(snapshot_pages)
+    embedding_client = _FailOnceEmbeddingClient()
+    try:
+        _seed_notion_page(
+            seed_session,
+            page_db_id=112,
+            notion_page_id="page-accept-retry",
+            title="Retry Page",
+            notion_path="Knowledge/Retry",
+        )
+        _seed_change_request(
+            seed_session,
+            change_request_id=112,
+            status="pending",
+            target_notion_page_id=112,
+            proposal_json=json.dumps(
+                {
+                    "title": "Retryable Supplement",
+                    "target_path": "Knowledge/Retry/AI Supplement Zone/Retryable Supplement",
+                    "source": {
+                        "source_type": "chat_text",
+                        "source_display_name": "retry-source",
+                    },
+                    "summary": "A supplement that can be retried safely.",
+                    "concepts": ["durable append"],
+                    "notes": ["Do not duplicate the visible entry."],
+                }
+            ),
+        )
+    finally:
+        seed_session.close()
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _tool_registry_override() -> ToolRegistry:
+        registry = ToolRegistry()
+        registry.register_tool(
+            NotionReaderTool(_SnapshotBackedNotionReaderClient(snapshot_pages))
+        )
+        registry.register_tool(NotionWriterTool(writer_client))
+        return registry
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
+    app.dependency_overrides[get_tool_registry] = _tool_registry_override
+    app.dependency_overrides[get_embedding_client] = lambda: embedding_client
+
+    try:
+        client = TestClient(app)
+        first_response = client.post(
+            "/api/supplement/accept",
+            json={"change_request_id": 112, "reviewer": "retry-reviewer"},
+        )
+        assert first_response.status_code == 502
+        first_detail = first_response.json()["detail"]
+        assert first_detail["error_code"] == "PAGE_REINDEX_FAILED"
+
+        verify_session = session_factory()
+        try:
+            first_change_request = verify_session.get(ChangeRequest, 112)
+            assert first_change_request is not None
+            assert first_change_request.status == "pending"
+        finally:
+            verify_session.close()
+
+        second_response = client.post(
+            "/api/supplement/accept",
+            json={"change_request_id": 112, "reviewer": "retry-reviewer"},
+        )
+        assert second_response.status_code == 200
+        assert second_response.json()["change_request_status"] == "accepted"
+
+        page_snapshot = snapshot_pages["page-accept-retry"]
+        assert len(page_snapshot.ai_supplement_entries) == 1
+        assert len(writer_client.list_operations(page_id="page-accept-retry")) == 1
     finally:
         app.dependency_overrides.clear()
 

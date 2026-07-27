@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from src.tools.base import Tool
@@ -22,6 +23,7 @@ class NotionPageTree:
     title: str
     notion_path: str
     blocks: List[NotionBlockNode] = field(default_factory=list)
+    last_edited_time: Optional[datetime] = None
 
 
 class NotionReaderClient:
@@ -54,7 +56,17 @@ class NotionReaderTool(Tool):
                 "type": "object",
                 "required": ["page", "blocks", "printable_tree"],
                 "properties": {
-                    "page": {"type": "object"},
+                    "page": {
+                        "type": "object",
+                        "properties": {
+                            "page_id": {"type": "string"},
+                            "title": {"type": "string"},
+                            "notion_path": {"type": "string"},
+                            "last_edited_time": {
+                                "type": ["string", "null"],
+                            },
+                        },
+                    },
                     "blocks": {"type": "array"},
                     "printable_tree": {"type": "string"},
                 },
@@ -95,6 +107,11 @@ class NotionReaderTool(Tool):
                     "page_id": page_tree.page_id,
                     "title": page_tree.title,
                     "notion_path": page_tree.notion_path,
+                    "last_edited_time": (
+                        page_tree.last_edited_time.isoformat()
+                        if page_tree.last_edited_time is not None
+                        else None
+                    ),
                 },
                 "blocks": [self._block_to_dict(block) for block in page_tree.blocks],
                 "printable_tree": printable_tree,

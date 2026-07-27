@@ -1,3 +1,7 @@
+from datetime import datetime, timezone
+from unittest.mock import Mock
+
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -7,6 +11,7 @@ from src.repositories import (
     NotionBlockRepository,
     NotionBlockSnapshot,
     NotionPageRepository,
+    StaleNotionPageSnapshotError,
 )
 
 
@@ -39,6 +44,69 @@ def test_notion_page_repository_upsert_flushes_without_commit() -> None:
     session.rollback()
 
     assert session.query(NotionPage).count() == 0
+
+
+def test_notion_page_repository_rejects_stale_snapshot_before_mutation() -> None:
+    session = _build_test_session()
+    repository = NotionPageRepository(session)
+    current_time = datetime(2026, 7, 27, 12, tzinfo=timezone.utc)
+
+    repository.upsert_page_snapshot(
+        notion_page_id="page-stale",
+        title="Current",
+        notion_path="Knowledge/Current",
+        last_edited_time=current_time,
+    )
+
+    with pytest.raises(StaleNotionPageSnapshotError):
+        repository.upsert_page_snapshot(
+            notion_page_id="page-stale",
+            title="Older snapshot",
+            notion_path="Knowledge/Older",
+            last_edited_time=datetime(2026, 7, 27, 11, tzinfo=timezone.utc),
+        )
+
+    page = repository.get_by_notion_page_id("page-stale")
+    assert page is not None
+    assert page.title == "Current"
+    assert page.notion_path == "Knowledge/Current"
+
+
+def test_notion_page_repository_preserves_timestamp_for_legacy_null_snapshot() -> None:
+    session = _build_test_session()
+    repository = NotionPageRepository(session)
+    current_time = datetime(2026, 7, 27, 12, tzinfo=timezone.utc)
+
+    repository.upsert_page_snapshot(
+        notion_page_id="page-legacy-null",
+        title="Current",
+        notion_path="Knowledge/Current",
+        last_edited_time=current_time,
+    )
+    repository.upsert_page_snapshot(
+        notion_page_id="page-legacy-null",
+        title="Legacy reader update",
+        notion_path="Knowledge/Current",
+    )
+
+    page = repository.get_by_notion_page_id("page-legacy-null")
+    assert page is not None
+    assert page.title == "Legacy reader update"
+    assert page.last_edited_time == current_time.replace(tzinfo=None)
+
+
+def test_notion_page_repository_uses_postgresql_transaction_advisory_lock() -> None:
+    session = Mock()
+    session.bind = Mock()
+    session.bind.dialect.name = "postgresql"
+    repository = NotionPageRepository(session)
+
+    repository.lock_page_for_reindex("page-lock")
+
+    statement, parameters = session.execute.call_args.args
+    assert "pg_advisory_xact_lock" in statement.text
+    assert "hashtextextended" in statement.text
+    assert parameters == {"notion_page_id": "page-lock"}
 
 
 def test_notion_block_repository_replace_flushes_without_commit() -> None:

@@ -47,6 +47,7 @@ Original page/toggle/section
             - Summary: ...
             - Key Concepts: ...
             - Notes: ...
+            - LearnLoop Change Request: change-request-<id>
 ```
 
 Rules:
@@ -62,6 +63,8 @@ The agent may create Notion blocks only when all conditions are true:
 - The target location is under `AI Supplement Zone`.
 - The operation is append-only.
 - The workflow can trigger immediate page re-index after append.
+- The appended entry includes a visible deterministic change-request identity
+  so retries can be reconciled against Notion as source of truth.
 
 The agent must not:
 - Edit original user notes.

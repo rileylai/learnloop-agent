@@ -38,6 +38,9 @@ What belongs here:
   `succeeded_page_ids`, `failed_page_id`, and `remaining_page_ids`, plus their
   counts and the zero-based `failed_page_index`. These fields contain page
   identifiers only, not page content.
+- A stale prepared page snapshot fails with `STALE_PAGE_SNAPSHOT`; this is a
+  deterministic concurrency-safety failure and is recorded before page block
+  or chunk replacement begins.
 
 ## Vector Retrieval Metadata
 
@@ -68,8 +71,8 @@ What belongs here:
 - Prefer specific external failure reasons over `UNKNOWN_ERROR` when the
   backend can deterministically classify the failure.
 - Current external API and tool reasons:
-  `NOTION_AUTH_FAILED`, `NOTION_PAGE_NOT_FOUND`,
-  `NOTION_BLOCK_FETCH_FAILED`, `OCR_FAILED`, `PDF_PARSE_FAILED`,
+  `NOTION_AUTH_FAILED`, `NOTION_PAGE_NOT_FOUND`, `NOTION_APPEND_NOT_VERIFIED`,
+  `NOTION_BLOCK_FETCH_FAILED`, `STALE_PAGE_SNAPSHOT`, `OCR_FAILED`, `PDF_PARSE_FAILED`,
   `URL_FETCH_FAILED`, `YOUTUBE_TRANSCRIPT_NOT_FOUND`,
   `PROVIDER_NOT_FOUND`, `LLM_PROVIDER_ERROR`, `LLM_OUTPUT_INVALID`,
   `EMBEDDING_PROVIDER_NOT_CONFIGURED`, `EMBEDDING_PROVIDER_ERROR`,
