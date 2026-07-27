@@ -102,6 +102,30 @@ Orchestrator contract:
 - Semantic vector top-k retrieval uses:
   `ProductionChunkRetriever -> ChunkRepository -> PostgreSQL + pgvector`.
 
+## Current Runtime Wiring and Readiness
+
+The architecture sections in this document describe both implemented
+boundaries and the target MVP integration shape. Current runtime wiring is:
+
+- `get_tool_registry()` registers a bundled JSON/in-memory Notion reader and a
+  separate empty in-memory Notion writer. There is no real Notion API adapter,
+  and `NOTION_TOKEN` is not consumed by a client.
+- Real OpenAI LLM and embedding adapters are registered only when
+  `OPENAI_API_KEY` is present. Shared page indexing requires the embedding
+  adapter and fails closed when it is absent.
+- PostgreSQL/pgvector repository paths and migrations exist. Their opt-in live
+  verification is separate from the default deterministic suite.
+- `RQQueueClient` exists behind `QueueClient`, but runtime dependencies do not
+  enqueue work and the repository has no worker entrypoint. Redis is therefore
+  not part of current request execution.
+- API and Telegram orchestration are synchronous and unauthenticated.
+- Parser and Telegram HTTP adapters exist, but external-service E2E remains
+  live verification work.
+
+These gaps are tracked in the `Real-World Usability + Release Hardening` phase
+of `dev_state/PROJECT_ROADMAP.md`. They must be closed through the existing
+provider, tool, queue, repository, and deterministic policy boundaries.
+
 ## Future MCP Server Boundary (Post-MVP)
 Tools that may be extracted into MCP servers later:
 

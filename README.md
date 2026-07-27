@@ -14,6 +14,38 @@ proposals from new learning sources, and writes accepted content only into
 - Append accepted content only under `AI Supplement Zone`.
 - Answer questions with RAG and Notion path citation.
 
+## Current readiness
+
+The repository is currently **demo-ready**, not local-user-ready or
+release-ready.
+
+Confirmed today:
+
+- The deterministic one-command mock demo runs without external credentials.
+- Core indexing, RAG, proposal, review, append-only, re-index, and Telegram
+  orchestration paths have deterministic tests with fake or in-memory
+  adapters.
+- PostgreSQL/pgvector schema and repository support exist.
+
+Not yet available as a real-user flow:
+
+- Runtime dependency wiring has no real Notion reader or writer adapter.
+  `NOTION_TOKEN` is loaded as a setting but is not used to create a Notion
+  client.
+- The default Notion reader uses bundled mock JSON, and the default writer is
+  a separate empty in-memory client.
+- Full Notion discovery/index status APIs, reviewable proposal list/detail,
+  external target-page selection, API/webhook authentication, a wired
+  Redis/RQ worker, readiness checks, and metrics are not implemented.
+- Telegram transport code is mock-tested, but the current `/ingest` flow does
+  not select a target Notion page, so a normal ingest-to-accept flow cannot
+  complete.
+- No complete real Notion indexing -> QA -> proposal -> accept -> append ->
+  re-index or Telegram E2E has been live-verified.
+
+See `dev_state/PROJECT_ROADMAP.md` for the local
+`Real-World Usability + Release Hardening` plan.
+
 ## Safety model
 
 - Existing Notion content is read-only for direct agent editing.
@@ -45,6 +77,9 @@ API Route -> Orchestrator -> Tool Registry -> Local Tool Adapter
 
 ### Architecture diagram
 
+This diagram shows the target MVP boundaries. The current runtime differences
+are listed in `Current readiness` above.
+
 ```mermaid
 flowchart TD
     USER["User or Telegram Bot"] --> API["FastAPI routes"]
@@ -54,10 +89,10 @@ flowchart TD
     PROVIDER --> LLM["OpenAI now; Claude or Gemini later"]
     ORCH --> TOOLS["Tool Registry"]
     TOOLS --> ADAPTERS["Local tool adapters in MVP"]
-    ADAPTERS --> NOTION["Notion API"]
+    ADAPTERS --> NOTION["Notion API after live adapter wiring"]
     ADAPTERS --> PARSERS["PDF / URL / OCR / YouTube parsers"]
     ORCH --> CORE["Repositories, QueueClient, and deterministic guardrails"]
-    CORE --> STORAGE["PostgreSQL, pgvector, Redis, workflow state"]
+    CORE --> STORAGE["PostgreSQL / pgvector; Redis after worker wiring"]
     NOTION --> SOURCE["Existing notes: read-only source of truth"]
     NOTION --> ZONE["AI Supplement Zone: append-only after accept"]
 ```
@@ -75,15 +110,18 @@ flowchart TD
 - Python 3.9+
 - [`uv`](https://docs.astral.sh/uv/)
 - Docker Desktop or Docker Engine with Compose
-- An OpenAI API key for the README QA demo
+- An OpenAI API key for server-backed indexing, QA, and proposal generation
 
 Notes:
 
-- `OPENAI_API_KEY` is required for the live `POST /api/qa` examples below.
-- Without `OPENAI_API_KEY`, indexing still works but `/api/qa` returns `PROVIDER_NOT_FOUND`.
+- `OPENAI_API_KEY` is required for the server-backed indexing examples because
+  indexing fails closed when chunk embeddings cannot be generated. It is also
+  required for live `POST /api/qa` and supplement proposal calls.
 - `NOTION_TOKEN` is not required for the mock demo flow.
+- Setting `NOTION_TOKEN` does not currently enable real Notion access because
+  the live reader/writer adapter and runtime wiring are not implemented.
 - `TELEGRAM_BOT_TOKEN` is not required for the mock demo flow.
-- Tesseract is only needed later for screenshot OCR, not for `/health` or mock QA.
+- Tesseract is required for screenshot OCR, but not for `/health` or mock QA.
 - The one-command demo script below does not require Docker, Postgres, or an OpenAI key.
 
 ## Quick start
@@ -126,8 +164,10 @@ set +a
 Optional:
 
 - `MOCK_NOTION_DATA_DIR` if you want a different mock data directory.
-- `NOTION_TOKEN` only when you later switch from mock pages to the real Notion API.
-- `TELEGRAM_BOT_TOKEN` only for Telegram webhook testing.
+- `NOTION_TOKEN` is reserved for a future real Notion adapter and has no
+  runtime effect today.
+- `TELEGRAM_BOT_TOKEN` enables Telegram HTTP send/download transport, but does
+  not by itself make the Telegram E2E user-ready.
 
 ### 3. Start local services
 
@@ -139,6 +179,10 @@ This starts:
 
 - PostgreSQL with pgvector on `localhost:5432`
 - Redis on `localhost:6379`
+
+The current API uses PostgreSQL/pgvector. Redis and the included QueueClient
+implementation are not wired into request execution yet, and there is no
+runtime worker process.
 
 ### 4. Run database migrations
 
@@ -163,6 +207,9 @@ Expected response:
 ```json
 { "status": "ok" }
 ```
+
+`/health` is a shallow liveness endpoint. It does not prove that PostgreSQL,
+Alembic migrations, pgvector, providers, Notion, Telegram, or Redis are ready.
 
 ## One-command demo script
 
@@ -275,6 +322,16 @@ Expected behavior:
 
 - MVP is local-only.
 - Telegram is the first user channel, but it is optional for the README demo.
+- The running API uses bundled mock Notion pages; real Notion access is not
+  wired.
+- Only one-page and caller-supplied incremental indexing routes exist. Full
+  discovery and index-status routes are planned.
+- Proposal review list/detail and a user-facing target-page selection flow are
+  missing.
+- The API and Telegram webhook do not yet enforce authentication or an allowed
+  chat list.
+- Long Telegram ingestion work is synchronous; no Redis/RQ worker is wired.
+- `/health` is liveness only; readiness and metrics endpoints are planned.
 - No direct original-note editing.
 - No standalone MCP server in MVP.
 - No always-on cloud sync.

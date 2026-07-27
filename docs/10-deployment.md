@@ -13,6 +13,34 @@ What belongs here:
 - Service dependency model.
 - Future cloud deployment architecture.
 
+## Current Deployment Readiness
+
+The repository is demo-ready, not local-user-ready or release-ready.
+
+- Docker Compose starts PostgreSQL/pgvector and Redis only. It does not define
+  the FastAPI app or a worker service.
+- `scripts/run_live.sh` delegates to a user-specific absolute secrets-wrapper
+  path and is not a portable clean-environment entrypoint.
+- The application reads process environment variables directly and does not
+  auto-load `.env`.
+- The running API requires PostgreSQL plus migrations for business routes.
+  `/health` remains successful even when those dependencies are unavailable.
+- Shared page indexing requires `OPENAI_API_KEY` because embeddings fail
+  closed. The one-command mock demo injects fake embeddings and is the only
+  no-key indexing path.
+- `NOTION_TOKEN` is present in settings but no real Notion adapter consumes it.
+- Redis/RQ classes exist, but runtime requests do not enqueue jobs and there is
+  no worker entrypoint.
+- Tesseract is required for OCR. Useful non-English OCR also requires matching
+  language data installed on the host.
+- Telegram live use additionally needs a bot token, public HTTPS webhook
+  delivery, webhook authentication, and an allowed-chat policy; the last two
+  are not implemented.
+
+Release-style local startup must remain blocked until portable preflight,
+readiness, live Notion wiring, authentication, worker, and recovery steps in
+the `Real-World Usability + Release Hardening` phase are complete.
+
 ## Local Secret Handling
 
 - Keep runtime secrets in local shell environment or ignored `.env` files only.

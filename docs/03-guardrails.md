@@ -13,6 +13,14 @@ It is not a production RAG source unless a future ADR and implementation explici
 These rules are based on `AGENTS.md`, `docs/00-design-doc.md`, `docs/01-architecture.md`, `docs/11-coding-style.md`, and the current project roadmap.
 Do not weaken these rules without updating the design docs and recording a decision.
 
+## Current Verification Boundary
+
+These invariants are confirmed by deterministic backend tests and in-memory
+Notion writer evaluations. They have not yet been verified against a real
+Notion writer because no live Notion adapter is wired. Live integration work
+must preserve every invariant below and add contract plus opt-in sandbox
+verification; it must not replace deterministic policy with prompt behavior.
+
 ## Safety Invariants
 | Guardrail | Rule |
 |---|---|

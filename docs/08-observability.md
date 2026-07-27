@@ -13,6 +13,27 @@ What belongs here:
 - Metrics definitions.
 - Workflow tracing and cost reporting.
 
+## Current Implementation Status
+
+Confirmed:
+
+- Structured request/workflow logs and secret/raw-text redaction exist.
+- LLM and embedding metadata can record per-workflow token and estimated cost.
+- Final workflow audit-update failure has a deterministic reconciliation
+  service method.
+
+Missing from the current operator surface:
+
+- `/metrics` and a metrics exporter.
+- A dependency-aware readiness endpoint.
+- A CLI, API, worker, or scheduler that invokes stale-running workflow
+  reconciliation.
+- Aggregate cost budgets, alerts, log persistence/rotation, tracing backend,
+  and recovery dashboards.
+
+The current `/health` endpoint is liveness only and always reports `ok`; it
+must not be used as release-readiness evidence.
+
 ## Workflow Metadata Notes
 
 - LLM-backed workflows record `provider_name`, `model`, `prompt_id`, and

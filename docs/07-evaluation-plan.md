@@ -6,6 +6,20 @@ This document defines retrieval hit rate, citation accuracy, write safety, and s
 ## Status
 Active for evaluation and regression steps.
 
+## Verification Levels
+
+Evaluation evidence must state its dependency level:
+
+| Level | Meaning | Current examples |
+|---|---|---|
+| `deterministic` | Fake/in-memory adapters and synthetic public-safe data. | Golden retrieval, citation, vector fallback, write safety, manual sync, mock demo. |
+| `adapter_integration` | Real parser/client library against controlled fixtures or mocked HTTP transport. | Partial coverage only; several parser and Telegram implementations still rely on fake clients in API tests. |
+| `live_dependency` | Real credential or service for one bounded dependency. | PostgreSQL/pgvector repository coverage exists; OpenAI vector smoke is opt-in and was not run in the latest audit. |
+| `live_e2e` | Real user flow across all required external systems. | None currently. |
+
+Passing deterministic tests must not be reported as proof of real Notion,
+OpenAI generation, Telegram, URL, YouTube, or OCR E2E readiness.
+
 ## Golden Question Set
 
 The versioned golden question set is stored at:
@@ -178,9 +192,14 @@ Purpose:
 - confirm repeated page re-index does not create duplicate chunk rows
 
 This smoke step intentionally keeps the answer provider deterministic and local.
+It also uses an in-memory Notion reader rather than the real Notion API.
 The live dependency under test is the vector path:
 
 `NotionPageIndexOrchestrator -> OpenAIEmbeddingClient -> ChunkRepository -> PostgreSQL + pgvector -> ProductionChunkRetriever -> QAOrchestrator citations`
+
+Therefore, a passing Step 55 smoke proves the embedding/storage/retrieval
+boundary only. It does not prove real Notion indexing, real LLM answer
+generation, proposal review, Notion append, or Telegram E2E.
 
 The smoke command creates a temporary database, runs the project's real
 Alembic migrations to `head`, then executes the live checks against that

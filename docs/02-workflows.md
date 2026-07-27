@@ -6,6 +6,18 @@ This document defines indexing, ingestion, review, append, sync, and QA workflow
 ## Status
 Draft
 
+## Current Verification Boundary
+
+The workflows below define implemented orchestration contracts, but most
+external boundaries are currently verified with fake or in-memory adapters.
+The runtime has no real Notion reader/writer wiring, no background worker, and
+no complete live Telegram flow. In particular, Telegram ingestion does not
+currently select a target Notion page, so its pending proposal cannot normally
+complete the accept path.
+
+The deterministic write policy, state-transition, transaction, RAG-exclusion,
+and retry rules remain mandatory when live adapters are added.
+
 This document will be expanded in later steps.
 
 What belongs here:

@@ -1,10 +1,41 @@
 # 09 API Contract
 
 ## Purpose
-This document defines planned API contracts and request/response examples.
+This document defines implemented API contracts, request/response examples,
+and explicit planned gaps.
 
 ## Status
-Draft
+Implemented routes with release-readiness gaps.
+
+## Implementation Status
+
+The following routes exist and have deterministic API tests:
+
+- `POST /api/notion/index/page`
+- `POST /api/notion/index/incremental`
+- `POST /api/ingest/source`, `/document`, `/url`, `/youtube`, `/chat-text`,
+  and `/image-ocr`
+- `POST /api/supplement/propose`, `/accept`, `/reject`, and `/edit-later`
+- `POST /api/qa`
+- `POST /api/telegram/webhook`
+
+Current contract gaps:
+
+- `/api/notion/index/full` and `/api/notion/index/status` are not implemented.
+- Notion index routes use the bundled mock reader in default runtime wiring;
+  there is no real Notion adapter.
+- Proposal list/detail APIs are missing, and proposal responses do not expose
+  enough content for a normal human review.
+- `target_notion_page_id` is an internal database identifier rather than a
+  user-facing external Notion page identifier.
+- API routes and the Telegram webhook are unauthenticated.
+- Telegram `/ingest` does not select a target Notion page, so its normal
+  `/accept` follow-up cannot complete.
+- `/health` is shallow liveness. `/ready` and `/metrics` are not implemented.
+
+Examples below document route schemas and deterministic tested behavior. They
+do not by themselves prove live Notion, Telegram, OpenAI, parser, or worker
+integration.
 
 ## Notion Index APIs
 
@@ -895,6 +926,9 @@ Notes:
 - Telegram chat id becomes the deterministic reviewer identity.
 - Inline review buttons are deferred.
 - Route and orchestrator do not call Telegram API directly.
-- Screenshot ingestion accepts multiple photo items and creates one screenshot-batch source document.
+- Within one Telegram update, photo entries are resolution variants of one
+  image and the gateway selects the largest variant. The current gateway does
+  not aggregate multiple updates sharing `media_group_id`, so a real
+  multi-screenshot album is not yet one screenshot-batch source.
 - `/ingest` creates `pending` change requests only; Notion append remains in accept workflow.
 - Telegram QA uses production Notion chunks only; pending and rejected proposals remain excluded.
