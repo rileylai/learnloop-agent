@@ -19,8 +19,14 @@ The repository is demo-ready, not local-user-ready or release-ready.
 
 - Docker Compose starts PostgreSQL/pgvector and Redis only. It does not define
   the FastAPI app or a worker service.
-- `scripts/run_live.sh` delegates to a user-specific absolute secrets-wrapper
-  path and is not a portable clean-environment entrypoint.
+- `scripts/run_live.sh` is a portable repository-relative API entrypoint. It
+  runs `scripts/preflight.py` first and then starts Uvicorn through the locked
+  `uv` environment with `--no-env-file`. It does not load `.env` or print
+  secret values.
+- `scripts/preflight.py` is stdlib-only so it can report missing Python
+  dependencies before importing the application. Its `api`, `test`, and `ocr`
+  profiles produce a redacted dependency/configuration matrix; only
+  profile-required missing items fail the command.
 - The application reads process environment variables directly and does not
   auto-load `.env`.
 - The running API requires PostgreSQL plus migrations for business routes.
@@ -40,6 +46,25 @@ The repository is demo-ready, not local-user-ready or release-ready.
 Release-style local startup must remain blocked until portable preflight,
 readiness, live Notion wiring, authentication, worker, and recovery steps in
 the `Real-World Usability + Release Hardening` phase are complete.
+
+## Portable Preflight Contract
+
+- Run `uv run --no-env-file --frozen python scripts/preflight.py --profile api`
+  to check the API profile in the locked environment.
+- Run `--profile test` to include development test dependencies.
+- Run `--profile ocr` to require the `tesseract` executable in addition to
+  Python dependencies.
+- Use `--require-command COMMAND` for entrypoint-specific executable checks.
+- Human and JSON output report only presence, absence, or safe status text;
+  environment variable values, tokens, URLs, and filesystem values are never
+  printed.
+- Missing `OPENAI_API_KEY`, `NOTION_TOKEN`, and `TELEGRAM_BOT_TOKEN` are
+  warnings in the current API profile because the corresponding live paths are
+  optional or not yet wired. Missing Python packages and entrypoint commands
+  are hard failures.
+- Preflight checks dependency/configuration state only. Database, Redis,
+  migration, vector, and external-service connectivity belong to the later
+  readiness step.
 
 ## Local Secret Handling
 

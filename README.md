@@ -211,6 +211,32 @@ Expected response:
 `/health` is a shallow liveness endpoint. It does not prove that PostgreSQL,
 Alembic migrations, pgvector, providers, Notion, Telegram, or Redis are ready.
 
+### Portable API entrypoint and preflight
+
+For a portable local API launch, run from any directory inside the repository:
+
+```bash
+scripts/run_live.sh
+```
+
+The entrypoint resolves the repository root, runs a redacted dependency and
+configuration preflight, and then starts the API with the locked `uv` runtime.
+It does not load `.env` or print secret values. Load environment variables in
+the shell first as shown above.
+
+To inspect a profile without starting the API:
+
+```bash
+uv run --no-env-file --frozen python scripts/preflight.py --profile api
+uv run --no-env-file --frozen python scripts/preflight.py --profile test
+uv run --no-env-file --frozen python scripts/preflight.py --profile ocr
+```
+
+Missing `OPENAI_API_KEY`, `NOTION_TOKEN`, and `TELEGRAM_BOT_TOKEN` are reported
+without exposing values; they are not hard failures for the current API
+profile because those live integrations are not all wired yet. The `ocr`
+profile additionally requires the `tesseract` executable.
+
 ## One-command demo script
 
 If you want a deterministic portfolio demo without Docker, a running server,
