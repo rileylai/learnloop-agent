@@ -703,6 +703,9 @@ Notes:
 Step 30-31 notes:
 - Step 30 introduces `NotionWriterTool` as a local append-only tool adapter.
 - Step 31 wires accepted review -> append -> immediate page re-index.
+- Step 70 adds `NotionAPIWriterClient` behind `NotionWriterTool`; it uses only
+  read/locate, append, and bounded verification calls. Runtime selection remains
+  deferred to Step 71.
 
 ## QA API
 

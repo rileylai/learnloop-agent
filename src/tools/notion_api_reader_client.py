@@ -52,6 +52,16 @@ class NotionHTTPTransport:
     ) -> NotionHTTPResponse:
         raise NotionHTTPTransportError("Notion POST transport is not supported")
 
+    def patch_json(
+        self,
+        *,
+        path: str,
+        query: Mapping[str, str],
+        headers: Mapping[str, str],
+        payload: Mapping[str, Any],
+    ) -> NotionHTTPResponse:
+        raise NotionHTTPTransportError("Notion PATCH transport is not supported")
+
 
 class UrllibNotionHTTPTransport(NotionHTTPTransport):
     """Small stdlib transport for the Notion REST API."""
@@ -95,6 +105,22 @@ class UrllibNotionHTTPTransport(NotionHTTPTransport):
     ) -> NotionHTTPResponse:
         return self._request_json(
             method="POST",
+            path=path,
+            query=query,
+            headers=headers,
+            payload=payload,
+        )
+
+    def patch_json(
+        self,
+        *,
+        path: str,
+        query: Mapping[str, str],
+        headers: Mapping[str, str],
+        payload: Mapping[str, Any],
+    ) -> NotionHTTPResponse:
+        return self._request_json(
+            method="PATCH",
             path=path,
             query=query,
             headers=headers,

@@ -39,6 +39,9 @@ The repository is demo-ready, not local-user-ready or release-ready.
 - The read-only Notion REST adapter exists and consumes `NOTION_TOKEN` when
   constructed, but default runtime wiring remains on mock data until Step 71
   adds explicit `NOTION_BACKEND=mock|live` selection.
+- The append-only Notion REST writer adapter is also available behind
+  `NotionWriterTool`; it is not runtime-selected before Step 71 and has not
+  been verified against a real workspace.
 - Redis/RQ classes exist, but runtime requests do not enqueue jobs and there is
   no worker entrypoint.
 - Tesseract is required for OCR. Useful non-English OCR also requires matching

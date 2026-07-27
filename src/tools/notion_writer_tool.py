@@ -13,6 +13,10 @@ class NotionWriterClientError(Exception):
     pass
 
 
+class NotionWriterAuthError(NotionWriterClientError):
+    pass
+
+
 class NotionWriterPageNotFoundError(NotionWriterClientError):
     pass
 
@@ -102,6 +106,7 @@ class NotionWriterClient:
         *,
         page_id: str,
         idempotency_key: str,
+        change_request_id: Optional[int] = None,
     ) -> Optional[NotionAppendResult]:
         raise NotImplementedError
 
@@ -200,6 +205,7 @@ class InMemoryNotionWriterClient(NotionWriterClient):
         *,
         page_id: str,
         idempotency_key: str,
+        change_request_id: Optional[int] = None,
     ) -> Optional[NotionAppendResult]:
         page = self._pages.get(page_id)
         if page is None:
@@ -364,6 +370,11 @@ class NotionWriterTool(Tool):
                 code="NOTION_PAGE_NOT_FOUND",
                 message=str(exc),
             )
+        except NotionWriterAuthError as exc:
+            return ToolResult.failure(
+                code="NOTION_AUTH_FAILED",
+                message=str(exc),
+            )
         except NotionWritePolicyViolationError as exc:
             return ToolResult.failure(
                 code="WRITE_POLICY_VIOLATION",
@@ -406,6 +417,7 @@ class NotionWriterTool(Tool):
             visible_result = self._notion_writer_client.find_ai_supplement_by_identity(
                 page_id=request.page_id,
                 idempotency_key=request.idempotency_key,
+                change_request_id=request.change_request_id,
             )
             if visible_result is not None:
                 if visible_result.change_request_id != request.change_request_id:

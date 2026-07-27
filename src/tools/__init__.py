@@ -35,6 +35,7 @@ from src.tools.notion_api_reader_client import (
     NotionHTTPTransportError,
     UrllibNotionHTTPTransport,
 )
+from src.tools.notion_api_writer_client import NotionAPIWriterClient
 from src.tools.notion_writer_tool import (
     InMemoryAISupplementEntry,
     InMemoryNotionPageSnapshot,
@@ -43,6 +44,7 @@ from src.tools.notion_writer_tool import (
     NotionAppendRequest,
     NotionAppendResult,
     NotionAppendVerificationError,
+    NotionWriterAuthError,
     NotionWritePolicyViolationError,
     NotionWriterClient,
     NotionWriterClientError,
@@ -116,6 +118,7 @@ __all__ = [
     "NotionHTTPTransport",
     "NotionHTTPTransportError",
     "UrllibNotionHTTPTransport",
+    "NotionAPIWriterClient",
     "InMemoryAISupplementEntry",
     "InMemoryNotionPageSnapshot",
     "InMemoryNotionWriteOperation",
@@ -123,6 +126,7 @@ __all__ = [
     "NotionAppendRequest",
     "NotionAppendResult",
     "NotionAppendVerificationError",
+    "NotionWriterAuthError",
     "NotionWritePolicyViolationError",
     "NotionWriterClient",
     "NotionWriterClientError",
