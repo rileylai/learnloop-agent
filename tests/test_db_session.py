@@ -1,5 +1,6 @@
 from src.app.config import get_settings
-from src.db.session import DEFAULT_DATABASE_URL, get_database_url
+from src.db import SqlAlchemyUnitOfWork
+from src.db.session import DEFAULT_DATABASE_URL, get_database_url, get_unit_of_work_factory
 
 
 def _clear_settings_cache() -> None:
@@ -20,3 +21,9 @@ def test_database_url_uses_env_override(monkeypatch) -> None:
     _clear_settings_cache()
 
     assert get_database_url() == "postgresql+psycopg://custom:custom@localhost:5432/custom"
+
+
+def test_unit_of_work_factory_returns_sqlalchemy_unit_of_work() -> None:
+    unit_of_work_factory = get_unit_of_work_factory()
+
+    assert isinstance(unit_of_work_factory(), SqlAlchemyUnitOfWork)

@@ -12,7 +12,7 @@ from src.app.dependencies import get_tool_registry
 from src.app.main import app
 from src.db.base import Base
 from src.db.models import NotionBlock, NotionPage, SourceDocument, WorkflowRun
-from src.db.session import get_db_session
+from src.db.session import get_db_session, get_db_session_factory
 from src.orchestrators import MVP_CHAT_TEXT_MAX_CHARS
 from src.tools import (
     ImageOCRParserClient,
@@ -190,6 +190,7 @@ def test_ingest_source_api_creates_one_document_per_supported_source_type() -> N
             session.close()
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
 
     try:
         client = TestClient(app)
@@ -258,6 +259,7 @@ def test_ingest_source_api_rejects_unsupported_source_type() -> None:
             session.close()
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
 
     try:
         client = TestClient(app)
@@ -295,6 +297,7 @@ def test_ingest_source_api_rejects_blank_raw_text() -> None:
             session.close()
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
 
     try:
         client = TestClient(app)
@@ -337,6 +340,7 @@ def test_ingest_document_api_persists_extracted_pdf_text_and_filename() -> None:
         )
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -402,6 +406,7 @@ def test_ingest_document_api_returns_pdf_parse_failed() -> None:
         )
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -452,6 +457,7 @@ def test_ingest_url_api_persists_extracted_text_and_full_url_display_name() -> N
         )
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -512,6 +518,7 @@ def test_ingest_url_api_returns_url_fetch_failed() -> None:
         )
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -559,6 +566,7 @@ def test_ingest_youtube_api_persists_transcript_with_source_display_name() -> No
         )
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -625,6 +633,7 @@ def test_ingest_youtube_api_returns_transcript_not_found() -> None:
         )
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -667,6 +676,7 @@ def test_ingest_image_ocr_api_creates_one_screenshot_source_in_order() -> None:
         return _build_tool_registry_with_image_ocr_parser(_FakeImageOCRParserClient())
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -737,6 +747,7 @@ def test_ingest_image_ocr_api_returns_ocr_failed() -> None:
         )
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -780,6 +791,7 @@ def test_ingest_chat_text_api_persists_short_text() -> None:
             session.close()
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
 
     try:
         client = TestClient(app)
@@ -834,6 +846,7 @@ def test_ingest_chat_text_api_rejects_over_limit_text() -> None:
             session.close()
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
 
     try:
         client = TestClient(app)

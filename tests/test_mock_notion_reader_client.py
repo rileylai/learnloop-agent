@@ -17,7 +17,6 @@ from src.repositories import (
     ChunkRepository,
     NotionBlockRepository,
     NotionPageRepository,
-    WorkflowRunRepository,
 )
 from src.services import WorkflowRunService
 from src.tools import (
@@ -48,7 +47,7 @@ class _FakeEmbeddingClient(EmbeddingClient):
         )
 
 
-def _build_session() -> Session:
+def _build_session_factory():
     engine = create_engine(
         "sqlite+pysqlite://",
         connect_args={"check_same_thread": False},
@@ -63,8 +62,7 @@ def _build_session() -> Session:
             WorkflowRun.__table__,
         ],
     )
-    local_session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
-    return local_session()
+    return sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 def _find_block_path(blocks: list, block_id: str) -> str | None:
@@ -119,7 +117,8 @@ def test_json_mock_notion_reader_client_rejects_unsafe_demo_metadata(
 
 
 def test_json_mock_notion_reader_client_indexes_demo_page_into_chunks() -> None:
-    session = _build_session()
+    session_factory = _build_session_factory()
+    session = session_factory()
     try:
         registry = ToolRegistry()
         registry.register_tool(
@@ -131,7 +130,7 @@ def test_json_mock_notion_reader_client_indexes_demo_page_into_chunks() -> None:
             tool_registry=registry,
             notion_page_repository=NotionPageRepository(session),
             notion_block_repository=NotionBlockRepository(session),
-            workflow_run_service=WorkflowRunService(WorkflowRunRepository(session)),
+            workflow_run_service=WorkflowRunService(session_factory),
             chunk_repository=ChunkRepository(session),
             embedding_client=_FakeEmbeddingClient(),
         )

@@ -27,7 +27,6 @@ from src.rag import (
     RetrievalResult,
     RetrievedChunk,
 )
-from src.repositories import WorkflowRunRepository
 from src.services import CostTracker, PromptTemplateLoader, WorkflowRunService
 
 
@@ -76,19 +75,20 @@ class _FakeRetriever:
         return self._result
 
 
-def _build_session() -> Session:
+def _build_session_factory():
     engine = create_engine(
         "sqlite+pysqlite://",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
     Base.metadata.create_all(engine, tables=[WorkflowRun.__table__])
-    return sessionmaker(bind=engine, autoflush=False, autocommit=False)()
+    return sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 def _build_orchestrator(
     *,
     session: Session,
+    session_factory,
     retriever: _FakeRetriever,
     embedding_client: Optional[EmbeddingClient],
     provider_router: ProviderRouter,
@@ -99,12 +99,13 @@ def _build_orchestrator(
         provider_router=provider_router,
         cost_tracker=CostTracker(),
         prompt_template_loader=PromptTemplateLoader(),
-        workflow_run_service=WorkflowRunService(WorkflowRunRepository(session)),
+        workflow_run_service=WorkflowRunService(session_factory),
     )
 
 
 def test_qa_orchestrator_uses_query_embeddings_and_dedupes_citations() -> None:
-    session = _build_session()
+    session_factory = _build_session_factory()
+    session = session_factory()
     embedding_client = _FakeEmbeddingClient(embeddings=[[0.25] * 1536])
     retriever = _FakeRetriever(
         result=RetrievalResult(
@@ -145,6 +146,7 @@ def test_qa_orchestrator_uses_query_embeddings_and_dedupes_citations() -> None:
     provider_router.register_provider(_FakeProvider())
     orchestrator = _build_orchestrator(
         session=session,
+        session_factory=session_factory,
         retriever=retriever,
         embedding_client=embedding_client,
         provider_router=provider_router,
@@ -188,7 +190,8 @@ def test_qa_orchestrator_uses_query_embeddings_and_dedupes_citations() -> None:
 
 
 def test_qa_orchestrator_dimension_mismatch_falls_back_and_returns_insufficient_info() -> None:
-    session = _build_session()
+    session_factory = _build_session_factory()
+    session = session_factory()
     embedding_client = _FakeEmbeddingClient(embeddings=[[0.25, 0.5]])
     retriever = _FakeRetriever(
         result=RetrievalResult(
@@ -199,6 +202,7 @@ def test_qa_orchestrator_dimension_mismatch_falls_back_and_returns_insufficient_
     )
     orchestrator = _build_orchestrator(
         session=session,
+        session_factory=session_factory,
         retriever=retriever,
         embedding_client=embedding_client,
         provider_router=ProviderRouter(),

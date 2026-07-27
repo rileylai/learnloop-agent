@@ -24,7 +24,7 @@ from src.db.models import (
     SourceDocument,
     WorkflowRun,
 )
-from src.db.session import get_db_session
+from src.db.session import get_db_session, get_db_session_factory
 from src.providers import (
     EmbeddingClient,
     EmbeddingRequest,
@@ -307,6 +307,7 @@ def test_supplement_propose_api_creates_pending_change_request() -> None:
         return router
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_provider_router] = _provider_router_override
 
     try:
@@ -399,6 +400,7 @@ def test_supplement_propose_api_uses_duplicate_reference_without_provider() -> N
         return ProviderRouter()
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_provider_router] = _provider_router_override
 
     try:
@@ -473,6 +475,7 @@ def test_supplement_propose_api_returns_llm_output_invalid() -> None:
         return router
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_provider_router] = _provider_router_override
 
     try:
@@ -530,6 +533,7 @@ def test_supplement_propose_api_returns_provider_not_found_when_provider_missing
         return ProviderRouter()
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_provider_router] = _provider_router_override
 
     try:
@@ -623,6 +627,7 @@ def test_supplement_accept_api_appends_and_reindexes_before_accepting() -> None:
         return _build_review_tool_registry(snapshot_pages)
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
     app.dependency_overrides[get_embedding_client] = _embedding_client_override
 
@@ -744,6 +749,7 @@ def test_supplement_accept_api_requires_target_page_for_safe_append() -> None:
         return _build_review_tool_registry({})
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -801,6 +807,7 @@ def test_supplement_reject_api_transitions_pending_to_rejected_without_notion_wr
         return _build_review_tool_registry({})
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -863,6 +870,7 @@ def test_supplement_edit_later_api_keeps_pending_status() -> None:
         return _build_review_tool_registry({})
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -912,6 +920,7 @@ def test_supplement_review_api_rejects_invalid_state_transition() -> None:
         return _build_review_tool_registry({})
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -956,6 +965,7 @@ def test_supplement_review_api_returns_change_request_not_found() -> None:
         return _build_review_tool_registry({})
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:

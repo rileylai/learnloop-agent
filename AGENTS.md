@@ -1,10 +1,12 @@
 # AGENTS.md
 
 ## 1. Project Mission
+
 LearnLoop Agent is a local-first Notion knowledge agent.
 It indexes existing Notion notes as read-only knowledge, generates AI supplement proposals from learning materials, and writes accepted content only into `AI Supplement Zone`.
 
 ## 2. Core Safety Rules
+
 1. Never directly overwrite existing Notion notes.
 2. Never directly edit manually created notes.
 3. Never directly edit old AI supplement blocks.
@@ -17,6 +19,7 @@ It indexes existing Notion notes as read-only knowledge, generates AI supplement
 10. Never log secrets or private raw source content.
 
 ## 3. Architecture Rule
+
 - Use flow: API Route -> Orchestrator -> Service / Tool -> Repository -> External System.
 - LLM flow: API Route -> Orchestrator -> Provider Router -> Provider Adapter.
 - Tool flow: API Route -> Orchestrator -> Tool Registry -> Local Tool Adapter or future MCP Client.
@@ -31,6 +34,7 @@ It indexes existing Notion notes as read-only knowledge, generates AI supplement
 - Do not add LangChain or LangGraph in MVP unless a future ADR explicitly approves it.
 
 ## 4. Documentation Navigation
+
 - `docs/00-design-doc.md`: main design source.
 - `docs/01-architecture.md`: system architecture details.
 - `docs/02-workflows.md`: workflow definitions and state transitions.
@@ -48,7 +52,9 @@ It indexes existing Notion notes as read-only knowledge, generates AI supplement
 - `docs/decisions/`: ADRs.
 
 ## 5. Task Start Rule
+
 Before making code changes, always read:
+
 1. `AGENTS.md`
 2. `docs/00-design-doc.md`
 3. `dev_state/PROJECT_ROADMAP.md`
@@ -56,6 +62,7 @@ Before making code changes, always read:
 5. Task-related docs from the map above.
 
 Task-related examples:
+
 - DB or repository task: read `docs/01-architecture.md` and `docs/11-coding-style.md`.
 - Workflow or queue task: read `docs/02-workflows.md` and `docs/08-observability.md`.
 - Notion or write-policy task: read `docs/03-guardrails.md` and `docs/06-notion-permission-model.md`.
@@ -67,6 +74,7 @@ Repo docs are development and maintenance context by default.
 They are not production RAG source unless a future ADR and implementation explicitly wire them into runtime retrieval.
 
 ## 6. Coding Style Rules
+
 - Use Python for backend.
 - Use FastAPI for API layer when implementation starts.
 - Use simple, explicit code.
@@ -81,6 +89,7 @@ They are not production RAG source unless a future ADR and implementation explic
 - Do not over-comment obvious lines.
 
 ## 7. Documentation Style Rules
+
 - Use simple English.
 - Keep critical product label `AI Supplement Zone`.
 - Prefer short sections and tables.
@@ -89,7 +98,9 @@ They are not production RAG source unless a future ADR and implementation explic
 - If behavior changes, update related docs.
 
 ## 8. Definition of Done
+
 A task is done only when:
+
 - The implementation matches the design doc.
 - Unit tests or documentation acceptance checks pass.
 - Guardrails are not weakened.
@@ -98,6 +109,7 @@ A task is done only when:
 - No secrets or private Notion content are committed.
 
 ## 9. Current MVP Constraints
+
 - Local-only MVP.
 - Telegram first.
 - No WhatsApp, LINE, Discord, Bilibili in MVP.

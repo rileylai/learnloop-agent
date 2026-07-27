@@ -30,7 +30,6 @@ from src.repositories import (  # noqa: E402
     ChunkRepository,
     NotionBlockRepository,
     NotionPageRepository,
-    WorkflowRunRepository,
 )
 from src.services import WorkflowRunService  # noqa: E402
 from src.tools import (  # noqa: E402
@@ -83,16 +82,19 @@ class ManualSyncEvalResult:
 
 
 async def evaluate_manual_sync_reconciliation() -> ManualSyncEvalResult:
-    session = build_manual_sync_eval_session()
+    session_factory = build_manual_sync_eval_session_factory()
+    session = session_factory()
     pages = {PAGE_ID: _page_before_manual_delete()}
 
     try:
         index_orchestrator = _build_index_orchestrator(
             session=session,
+            session_factory=session_factory,
             pages=pages,
         )
         incremental_orchestrator = _build_incremental_orchestrator(
             session=session,
+            session_factory=session_factory,
             page_index_orchestrator=index_orchestrator,
         )
 
@@ -144,7 +146,7 @@ async def evaluate_manual_sync_reconciliation() -> ManualSyncEvalResult:
     )
 
 
-def build_manual_sync_eval_session() -> Session:
+def build_manual_sync_eval_session_factory():
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(
         engine,
@@ -155,8 +157,7 @@ def build_manual_sync_eval_session() -> Session:
             WorkflowRun.__table__,
         ],
     )
-    local_session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
-    return local_session()
+    return sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 def format_manual_sync_eval_result(result: ManualSyncEvalResult) -> str:
@@ -176,6 +177,7 @@ def format_manual_sync_eval_result(result: ManualSyncEvalResult) -> str:
 def _build_index_orchestrator(
     *,
     session: Session,
+    session_factory,
     pages: Dict[str, NotionPageTree],
 ) -> NotionPageIndexOrchestrator:
     registry = ToolRegistry()
@@ -184,7 +186,7 @@ def _build_index_orchestrator(
         tool_registry=registry,
         notion_page_repository=NotionPageRepository(session),
         notion_block_repository=NotionBlockRepository(session),
-        workflow_run_service=WorkflowRunService(WorkflowRunRepository(session)),
+        workflow_run_service=WorkflowRunService(session_factory),
         chunk_repository=ChunkRepository(session),
         embedding_client=_FakeEmbeddingClient(),
     )
@@ -193,11 +195,12 @@ def _build_index_orchestrator(
 def _build_incremental_orchestrator(
     *,
     session: Session,
+    session_factory,
     page_index_orchestrator: NotionPageIndexOrchestrator,
 ) -> NotionIncrementalIndexOrchestrator:
     return NotionIncrementalIndexOrchestrator(
         page_index_orchestrator=page_index_orchestrator,
-        workflow_run_service=WorkflowRunService(WorkflowRunRepository(session)),
+        workflow_run_service=WorkflowRunService(session_factory),
     )
 
 

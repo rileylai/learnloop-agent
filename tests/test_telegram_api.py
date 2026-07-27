@@ -24,7 +24,7 @@ from src.db.models import (
     SourceDocument,
     WorkflowRun,
 )
-from src.db.session import get_db_session
+from src.db.session import get_db_session, get_db_session_factory
 from src.providers import (
     EmbeddingClient,
     EmbeddingRequest,
@@ -359,6 +359,7 @@ def test_telegram_webhook_help_command_sends_reply() -> None:
         return registry
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -430,6 +431,7 @@ def test_telegram_webhook_skips_non_text_message() -> None:
         return registry
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -475,6 +477,7 @@ def test_telegram_webhook_returns_service_unavailable_when_not_configured() -> N
         return registry
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -537,6 +540,7 @@ def test_telegram_webhook_ask_returns_answer_with_scoped_notion_citation() -> No
         return router
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
     app.dependency_overrides[get_provider_router] = _provider_router_override
 
@@ -615,6 +619,7 @@ def test_telegram_webhook_ask_without_question_returns_usage_reply() -> None:
         return registry
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -665,6 +670,7 @@ def test_telegram_webhook_ask_maps_qa_provider_failure() -> None:
         return registry
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -766,6 +772,7 @@ def test_telegram_webhook_accept_appends_and_reindexes_before_replying() -> None
         return registry
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
     app.dependency_overrides[get_embedding_client] = _embedding_client_override
 
@@ -878,6 +885,7 @@ def test_telegram_webhook_reject_updates_status_without_notion_write() -> None:
         return registry
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -979,6 +987,7 @@ def test_telegram_webhook_accept_fails_closed_without_target_page() -> None:
         return registry
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -1045,6 +1054,7 @@ def test_telegram_webhook_reject_without_reason_returns_usage_reply() -> None:
         return registry
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -1136,6 +1146,7 @@ def test_telegram_webhook_ingest_pdf_creates_pending_change_request() -> None:
         return router
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
     app.dependency_overrides[get_provider_router] = _provider_router_override
 
@@ -1217,6 +1228,7 @@ def test_telegram_webhook_ingest_pdf_returns_file_download_failed() -> None:
         return registry
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -1316,6 +1328,7 @@ def test_telegram_webhook_ingest_screenshot_batch_creates_one_source_and_change_
         return router
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
     app.dependency_overrides[get_provider_router] = _provider_router_override
 

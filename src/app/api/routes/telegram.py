@@ -13,7 +13,7 @@ from src.app.dependencies import (
     get_tool_registry,
 )
 from src.app.schemas import TelegramWebhookRequest, TelegramWebhookResponse
-from src.db.session import get_db_session
+from src.db.session import SessionFactory, get_db_session, get_db_session_factory
 from src.orchestrators import (
     DocumentIngestionOrchestrator,
     ImageOCRIngestionOrchestrator,
@@ -36,7 +36,6 @@ from src.repositories import (
     NotionBlockRepository,
     NotionPageRepository,
     SourceDocumentRepository,
-    WorkflowRunRepository,
 )
 from src.rag import ProductionChunkRetriever
 from src.services import (
@@ -53,13 +52,14 @@ router = APIRouter()
 def _build_telegram_gateway_orchestrator(
     *,
     db_session: Session,
+    db_session_factory: SessionFactory,
     tool_registry: ToolRegistry,
     provider_router: ProviderRouter,
     embedding_client: Optional[EmbeddingClient],
     cost_tracker: CostTracker,
     prompt_template_loader: PromptTemplateLoader,
 ) -> TelegramGatewayOrchestrator:
-    workflow_run_service = WorkflowRunService(WorkflowRunRepository(db_session))
+    workflow_run_service = WorkflowRunService(db_session_factory)
 
     telegram_ingestion_orchestrator = TelegramIngestionOrchestrator(
         tool_registry=tool_registry,
@@ -129,6 +129,7 @@ async def handle_telegram_webhook(
     payload: TelegramWebhookRequest,
     request: Request,
     db_session: Session = Depends(get_db_session),
+    db_session_factory: SessionFactory = Depends(get_db_session_factory),
     tool_registry: ToolRegistry = Depends(get_tool_registry),
     provider_router: ProviderRouter = Depends(get_provider_router),
     embedding_client: Optional[EmbeddingClient] = Depends(get_embedding_client),
@@ -137,6 +138,7 @@ async def handle_telegram_webhook(
 ) -> TelegramWebhookResponse:
     orchestrator = _build_telegram_gateway_orchestrator(
         db_session=db_session,
+        db_session_factory=db_session_factory,
         tool_registry=tool_registry,
         provider_router=provider_router,
         embedding_client=embedding_client,

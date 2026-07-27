@@ -12,7 +12,7 @@ from src.app.dependencies import get_provider_router
 from src.app.main import app
 from src.db.base import Base
 from src.db.models import KnowledgeChunk, NotionBlock, NotionPage, WorkflowRun
-from src.db.session import get_db_session
+from src.db.session import get_db_session, get_db_session_factory
 from src.providers import (
     LLMClientError,
     LLMProvider,
@@ -147,6 +147,7 @@ def test_qa_api_returns_grounded_answer_with_citations() -> None:
         return router
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_provider_router] = _provider_router_override
 
     try:
@@ -215,6 +216,7 @@ def test_qa_api_returns_insufficient_info_when_no_retrieval_match() -> None:
         return ProviderRouter()
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_provider_router] = _provider_router_override
 
     try:
@@ -277,6 +279,7 @@ def test_qa_api_returns_provider_not_found_when_provider_missing() -> None:
         return ProviderRouter()
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_provider_router] = _provider_router_override
 
     try:
@@ -337,6 +340,7 @@ def test_qa_api_returns_llm_provider_error_when_provider_request_fails() -> None
         return router
 
     app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     app.dependency_overrides[get_provider_router] = _provider_router_override
 
     try:

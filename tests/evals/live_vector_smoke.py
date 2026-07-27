@@ -39,7 +39,6 @@ from src.repositories import (  # noqa: E402
     ChunkRepository,
     NotionBlockRepository,
     NotionPageRepository,
-    WorkflowRunRepository,
 )
 from src.services import CostTracker, PromptTemplateLoader, WorkflowRunService  # noqa: E402
 from src.tools import (  # noqa: E402
@@ -325,15 +324,22 @@ async def evaluate_live_vector_smoke(
 
     try:
         session = database.create_session()
+        session_factory = sessionmaker(
+            bind=session.get_bind(),
+            autoflush=False,
+            autocommit=False,
+        )
         pages = build_live_smoke_pages()
         embedding_client = OpenAIEmbeddingClient(api_key=config.openai_api_key)
         page_index_orchestrator = _build_page_index_orchestrator(
             session=session,
+            session_factory=session_factory,
             pages=pages,
             embedding_client=embedding_client,
         )
         qa_orchestrator = _build_qa_orchestrator(
             session=session,
+            session_factory=session_factory,
             embedding_client=embedding_client,
         )
         retriever = ProductionChunkRetriever(
@@ -471,6 +477,7 @@ def _build_duplicate_paragraph(label: str) -> str:
 def _build_page_index_orchestrator(
     *,
     session: Session,
+    session_factory,
     pages: Dict[str, NotionPageTree],
     embedding_client: OpenAIEmbeddingClient,
 ) -> NotionPageIndexOrchestrator:
@@ -480,7 +487,7 @@ def _build_page_index_orchestrator(
         tool_registry=registry,
         notion_page_repository=NotionPageRepository(session),
         notion_block_repository=NotionBlockRepository(session),
-        workflow_run_service=WorkflowRunService(WorkflowRunRepository(session)),
+        workflow_run_service=WorkflowRunService(session_factory),
         chunk_repository=ChunkRepository(session),
         embedding_client=embedding_client,
         cost_tracker=CostTracker(),
@@ -490,6 +497,7 @@ def _build_page_index_orchestrator(
 def _build_qa_orchestrator(
     *,
     session: Session,
+    session_factory,
     embedding_client: OpenAIEmbeddingClient,
 ) -> QAOrchestrator:
     provider_router = ProviderRouter()
@@ -502,7 +510,7 @@ def _build_qa_orchestrator(
         provider_router=provider_router,
         cost_tracker=CostTracker(),
         prompt_template_loader=PromptTemplateLoader(),
-        workflow_run_service=WorkflowRunService(WorkflowRunRepository(session)),
+        workflow_run_service=WorkflowRunService(session_factory),
     )
 
 

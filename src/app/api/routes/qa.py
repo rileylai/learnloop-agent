@@ -12,11 +12,11 @@ from src.app.dependencies import (
     get_provider_router,
 )
 from src.app.schemas import QACitation, QARequest, QAResponse
-from src.db.session import get_db_session
+from src.db.session import SessionFactory, get_db_session, get_db_session_factory
 from src.orchestrators import QAOrchestrator, QAOrchestratorError
 from src.providers import EmbeddingClient, ProviderRouter
 from src.rag import ProductionChunkRetriever
-from src.repositories import ChunkRepository, WorkflowRunRepository
+from src.repositories import ChunkRepository
 from src.services import CostTracker, PromptTemplateLoader, WorkflowRunService
 
 router = APIRouter()
@@ -25,6 +25,7 @@ router = APIRouter()
 def _build_qa_orchestrator(
     *,
     db_session: Session,
+    db_session_factory: SessionFactory,
     embedding_client: Optional[EmbeddingClient],
     provider_router: ProviderRouter,
     cost_tracker: CostTracker,
@@ -38,7 +39,7 @@ def _build_qa_orchestrator(
         provider_router=provider_router,
         cost_tracker=cost_tracker,
         prompt_template_loader=prompt_template_loader,
-        workflow_run_service=WorkflowRunService(WorkflowRunRepository(db_session)),
+        workflow_run_service=WorkflowRunService(db_session_factory),
     )
 
 
@@ -47,6 +48,7 @@ async def run_qa(
     payload: QARequest,
     request: Request,
     db_session: Session = Depends(get_db_session),
+    db_session_factory: SessionFactory = Depends(get_db_session_factory),
     embedding_client: Optional[EmbeddingClient] = Depends(get_embedding_client),
     provider_router: ProviderRouter = Depends(get_provider_router),
     cost_tracker: CostTracker = Depends(get_cost_tracker),
@@ -54,6 +56,7 @@ async def run_qa(
 ) -> QAResponse:
     orchestrator = _build_qa_orchestrator(
         db_session=db_session,
+        db_session_factory=db_session_factory,
         embedding_client=embedding_client,
         provider_router=provider_router,
         cost_tracker=cost_tracker,

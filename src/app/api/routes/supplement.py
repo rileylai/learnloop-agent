@@ -20,7 +20,7 @@ from src.app.schemas import (
     SupplementRejectRequest,
     SupplementReviewResponse,
 )
-from src.db.session import get_db_session
+from src.db.session import SessionFactory, get_db_session, get_db_session_factory
 from src.orchestrators import (
     NotionPageIndexOrchestrator,
     SupplementProposeError,
@@ -35,7 +35,6 @@ from src.repositories import (
     NotionBlockRepository,
     NotionPageRepository,
     SourceDocumentRepository,
-    WorkflowRunRepository,
 )
 from src.services import (
     CostTracker,
@@ -51,6 +50,7 @@ router = APIRouter()
 def _build_supplement_propose_orchestrator(
     *,
     db_session: Session,
+    db_session_factory: SessionFactory,
     provider_router: ProviderRouter,
     cost_tracker: CostTracker,
     prompt_template_loader: PromptTemplateLoader,
@@ -64,32 +64,33 @@ def _build_supplement_propose_orchestrator(
         duplicate_checker=DuplicateKnowledgeChecker(
             chunk_repository=ChunkRepository(db_session),
         ),
-        workflow_run_service=WorkflowRunService(WorkflowRunRepository(db_session)),
+        workflow_run_service=WorkflowRunService(db_session_factory),
     )
 
 
 def _build_supplement_review_orchestrator(
     *,
     db_session: Session,
+    db_session_factory: SessionFactory,
     tool_registry: ToolRegistry,
     embedding_client: Optional[EmbeddingClient],
     cost_tracker: CostTracker,
 ) -> SupplementReviewOrchestrator:
     page_index_orchestrator = NotionPageIndexOrchestrator(
-        tool_registry=tool_registry,
-        notion_page_repository=NotionPageRepository(db_session),
-        notion_block_repository=NotionBlockRepository(db_session),
-        workflow_run_service=WorkflowRunService(WorkflowRunRepository(db_session)),
-        chunk_repository=ChunkRepository(db_session),
-        embedding_client=embedding_client,
-        cost_tracker=cost_tracker,
+            tool_registry=tool_registry,
+            notion_page_repository=NotionPageRepository(db_session),
+            notion_block_repository=NotionBlockRepository(db_session),
+            workflow_run_service=WorkflowRunService(db_session_factory),
+            chunk_repository=ChunkRepository(db_session),
+            embedding_client=embedding_client,
+            cost_tracker=cost_tracker,
     )
     return SupplementReviewOrchestrator(
         change_request_repository=ChangeRequestRepository(db_session),
         notion_page_repository=NotionPageRepository(db_session),
         tool_registry=tool_registry,
         page_index_orchestrator=page_index_orchestrator,
-        workflow_run_service=WorkflowRunService(WorkflowRunRepository(db_session)),
+        workflow_run_service=WorkflowRunService(db_session_factory),
     )
 
 
@@ -98,12 +99,14 @@ async def propose_supplement_change_request(
     payload: SupplementProposeRequest,
     request: Request,
     db_session: Session = Depends(get_db_session),
+    db_session_factory: SessionFactory = Depends(get_db_session_factory),
     provider_router: ProviderRouter = Depends(get_provider_router),
     cost_tracker: CostTracker = Depends(get_cost_tracker),
     prompt_template_loader: PromptTemplateLoader = Depends(get_prompt_template_loader),
 ) -> SupplementProposeResponse:
     orchestrator = _build_supplement_propose_orchestrator(
         db_session=db_session,
+        db_session_factory=db_session_factory,
         provider_router=provider_router,
         cost_tracker=cost_tracker,
         prompt_template_loader=prompt_template_loader,
@@ -149,12 +152,14 @@ async def accept_supplement_change_request(
     payload: SupplementAcceptRequest,
     request: Request,
     db_session: Session = Depends(get_db_session),
+    db_session_factory: SessionFactory = Depends(get_db_session_factory),
     tool_registry: ToolRegistry = Depends(get_tool_registry),
     embedding_client: Optional[EmbeddingClient] = Depends(get_embedding_client),
     cost_tracker: CostTracker = Depends(get_cost_tracker),
 ) -> SupplementReviewResponse:
     orchestrator = _build_supplement_review_orchestrator(
         db_session=db_session,
+        db_session_factory=db_session_factory,
         tool_registry=tool_registry,
         embedding_client=embedding_client,
         cost_tracker=cost_tracker,
@@ -194,12 +199,14 @@ async def reject_supplement_change_request(
     payload: SupplementRejectRequest,
     request: Request,
     db_session: Session = Depends(get_db_session),
+    db_session_factory: SessionFactory = Depends(get_db_session_factory),
     tool_registry: ToolRegistry = Depends(get_tool_registry),
     embedding_client: Optional[EmbeddingClient] = Depends(get_embedding_client),
     cost_tracker: CostTracker = Depends(get_cost_tracker),
 ) -> SupplementReviewResponse:
     orchestrator = _build_supplement_review_orchestrator(
         db_session=db_session,
+        db_session_factory=db_session_factory,
         tool_registry=tool_registry,
         embedding_client=embedding_client,
         cost_tracker=cost_tracker,
@@ -240,12 +247,14 @@ async def edit_later_supplement_change_request(
     payload: SupplementEditLaterRequest,
     request: Request,
     db_session: Session = Depends(get_db_session),
+    db_session_factory: SessionFactory = Depends(get_db_session_factory),
     tool_registry: ToolRegistry = Depends(get_tool_registry),
     embedding_client: Optional[EmbeddingClient] = Depends(get_embedding_client),
     cost_tracker: CostTracker = Depends(get_cost_tracker),
 ) -> SupplementReviewResponse:
     orchestrator = _build_supplement_review_orchestrator(
         db_session=db_session,
+        db_session_factory=db_session_factory,
         tool_registry=tool_registry,
         embedding_client=embedding_client,
         cost_tracker=cost_tracker,
