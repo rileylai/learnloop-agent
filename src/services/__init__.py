@@ -18,6 +18,7 @@ from src.services.prompt_template_loader import (
 )
 from src.services.workflow_run_service import (
     STANDARD_FAILURE_REASONS,
+    WorkflowRunAuditUpdateError,
     WORKFLOW_STATUS_FAILED,
     WORKFLOW_STATUS_RUNNING,
     WORKFLOW_STATUS_SUCCEEDED,
@@ -41,6 +42,7 @@ __all__ = [
     "PromptTemplateLoader",
     "PromptTemplateLoaderError",
     "STANDARD_FAILURE_REASONS",
+    "WorkflowRunAuditUpdateError",
     "WORKFLOW_STATUS_FAILED",
     "WORKFLOW_STATUS_RUNNING",
     "WORKFLOW_STATUS_SUCCEEDED",

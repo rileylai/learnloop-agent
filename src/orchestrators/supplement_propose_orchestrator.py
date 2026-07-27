@@ -28,6 +28,7 @@ from src.services import (
     PromptTemplateLoader,
     PromptTemplateLoaderError,
     STANDARD_FAILURE_REASONS,
+    WorkflowRunAuditUpdateError,
     WorkflowRunService,
 )
 
@@ -283,6 +284,8 @@ class SupplementProposeOrchestrator:
                 token_input=token_input,
                 token_output=token_output,
             )
+        except WorkflowRunAuditUpdateError:
+            raise
         except SupplementProposeError as exc:
             self._mark_failed_workflow(
                 workflow_run_id=workflow_run.id,

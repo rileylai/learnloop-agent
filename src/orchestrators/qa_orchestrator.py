@@ -27,6 +27,7 @@ from src.services import (
     PromptTemplateLoader,
     PromptTemplateLoaderError,
     STANDARD_FAILURE_REASONS,
+    WorkflowRunAuditUpdateError,
     WorkflowRunService,
 )
 
@@ -305,6 +306,8 @@ class QAOrchestrator:
                 token_input=llm_response.token_input,
                 token_output=llm_response.token_output,
             )
+        except WorkflowRunAuditUpdateError:
+            raise
         except QAOrchestratorError as exc:
             self._mark_failed_workflow(
                 workflow_run_id=workflow_run.id,

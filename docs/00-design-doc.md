@@ -295,6 +295,9 @@ Change Request
 -> Trigger immediate page re-index through the shared embedding flow
 -> Accepted content becomes searchable in production RAG
 ```
+If the final workflow audit update fails after business work commits, the
+business result is not rolled back or retried. The workflow remains `running`
+for explicit stale-running reconciliation.
 Checklist:
 - [ ] Write path is append-only.
 - [ ] Auto re-index job starts immediately after accept.

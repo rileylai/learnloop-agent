@@ -7,7 +7,7 @@ from http import HTTPStatus
 from typing import Optional
 
 from src.db.unit_of_work import UnitOfWorkFactory
-from src.services import WorkflowRunService
+from src.services import WorkflowRunAuditUpdateError, WorkflowRunService
 
 MVP_CHAT_TEXT_MAX_CHARS = 10_000
 DEFAULT_CHAT_TEXT_SOURCE_DISPLAY_NAME = "Chat text"
@@ -121,6 +121,8 @@ class ChatTextIngestionOrchestrator:
                     sort_keys=True,
                 ),
             )
+        except WorkflowRunAuditUpdateError:
+            raise
         except Exception as exc:
             self._workflow_run_service.mark_workflow_failed(
                 workflow_run.id,

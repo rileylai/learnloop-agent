@@ -20,7 +20,11 @@ from src.orchestrators.telegram_review_orchestrator import (
     TelegramReviewError,
     TelegramReviewOrchestrator,
 )
-from src.services import STANDARD_FAILURE_REASONS, WorkflowRunService
+from src.services import (
+    STANDARD_FAILURE_REASONS,
+    WorkflowRunAuditUpdateError,
+    WorkflowRunService,
+)
 from src.tools import ToolContext, ToolRegistry
 
 TELEGRAM_BOT_TOOL_NAME = "telegram_bot"
@@ -291,6 +295,8 @@ class TelegramGatewayOrchestrator:
                 review_action=review_action,
                 change_request_status=change_request_status,
             )
+        except WorkflowRunAuditUpdateError:
+            raise
         except TelegramIngestionError as exc:
             self._mark_failed_workflow(
                 workflow_run_id=workflow_run.id,

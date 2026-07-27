@@ -41,6 +41,13 @@ What belongs here:
 - A stale prepared page snapshot fails with `STALE_PAGE_SNAPSHOT`; this is a
   deterministic concurrency-safety failure and is recorded before page block
   or chunk replacement begins.
+- Final workflow audit updates are separate from business commits. If one fails,
+  the workflow remains `running`, the service emits a sanitized
+  `workflow_audit_update_failed` event with `workflow_id`, `audit_action`, and
+  `audit_status`, and the business result is not retried.
+- `WORKFLOW_AUDIT_UPDATE_FAILED` is returned as a distinct service/API error.
+  Operators reconcile the stale running workflow only after confirming the
+  business outcome.
 
 ## Vector Retrieval Metadata
 
@@ -78,7 +85,8 @@ What belongs here:
   `EMBEDDING_PROVIDER_NOT_CONFIGURED`, `EMBEDDING_PROVIDER_ERROR`,
   `VECTOR_DIMENSION_MISMATCH`, `VECTOR_QUERY_FAILED`,
   `VECTOR_UPSERT_FAILED`, `TELEGRAM_NOT_CONFIGURED`,
-  `TELEGRAM_SEND_FAILED`, and `TELEGRAM_FILE_DOWNLOAD_FAILED`.
+  `TELEGRAM_SEND_FAILED`, `TELEGRAM_FILE_DOWNLOAD_FAILED`, and
+  `WORKFLOW_AUDIT_UPDATE_FAILED`.
 - Current business-rule and workflow reasons:
   `CHANGE_REQUEST_NOT_FOUND`, `WRITE_POLICY_VIOLATION`,
   `DUPLICATE_SOURCE`, and `UNKNOWN_ERROR`.

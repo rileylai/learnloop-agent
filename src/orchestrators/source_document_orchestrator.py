@@ -7,7 +7,7 @@ from http import HTTPStatus
 from typing import Optional
 
 from src.db.unit_of_work import UnitOfWorkFactory
-from src.services import WorkflowRunService
+from src.services import WorkflowRunAuditUpdateError, WorkflowRunService
 
 SUPPORTED_SOURCE_TYPES = {"pdf", "url", "youtube", "screenshot", "chat_text"}
 
@@ -123,6 +123,8 @@ class SourceDocumentOrchestrator:
                     sort_keys=True,
                 ),
             )
+        except WorkflowRunAuditUpdateError:
+            raise
         except Exception as exc:
             self._workflow_run_service.mark_workflow_failed(
                 workflow_run.id,

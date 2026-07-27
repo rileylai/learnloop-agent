@@ -7,7 +7,11 @@ from http import HTTPStatus
 from typing import Any, Dict, Optional
 
 from src.db.unit_of_work import UnitOfWorkFactory
-from src.services import STANDARD_FAILURE_REASONS, WorkflowRunService
+from src.services import (
+    STANDARD_FAILURE_REASONS,
+    WorkflowRunAuditUpdateError,
+    WorkflowRunService,
+)
 from src.tools import ToolContext, ToolRegistry
 
 URL_ARTICLE_PARSER_TOOL_NAME = "url_article_parser"
@@ -120,6 +124,8 @@ class URLIngestionOrchestrator:
                     sort_keys=True,
                 ),
             )
+        except WorkflowRunAuditUpdateError:
+            raise
         except URLIngestionError as exc:
             self._mark_failed_workflow(
                 workflow_run_id=workflow_run.id,

@@ -19,7 +19,15 @@ class JsonFormatter(logging.Formatter):
             "event": sanitize_sensitive_text(record.getMessage()),
         }
 
-        for key in ("workflow_id", "path", "method", "status_code", "duration_ms"):
+        for key in (
+            "workflow_id",
+            "path",
+            "method",
+            "status_code",
+            "duration_ms",
+            "audit_action",
+            "audit_status",
+        ):
             value = getattr(record, key, None)
             if value is not None:
                 if isinstance(value, str):

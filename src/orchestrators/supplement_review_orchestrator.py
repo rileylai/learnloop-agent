@@ -16,7 +16,11 @@ from src.orchestrators.supplement_proposal_schema import (
     parse_supplement_proposal_json,
 )
 from src.repositories import ChangeRequestRepository, NotionPageRepository
-from src.services import STANDARD_FAILURE_REASONS, WorkflowRunService
+from src.services import (
+    STANDARD_FAILURE_REASONS,
+    WorkflowRunAuditUpdateError,
+    WorkflowRunService,
+)
 from src.tools import ToolContext, ToolRegistry
 
 CHANGE_REQUEST_STATUS_PENDING = "pending"
@@ -273,6 +277,8 @@ class SupplementReviewOrchestrator:
                 reviewer=normalized_reviewer,
                 reason=reason,
             )
+        except WorkflowRunAuditUpdateError:
+            raise
         except SupplementReviewError as exc:
             self._mark_failed_workflow(
                 workflow_run_id=workflow_run.id,

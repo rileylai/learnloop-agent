@@ -2,6 +2,7 @@ from time import perf_counter
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from src.app.api import (
     notion_index_router,
@@ -12,6 +13,7 @@ from src.app.api import (
 )
 from src.app.config import get_settings
 from src.observability.logger import configure_logging, get_logger
+from src.services import WorkflowRunAuditUpdateError
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -23,6 +25,22 @@ app.include_router(qa_router)
 app.include_router(source_ingest_router)
 app.include_router(supplement_router)
 app.include_router(telegram_router)
+
+
+@app.exception_handler(WorkflowRunAuditUpdateError)
+async def workflow_run_audit_update_exception_handler(
+    request: Request,
+    exc: WorkflowRunAuditUpdateError,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.http_status_code,
+        content={
+            "error_code": exc.error_code,
+            "message": "Workflow audit update failed after business work completed",
+            "failure_reason": exc.failure_reason,
+            "workflow_run_id": exc.workflow_run_id,
+        },
+    )
 
 
 @app.middleware("http")

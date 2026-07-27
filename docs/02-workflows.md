@@ -113,6 +113,27 @@ Rules:
   only one attempt may commit `accepted`.
 - Reject and edit-later paths keep Step 29 behavior and do not call Notion write adapters.
 
+## Workflow Audit Update Reconciliation (Step 64)
+
+Final workflow audit updates are a separate boundary from business work:
+
+```text
+Business transaction commits
+-> Attempt final workflow audit update
+-> If audit update fails, keep workflow_run status=running
+-> Emit WORKFLOW_AUDIT_UPDATE_FAILED
+-> Reconcile the stale running workflow explicitly when the final outcome is known
+```
+
+Rules:
+- A final audit update failure must not rollback or rerun committed business work.
+- A final audit update failure must not be routed through the business failure
+  handler or mark the workflow failed after business success.
+- If business work fails first, the original business exception remains the
+  surfaced error even when the failure-audit update also fails.
+- `reconcile_stale_running_workflow()` only transitions a workflow currently in
+  `running` to an explicitly supplied terminal status.
+
 ## Telegram Entrypoint Workflow (Step 32)
 
 ```text
