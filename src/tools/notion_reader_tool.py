@@ -31,6 +31,15 @@ class NotionReaderClient:
         raise NotImplementedError
 
 
+class NotionReaderClientError(Exception):
+    """Safe, deterministic error raised by a Notion reader client."""
+
+    def __init__(self, *, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
 class InMemoryNotionReaderClient(NotionReaderClient):
     def __init__(self, pages: Dict[str, NotionPageTree]) -> None:
         self._pages = pages
@@ -87,10 +96,13 @@ class NotionReaderTool(Tool):
 
         try:
             page_tree = self._notion_reader_client.fetch_page_tree(page_id)
+        except NotionReaderClientError as exc:
+            return ToolResult.failure(code=exc.code, message=exc.message)
         except Exception as exc:
+            _ = exc
             return ToolResult.failure(
                 code="NOTION_BLOCK_FETCH_FAILED",
-                message=f"Failed to fetch Notion block tree: {exc}",
+                message="Failed to fetch Notion block tree",
             )
 
         if page_tree is None:

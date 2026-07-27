@@ -15,11 +15,12 @@ Do not weaken these rules without updating the design docs and recording a decis
 
 ## Current Verification Boundary
 
-These invariants are confirmed by deterministic backend tests and in-memory
-Notion writer evaluations. They have not yet been verified against a real
-Notion writer because no live Notion adapter is wired. Live integration work
-must preserve every invariant below and add contract plus opt-in sandbox
-verification; it must not replace deterministic policy with prompt behavior.
+These invariants are confirmed by deterministic backend tests, in-memory
+Notion writer evaluations, and fake-transport tests for the read-only live
+Notion reader. They have not yet been verified against a real Notion writer or
+workspace. Live integration work must preserve every invariant below and add
+contract plus opt-in sandbox verification; it must not replace deterministic
+policy with prompt behavior.
 
 ## Safety Invariants
 | Guardrail | Rule |

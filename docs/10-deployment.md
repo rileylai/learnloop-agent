@@ -36,7 +36,9 @@ The repository is demo-ready, not local-user-ready or release-ready.
 - Shared page indexing requires `OPENAI_API_KEY` because embeddings fail
   closed. The one-command mock demo injects fake embeddings and is the only
   no-key indexing path.
-- `NOTION_TOKEN` is present in settings but no real Notion adapter consumes it.
+- The read-only Notion REST adapter exists and consumes `NOTION_TOKEN` when
+  constructed, but default runtime wiring remains on mock data until Step 71
+  adds explicit `NOTION_BACKEND=mock|live` selection.
 - Redis/RQ classes exist, but runtime requests do not enqueue jobs and there is
   no worker entrypoint.
 - Tesseract is required for OCR. Useful non-English OCR also requires matching

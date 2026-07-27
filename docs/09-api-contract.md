@@ -23,7 +23,8 @@ Current contract gaps:
 
 - `/api/notion/index/full` and `/api/notion/index/status` are not implemented.
 - Notion index routes use the bundled mock reader in default runtime wiring;
-  there is no real Notion adapter.
+  a read-only Notion REST adapter exists behind `NotionReaderTool`, but explicit
+  mock/live runtime selection is deferred to Step 71.
 - Proposal list/detail APIs are missing, and proposal responses do not expose
   enough content for a normal human review.
 - `target_notion_page_id` is an internal database identifier rather than a

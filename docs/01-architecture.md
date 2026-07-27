@@ -108,8 +108,10 @@ The architecture sections in this document describe both implemented
 boundaries and the target MVP integration shape. Current runtime wiring is:
 
 - `get_tool_registry()` registers a bundled JSON/in-memory Notion reader and a
-  separate empty in-memory Notion writer. There is no real Notion API adapter,
-  and `NOTION_TOKEN` is not consumed by a client.
+  separate empty in-memory Notion writer. `src/tools/notion_api_reader_client.py`
+  now provides a read-only Notion REST adapter with injected transport, page and
+  block pagination, and safe error mapping. Runtime selection remains on the
+  bundled mock reader until Step 71 adds explicit `NOTION_BACKEND` wiring.
 - Real OpenAI LLM and embedding adapters are registered only when
   `OPENAI_API_KEY` is present. Shared page indexing requires the embedding
   adapter and fails closed when it is absent.

@@ -16,10 +16,11 @@ Notion is the source of truth for note content.
 ## Current Verification Boundary
 
 The permission model is enforced in deterministic tests with mock/in-memory
-Notion clients. Runtime dependency wiring does not yet contain a real Notion
-reader or writer, so no real Notion append has been verified. The future live
-adapter must expose append-only operations and must not add update, delete,
-move, or original-note write capabilities.
+Notion clients and the read-only live reader adapter's fake-transport tests.
+Runtime dependency wiring still selects the mock reader until Step 71 adds an
+explicit backend switch, so no real Notion workspace access or append has been
+verified. The future live writer must expose append-only operations and must
+not add update, delete, move, or original-note write capabilities.
 
 ## Ownership Types
 | Ownership type | Meaning |
