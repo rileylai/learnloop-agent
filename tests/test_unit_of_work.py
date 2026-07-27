@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.db import (
+from src.db.unit_of_work import (
     SqlAlchemyUnitOfWork,
     UnitOfWorkAlreadyActiveError,
     UnitOfWorkInactiveError,

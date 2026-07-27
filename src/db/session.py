@@ -1,17 +1,13 @@
-from typing import Callable, Generator, TYPE_CHECKING
+from typing import Callable, Generator
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from src.app.config import get_settings
+from src.db.unit_of_work import SqlAlchemyUnitOfWork, UnitOfWorkFactory
 
 DEFAULT_DATABASE_URL = "postgresql+psycopg://learnloop:learnloop@localhost:5432/learnloop"
 SessionFactory = Callable[[], Session]
-
-if TYPE_CHECKING:
-    from src.db.unit_of_work import SqlAlchemyUnitOfWork
-
-UnitOfWorkFactory = Callable[[], "SqlAlchemyUnitOfWork"]
 
 
 def get_database_url() -> str:
@@ -36,6 +32,4 @@ def get_db_session_factory() -> SessionFactory:
 
 
 def get_unit_of_work_factory() -> UnitOfWorkFactory:
-    from src.db.unit_of_work import SqlAlchemyUnitOfWork
-
     return lambda: SqlAlchemyUnitOfWork(SessionLocal)

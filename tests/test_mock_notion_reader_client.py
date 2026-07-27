@@ -11,13 +11,9 @@ from sqlalchemy.pool import StaticPool
 
 from src.db.base import Base
 from src.db.models import KnowledgeChunk, NotionBlock, NotionPage, WorkflowRun
+from src.db.unit_of_work import SqlAlchemyUnitOfWork
 from src.orchestrators import NotionPageIndexOrchestrator
 from src.providers import EmbeddingClient, EmbeddingRequest, EmbeddingResponse
-from src.repositories import (
-    ChunkRepository,
-    NotionBlockRepository,
-    NotionPageRepository,
-)
 from src.services import WorkflowRunService
 from src.tools import (
     DEFAULT_MOCK_NOTION_DATA_DIR,
@@ -128,10 +124,8 @@ def test_json_mock_notion_reader_client_indexes_demo_page_into_chunks() -> None:
         )
         orchestrator = NotionPageIndexOrchestrator(
             tool_registry=registry,
-            notion_page_repository=NotionPageRepository(session),
-            notion_block_repository=NotionBlockRepository(session),
+            unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(session_factory),
             workflow_run_service=WorkflowRunService(session_factory),
-            chunk_repository=ChunkRepository(session),
             embedding_client=_FakeEmbeddingClient(),
         )
 

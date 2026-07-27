@@ -51,6 +51,6 @@ class NotionPageRepository:
             page.notion_path = notion_path
             page.last_edited_time = last_edited_time
 
-        self._session.commit()
+        self._session.flush()
         self._session.refresh(page)
         return page

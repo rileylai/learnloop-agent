@@ -1,6 +1,6 @@
 from src.app.config import get_settings
-from src.db import SqlAlchemyUnitOfWork
 from src.db.session import DEFAULT_DATABASE_URL, get_database_url, get_unit_of_work_factory
+from src.db.unit_of_work import SqlAlchemyUnitOfWork
 
 
 def _clear_settings_cache() -> None:

@@ -5,15 +5,14 @@ from typing import Callable, Optional, Type
 
 from sqlalchemy.orm import Session
 
-from src.repositories import (
-    ChangeRequestRepository,
-    ChunkRepository,
-    NotionBlockRepository,
-    NotionPageRepository,
-    SourceDocumentRepository,
-)
+from src.repositories.change_request_repository import ChangeRequestRepository
+from src.repositories.chunk_repository import ChunkRepository
+from src.repositories.notion_block_repository import NotionBlockRepository
+from src.repositories.notion_page_repository import NotionPageRepository
+from src.repositories.source_document_repository import SourceDocumentRepository
 
 SessionFactory = Callable[[], Session]
+UnitOfWorkFactory = Callable[[], "SqlAlchemyUnitOfWork"]
 
 
 class UnitOfWorkError(RuntimeError):

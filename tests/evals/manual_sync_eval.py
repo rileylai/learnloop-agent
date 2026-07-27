@@ -16,6 +16,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from src.db.base import Base  # noqa: E402
 from src.db.models import KnowledgeChunk, NotionBlock, NotionPage, WorkflowRun  # noqa: E402
+from src.db.unit_of_work import SqlAlchemyUnitOfWork  # noqa: E402
 from src.orchestrators import (  # noqa: E402
     NotionIncrementalIndexOrchestrator,
     NotionPageIndexOrchestrator,
@@ -28,8 +29,6 @@ from src.providers import (  # noqa: E402
 from src.rag import ProductionChunkRetriever  # noqa: E402
 from src.repositories import (  # noqa: E402
     ChunkRepository,
-    NotionBlockRepository,
-    NotionPageRepository,
 )
 from src.services import WorkflowRunService  # noqa: E402
 from src.tools import (  # noqa: E402
@@ -88,7 +87,6 @@ async def evaluate_manual_sync_reconciliation() -> ManualSyncEvalResult:
 
     try:
         index_orchestrator = _build_index_orchestrator(
-            session=session,
             session_factory=session_factory,
             pages=pages,
         )
@@ -176,7 +174,6 @@ def format_manual_sync_eval_result(result: ManualSyncEvalResult) -> str:
 
 def _build_index_orchestrator(
     *,
-    session: Session,
     session_factory,
     pages: Dict[str, NotionPageTree],
 ) -> NotionPageIndexOrchestrator:
@@ -184,10 +181,8 @@ def _build_index_orchestrator(
     registry.register_tool(NotionReaderTool(InMemoryNotionReaderClient(pages)))
     return NotionPageIndexOrchestrator(
         tool_registry=registry,
-        notion_page_repository=NotionPageRepository(session),
-        notion_block_repository=NotionBlockRepository(session),
+        unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(session_factory),
         workflow_run_service=WorkflowRunService(session_factory),
-        chunk_repository=ChunkRepository(session),
         embedding_client=_FakeEmbeddingClient(),
     )
 

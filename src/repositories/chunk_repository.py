@@ -117,7 +117,7 @@ class ChunkRepository:
             self._session.flush()
             inserted.append(knowledge_chunk)
 
-        self._session.commit()
+        self._session.flush()
         for chunk in inserted:
             self._session.refresh(chunk)
         return inserted
@@ -140,7 +140,7 @@ class ChunkRepository:
             )
             .delete(synchronize_session=False)
         )
-        self._session.commit()
+        self._session.flush()
         return int(deleted_count or 0)
 
     def list_production_chunks(

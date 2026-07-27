@@ -13,7 +13,13 @@ from src.app.dependencies import (
     get_tool_registry,
 )
 from src.app.schemas import TelegramWebhookRequest, TelegramWebhookResponse
-from src.db.session import SessionFactory, get_db_session, get_db_session_factory
+from src.db.session import (
+    SessionFactory,
+    UnitOfWorkFactory,
+    get_db_session,
+    get_db_session_factory,
+    get_unit_of_work_factory,
+)
 from src.orchestrators import (
     DocumentIngestionOrchestrator,
     ImageOCRIngestionOrchestrator,
@@ -33,7 +39,6 @@ from src.providers import EmbeddingClient, ProviderRouter
 from src.repositories import (
     ChangeRequestRepository,
     ChunkRepository,
-    NotionBlockRepository,
     NotionPageRepository,
     SourceDocumentRepository,
 )
@@ -53,6 +58,7 @@ def _build_telegram_gateway_orchestrator(
     *,
     db_session: Session,
     db_session_factory: SessionFactory,
+    unit_of_work_factory: UnitOfWorkFactory,
     tool_registry: ToolRegistry,
     provider_router: ProviderRouter,
     embedding_client: Optional[EmbeddingClient],
@@ -104,10 +110,8 @@ def _build_telegram_gateway_orchestrator(
             tool_registry=tool_registry,
             page_index_orchestrator=NotionPageIndexOrchestrator(
                 tool_registry=tool_registry,
-                notion_page_repository=NotionPageRepository(db_session),
-                notion_block_repository=NotionBlockRepository(db_session),
+                unit_of_work_factory=unit_of_work_factory,
                 workflow_run_service=workflow_run_service,
-                chunk_repository=ChunkRepository(db_session),
                 embedding_client=embedding_client,
                 cost_tracker=cost_tracker,
             ),
@@ -130,6 +134,7 @@ async def handle_telegram_webhook(
     request: Request,
     db_session: Session = Depends(get_db_session),
     db_session_factory: SessionFactory = Depends(get_db_session_factory),
+    unit_of_work_factory: UnitOfWorkFactory = Depends(get_unit_of_work_factory),
     tool_registry: ToolRegistry = Depends(get_tool_registry),
     provider_router: ProviderRouter = Depends(get_provider_router),
     embedding_client: Optional[EmbeddingClient] = Depends(get_embedding_client),
@@ -139,6 +144,7 @@ async def handle_telegram_webhook(
     orchestrator = _build_telegram_gateway_orchestrator(
         db_session=db_session,
         db_session_factory=db_session_factory,
+        unit_of_work_factory=unit_of_work_factory,
         tool_registry=tool_registry,
         provider_router=provider_router,
         embedding_client=embedding_client,

@@ -24,7 +24,8 @@ from src.db.models import (
     SourceDocument,
     WorkflowRun,
 )
-from src.db.session import get_db_session, get_db_session_factory
+from src.db.session import get_db_session, get_db_session_factory, get_unit_of_work_factory
+from src.db.unit_of_work import SqlAlchemyUnitOfWork
 from src.providers import (
     EmbeddingClient,
     EmbeddingRequest,
@@ -308,6 +309,9 @@ def test_supplement_propose_api_creates_pending_change_request() -> None:
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_provider_router] = _provider_router_override
 
     try:
@@ -401,6 +405,9 @@ def test_supplement_propose_api_uses_duplicate_reference_without_provider() -> N
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_provider_router] = _provider_router_override
 
     try:
@@ -476,6 +483,9 @@ def test_supplement_propose_api_returns_llm_output_invalid() -> None:
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_provider_router] = _provider_router_override
 
     try:
@@ -534,6 +544,9 @@ def test_supplement_propose_api_returns_provider_not_found_when_provider_missing
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_provider_router] = _provider_router_override
 
     try:
@@ -628,6 +641,9 @@ def test_supplement_accept_api_appends_and_reindexes_before_accepting() -> None:
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
     app.dependency_overrides[get_embedding_client] = _embedding_client_override
 
@@ -750,6 +766,9 @@ def test_supplement_accept_api_requires_target_page_for_safe_append() -> None:
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -808,6 +827,9 @@ def test_supplement_reject_api_transitions_pending_to_rejected_without_notion_wr
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -871,6 +893,9 @@ def test_supplement_edit_later_api_keeps_pending_status() -> None:
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -921,6 +946,9 @@ def test_supplement_review_api_rejects_invalid_state_transition() -> None:
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -966,6 +994,9 @@ def test_supplement_review_api_returns_change_request_not_found() -> None:
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:

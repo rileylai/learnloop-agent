@@ -24,7 +24,8 @@ from src.db.models import (
     SourceDocument,
     WorkflowRun,
 )
-from src.db.session import get_db_session, get_db_session_factory
+from src.db.session import get_db_session, get_db_session_factory, get_unit_of_work_factory
+from src.db.unit_of_work import SqlAlchemyUnitOfWork
 from src.providers import (
     EmbeddingClient,
     EmbeddingRequest,
@@ -360,6 +361,9 @@ def test_telegram_webhook_help_command_sends_reply() -> None:
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -432,6 +436,9 @@ def test_telegram_webhook_skips_non_text_message() -> None:
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -478,6 +485,9 @@ def test_telegram_webhook_returns_service_unavailable_when_not_configured() -> N
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -541,6 +551,9 @@ def test_telegram_webhook_ask_returns_answer_with_scoped_notion_citation() -> No
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
     app.dependency_overrides[get_provider_router] = _provider_router_override
 
@@ -620,6 +633,9 @@ def test_telegram_webhook_ask_without_question_returns_usage_reply() -> None:
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -671,6 +687,9 @@ def test_telegram_webhook_ask_maps_qa_provider_failure() -> None:
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -773,6 +792,9 @@ def test_telegram_webhook_accept_appends_and_reindexes_before_replying() -> None
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
     app.dependency_overrides[get_embedding_client] = _embedding_client_override
 
@@ -886,6 +908,9 @@ def test_telegram_webhook_reject_updates_status_without_notion_write() -> None:
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -988,6 +1013,9 @@ def test_telegram_webhook_accept_fails_closed_without_target_page() -> None:
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -1055,6 +1083,9 @@ def test_telegram_webhook_reject_without_reason_returns_usage_reply() -> None:
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -1147,6 +1178,9 @@ def test_telegram_webhook_ingest_pdf_creates_pending_change_request() -> None:
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
     app.dependency_overrides[get_provider_router] = _provider_router_override
 
@@ -1229,6 +1263,9 @@ def test_telegram_webhook_ingest_pdf_returns_file_download_failed() -> None:
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
 
     try:
@@ -1329,6 +1366,9 @@ def test_telegram_webhook_ingest_screenshot_batch_creates_one_source_and_change_
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
     app.dependency_overrides[get_provider_router] = _provider_router_override
 

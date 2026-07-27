@@ -17,7 +17,8 @@ from src.app.dependencies import get_embedding_client, get_provider_router
 from src.app.main import app
 from src.db.base import Base
 from src.db.models import KnowledgeChunk, NotionBlock, NotionPage, WorkflowRun
-from src.db.session import get_db_session
+from src.db.session import get_db_session, get_db_session_factory, get_unit_of_work_factory
+from src.db.unit_of_work import SqlAlchemyUnitOfWork
 from src.providers import (
     EmbeddingClient,
     EmbeddingRequest,
@@ -123,6 +124,10 @@ def run_demo() -> DemoSummary:
         yield from _db_override(session_factory)
 
     app.dependency_overrides[get_db_session] = _dependency_db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_provider_router] = _provider_router_override
     app.dependency_overrides[get_embedding_client] = _embedding_client_override
 

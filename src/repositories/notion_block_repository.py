@@ -55,7 +55,7 @@ class NotionBlockRepository:
                 inserted_blocks=inserted_blocks,
             )
 
-        self._session.commit()
+        self._session.flush()
         return inserted_blocks
 
     def _insert_block_tree(

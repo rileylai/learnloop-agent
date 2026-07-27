@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field, ValidationError
 
+from src.db.unit_of_work import UnitOfWorkFactory
 from src.providers import EmbeddingClient, EmbeddingClientError, EmbeddingRequest
 from src.rag import (
     BlockPathNode,
@@ -17,12 +18,9 @@ from src.rag import (
     chunk_notion_page,
 )
 from src.repositories import (
-    ChunkRepository,
     ChunkRepositoryError,
-    NotionBlockRepository,
     NotionBlockSnapshot,
     NotionChunkUpsert,
-    NotionPageRepository,
 )
 from src.services import CostTracker, STANDARD_FAILURE_REASONS, WorkflowRunService
 from src.tools import ToolContext, ToolRegistry
@@ -101,18 +99,14 @@ class NotionPageIndexOrchestrator:
         self,
         *,
         tool_registry: ToolRegistry,
-        notion_page_repository: NotionPageRepository,
-        notion_block_repository: NotionBlockRepository,
+        unit_of_work_factory: UnitOfWorkFactory,
         workflow_run_service: WorkflowRunService,
-        chunk_repository: Optional[ChunkRepository] = None,
         embedding_client: Optional[EmbeddingClient] = None,
         cost_tracker: Optional[CostTracker] = None,
     ) -> None:
         self._tool_registry = tool_registry
-        self._notion_page_repository = notion_page_repository
-        self._notion_block_repository = notion_block_repository
+        self._unit_of_work_factory = unit_of_work_factory
         self._workflow_run_service = workflow_run_service
-        self._chunk_repository = chunk_repository
         self._embedding_client = embedding_client
         self._cost_tracker = cost_tracker
 
@@ -261,36 +255,19 @@ class NotionPageIndexOrchestrator:
             )
             embedded_chunk_upserts = chunk_upserts
             embedding_metadata = self._empty_embedding_metadata()
-            if self._chunk_repository is not None and chunk_upserts:
+            if chunk_upserts:
                 embedded_chunk_upserts, embedding_metadata = await self._embed_chunk_upserts(
                     page_id=page_payload.page_id,
                     request_workflow_id=request_workflow_id,
                     chunk_upserts=chunk_upserts,
                 )
 
-            notion_page = self._notion_page_repository.upsert_page_snapshot(
-                notion_page_id=page_payload.page_id,
-                title=page_payload.title,
-                notion_path=page_payload.notion_path,
+            snapshot = self._persist_indexed_page(
+                page_payload=page_payload,
+                block_paths=block_paths,
+                chunk_upserts=embedded_chunk_upserts,
+                embedding_metadata=embedding_metadata,
             )
-            if self._chunk_repository is not None:
-                self._chunk_repository.delete_page_chunks(
-                    notion_page_db_id=notion_page.id,
-                )
-            inserted_blocks = self._notion_block_repository.replace_page_blocks(
-                notion_page_db_id=notion_page.id,
-                root_blocks=[
-                    self._to_block_snapshot(block_snapshot)
-                    for block_snapshot in block_paths
-                ],
-            )
-            indexed_chunk_count = 0
-            if self._chunk_repository is not None:
-                self._chunk_repository.upsert_chunks(
-                    notion_page_db_id=notion_page.id,
-                    chunks=embedded_chunk_upserts,
-                )
-                indexed_chunk_count = len(embedded_chunk_upserts)
         except NotionPageIndexError:
             raise
         except ChunkRepositoryError as exc:
@@ -308,19 +285,51 @@ class NotionPageIndexOrchestrator:
                 failure_reason="UNKNOWN_ERROR",
             ) from exc
 
-        return NotionIndexedPageSnapshot(
-            notion_page_db_id=notion_page.id,
-            notion_page_id=notion_page.notion_page_id,
-            page_title=notion_page.title,
-            notion_path=notion_page.notion_path,
-            indexed_block_count=len(inserted_blocks),
-            indexed_chunk_count=indexed_chunk_count,
-            embedding_provider=embedding_metadata["embedding_provider"],
-            embedding_model=embedding_metadata["embedding_model"],
-            embedding_dimensions=embedding_metadata["embedding_dimensions"],
-            embedding_token_input=embedding_metadata["embedding_token_input"],
-            embedding_estimated_cost=embedding_metadata["embedding_estimated_cost"],
-        )
+        return snapshot
+
+    def _persist_indexed_page(
+        self,
+        *,
+        page_payload: _ToolPagePayload,
+        block_paths: List[BlockPathSnapshot],
+        chunk_upserts: List[NotionChunkUpsert],
+        embedding_metadata: Dict[str, Optional[object]],
+    ) -> NotionIndexedPageSnapshot:
+        with self._unit_of_work_factory() as unit_of_work:
+            notion_page = unit_of_work.notion_pages.upsert_page_snapshot(
+                notion_page_id=page_payload.page_id,
+                title=page_payload.title,
+                notion_path=page_payload.notion_path,
+            )
+            unit_of_work.chunks.delete_page_chunks(
+                notion_page_db_id=notion_page.id,
+            )
+            inserted_blocks = unit_of_work.notion_blocks.replace_page_blocks(
+                notion_page_db_id=notion_page.id,
+                root_blocks=[
+                    self._to_block_snapshot(block_snapshot)
+                    for block_snapshot in block_paths
+                ],
+            )
+            if chunk_upserts:
+                unit_of_work.chunks.upsert_chunks(
+                    notion_page_db_id=notion_page.id,
+                    chunks=chunk_upserts,
+                )
+
+            return NotionIndexedPageSnapshot(
+                notion_page_db_id=notion_page.id,
+                notion_page_id=notion_page.notion_page_id,
+                page_title=notion_page.title,
+                notion_path=notion_page.notion_path,
+                indexed_block_count=len(inserted_blocks),
+                indexed_chunk_count=len(chunk_upserts),
+                embedding_provider=embedding_metadata["embedding_provider"],
+                embedding_model=embedding_metadata["embedding_model"],
+                embedding_dimensions=embedding_metadata["embedding_dimensions"],
+                embedding_token_input=embedding_metadata["embedding_token_input"],
+                embedding_estimated_cost=embedding_metadata["embedding_estimated_cost"],
+            )
 
     def _http_status_for_tool_error(self, error_code: str) -> int:
         return TOOL_ERROR_TO_HTTP_STATUS.get(

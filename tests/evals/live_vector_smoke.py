@@ -21,6 +21,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from src.app.config import get_settings  # noqa: E402
 from src.db.models import KnowledgeChunk, NotionBlock, NotionPage, WorkflowRun  # noqa: E402
+from src.db.unit_of_work import SqlAlchemyUnitOfWork  # noqa: E402
 from src.orchestrators import NotionPageIndexOrchestrator, QAOrchestrator  # noqa: E402
 from src.orchestrators.qa_orchestrator import INSUFFICIENT_INFO_ANSWER  # noqa: E402
 from src.providers import (  # noqa: E402
@@ -37,8 +38,6 @@ from src.rag import (  # noqa: E402
 )
 from src.repositories import (  # noqa: E402
     ChunkRepository,
-    NotionBlockRepository,
-    NotionPageRepository,
 )
 from src.services import CostTracker, PromptTemplateLoader, WorkflowRunService  # noqa: E402
 from src.tools import (  # noqa: E402
@@ -332,7 +331,6 @@ async def evaluate_live_vector_smoke(
         pages = build_live_smoke_pages()
         embedding_client = OpenAIEmbeddingClient(api_key=config.openai_api_key)
         page_index_orchestrator = _build_page_index_orchestrator(
-            session=session,
             session_factory=session_factory,
             pages=pages,
             embedding_client=embedding_client,
@@ -476,7 +474,6 @@ def _build_duplicate_paragraph(label: str) -> str:
 
 def _build_page_index_orchestrator(
     *,
-    session: Session,
     session_factory,
     pages: Dict[str, NotionPageTree],
     embedding_client: OpenAIEmbeddingClient,
@@ -485,10 +482,8 @@ def _build_page_index_orchestrator(
     registry.register_tool(NotionReaderTool(InMemoryNotionReaderClient(pages)))
     return NotionPageIndexOrchestrator(
         tool_registry=registry,
-        notion_page_repository=NotionPageRepository(session),
-        notion_block_repository=NotionBlockRepository(session),
+        unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(session_factory),
         workflow_run_service=WorkflowRunService(session_factory),
-        chunk_repository=ChunkRepository(session),
         embedding_client=embedding_client,
         cost_tracker=CostTracker(),
     )

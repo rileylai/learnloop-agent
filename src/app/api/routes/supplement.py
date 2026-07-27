@@ -20,7 +20,13 @@ from src.app.schemas import (
     SupplementRejectRequest,
     SupplementReviewResponse,
 )
-from src.db.session import SessionFactory, get_db_session, get_db_session_factory
+from src.db.session import (
+    SessionFactory,
+    UnitOfWorkFactory,
+    get_db_session,
+    get_db_session_factory,
+    get_unit_of_work_factory,
+)
 from src.orchestrators import (
     NotionPageIndexOrchestrator,
     SupplementProposeError,
@@ -32,7 +38,6 @@ from src.providers import EmbeddingClient, ProviderRouter
 from src.repositories import (
     ChangeRequestRepository,
     ChunkRepository,
-    NotionBlockRepository,
     NotionPageRepository,
     SourceDocumentRepository,
 )
@@ -72,18 +77,17 @@ def _build_supplement_review_orchestrator(
     *,
     db_session: Session,
     db_session_factory: SessionFactory,
+    unit_of_work_factory: UnitOfWorkFactory,
     tool_registry: ToolRegistry,
     embedding_client: Optional[EmbeddingClient],
     cost_tracker: CostTracker,
 ) -> SupplementReviewOrchestrator:
     page_index_orchestrator = NotionPageIndexOrchestrator(
-            tool_registry=tool_registry,
-            notion_page_repository=NotionPageRepository(db_session),
-            notion_block_repository=NotionBlockRepository(db_session),
-            workflow_run_service=WorkflowRunService(db_session_factory),
-            chunk_repository=ChunkRepository(db_session),
-            embedding_client=embedding_client,
-            cost_tracker=cost_tracker,
+        tool_registry=tool_registry,
+        unit_of_work_factory=unit_of_work_factory,
+        workflow_run_service=WorkflowRunService(db_session_factory),
+        embedding_client=embedding_client,
+        cost_tracker=cost_tracker,
     )
     return SupplementReviewOrchestrator(
         change_request_repository=ChangeRequestRepository(db_session),
@@ -153,6 +157,7 @@ async def accept_supplement_change_request(
     request: Request,
     db_session: Session = Depends(get_db_session),
     db_session_factory: SessionFactory = Depends(get_db_session_factory),
+    unit_of_work_factory: UnitOfWorkFactory = Depends(get_unit_of_work_factory),
     tool_registry: ToolRegistry = Depends(get_tool_registry),
     embedding_client: Optional[EmbeddingClient] = Depends(get_embedding_client),
     cost_tracker: CostTracker = Depends(get_cost_tracker),
@@ -160,6 +165,7 @@ async def accept_supplement_change_request(
     orchestrator = _build_supplement_review_orchestrator(
         db_session=db_session,
         db_session_factory=db_session_factory,
+        unit_of_work_factory=unit_of_work_factory,
         tool_registry=tool_registry,
         embedding_client=embedding_client,
         cost_tracker=cost_tracker,
@@ -200,6 +206,7 @@ async def reject_supplement_change_request(
     request: Request,
     db_session: Session = Depends(get_db_session),
     db_session_factory: SessionFactory = Depends(get_db_session_factory),
+    unit_of_work_factory: UnitOfWorkFactory = Depends(get_unit_of_work_factory),
     tool_registry: ToolRegistry = Depends(get_tool_registry),
     embedding_client: Optional[EmbeddingClient] = Depends(get_embedding_client),
     cost_tracker: CostTracker = Depends(get_cost_tracker),
@@ -207,6 +214,7 @@ async def reject_supplement_change_request(
     orchestrator = _build_supplement_review_orchestrator(
         db_session=db_session,
         db_session_factory=db_session_factory,
+        unit_of_work_factory=unit_of_work_factory,
         tool_registry=tool_registry,
         embedding_client=embedding_client,
         cost_tracker=cost_tracker,
@@ -248,6 +256,7 @@ async def edit_later_supplement_change_request(
     request: Request,
     db_session: Session = Depends(get_db_session),
     db_session_factory: SessionFactory = Depends(get_db_session_factory),
+    unit_of_work_factory: UnitOfWorkFactory = Depends(get_unit_of_work_factory),
     tool_registry: ToolRegistry = Depends(get_tool_registry),
     embedding_client: Optional[EmbeddingClient] = Depends(get_embedding_client),
     cost_tracker: CostTracker = Depends(get_cost_tracker),
@@ -255,6 +264,7 @@ async def edit_later_supplement_change_request(
     orchestrator = _build_supplement_review_orchestrator(
         db_session=db_session,
         db_session_factory=db_session_factory,
+        unit_of_work_factory=unit_of_work_factory,
         tool_registry=tool_registry,
         embedding_client=embedding_client,
         cost_tracker=cost_tracker,

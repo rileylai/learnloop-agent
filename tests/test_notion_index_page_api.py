@@ -13,7 +13,8 @@ from src.app.dependencies import get_embedding_client, get_tool_registry
 from src.app.main import app
 from src.db.base import Base
 from src.db.models import KnowledgeChunk, NotionBlock, NotionPage, WorkflowRun
-from src.db.session import get_db_session, get_db_session_factory
+from src.db.session import get_db_session, get_db_session_factory, get_unit_of_work_factory
+from src.db.unit_of_work import SqlAlchemyUnitOfWork
 from src.providers import EmbeddingClient, EmbeddingRequest, EmbeddingResponse
 from src.tools import (
     InMemoryNotionReaderClient,
@@ -259,6 +260,9 @@ def test_index_page_api_persists_page_and_nested_blocks() -> None:
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
     app.dependency_overrides[get_embedding_client] = _embedding_client_override
 
@@ -341,6 +345,9 @@ def test_index_page_api_builds_paths_from_block_hierarchy() -> None:
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
     app.dependency_overrides[get_embedding_client] = _embedding_client_override
 
@@ -400,6 +407,9 @@ def test_index_page_api_replaces_existing_page_blocks() -> None:
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
     app.dependency_overrides[get_embedding_client] = _embedding_client_override
 
@@ -449,6 +459,9 @@ def test_index_page_api_returns_not_found_when_page_missing() -> None:
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
     app.dependency_overrides[get_embedding_client] = _embedding_client_override
 
@@ -489,6 +502,9 @@ def test_index_page_api_fails_closed_when_embedding_provider_missing() -> None:
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
     app.dependency_overrides[get_embedding_client] = lambda: None
 
@@ -533,6 +549,9 @@ def test_index_incremental_api_reconciles_manual_deletion_with_page_replacement(
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
     app.dependency_overrides[get_embedding_client] = _embedding_client_override
 
@@ -629,6 +648,9 @@ def test_index_incremental_api_returns_not_found_when_any_page_missing() -> None
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
     app.dependency_overrides[get_embedding_client] = _embedding_client_override
 
@@ -742,6 +764,9 @@ def test_index_incremental_api_backfills_only_requested_legacy_page_vectors() ->
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
     app.dependency_overrides[get_tool_registry] = _tool_registry_override
     app.dependency_overrides[get_embedding_client] = _embedding_client_override
 
