@@ -45,6 +45,23 @@ def test_pgvector_migration_upgrades_and_downgrades_fresh_sqlite_db(
     assert "ix_knowledge_chunks_notion_block_id" in knowledge_chunk_indexes
     assert "ix_knowledge_chunks_notion_path" in knowledge_chunk_indexes
     assert "ix_notion_blocks_notion_page_id" in notion_block_indexes
+    api_idempotency_columns = {
+        column["name"]
+        for column in inspector.get_columns("api_idempotency_records")
+    }
+    assert {
+        "request_scope",
+        "idempotency_key",
+        "request_fingerprint",
+        "status",
+        "response_status_code",
+        "response_body",
+        "response_headers_json",
+    } <= api_idempotency_columns
+    assert "uq_api_idempotency_scope_key" in {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("api_idempotency_records")
+    }
 
     command.downgrade(config, "989de3f24186")
 

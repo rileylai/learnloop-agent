@@ -44,6 +44,15 @@ from src.services.telegram_update_idempotency import (
     TelegramUpdateIdempotencyError,
     TelegramUpdateIdempotencyService,
 )
+from src.services.api_idempotency import (
+    API_IDEMPOTENCY_FAILED,
+    API_IDEMPOTENCY_RUNNING,
+    API_IDEMPOTENCY_SUCCEEDED,
+    ApiIdempotencyClaim,
+    ApiIdempotencyConflictError,
+    ApiIdempotencyService,
+    ApiIdempotencyStoreError,
+)
 
 __all__ = [
     "CostTracker",
@@ -81,4 +90,11 @@ __all__ = [
     "TelegramUpdateClaim",
     "TelegramUpdateIdempotencyError",
     "TelegramUpdateIdempotencyService",
+    "API_IDEMPOTENCY_FAILED",
+    "API_IDEMPOTENCY_RUNNING",
+    "API_IDEMPOTENCY_SUCCEEDED",
+    "ApiIdempotencyClaim",
+    "ApiIdempotencyConflictError",
+    "ApiIdempotencyService",
+    "ApiIdempotencyStoreError",
 ]

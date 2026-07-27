@@ -13,15 +13,18 @@ from src.app.api import (
     telegram_router,
 )
 from src.app.config import get_settings
+from src.app.api_idempotency import api_idempotency_middleware
 from src.app.dependencies import require_api_bearer_token
+from src.db.session import get_db_session_factory
 from src.observability.logger import configure_logging, get_logger
-from src.services import WorkflowRunAuditUpdateError
+from src.services import ApiIdempotencyService, WorkflowRunAuditUpdateError
 
 settings = get_settings()
 configure_logging(settings.log_level)
 request_logger = get_logger("learnloop.request")
 
 app = FastAPI(title="LearnLoop Agent")
+app.state.api_idempotency_service = ApiIdempotencyService(get_db_session_factory())
 protected_api_dependency = [Depends(require_api_bearer_token)]
 
 app.include_router(notion_index_router, dependencies=protected_api_dependency)
@@ -30,6 +33,7 @@ app.include_router(qa_router, dependencies=protected_api_dependency)
 app.include_router(source_ingest_router, dependencies=protected_api_dependency)
 app.include_router(supplement_router, dependencies=protected_api_dependency)
 app.include_router(telegram_router)
+app.middleware("http")(api_idempotency_middleware)
 
 
 @app.exception_handler(WorkflowRunAuditUpdateError)

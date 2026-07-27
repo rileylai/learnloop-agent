@@ -37,6 +37,12 @@ Current contract gaps:
   succeeded/failed updates replay the stored outcome; a duplicate currently
   running update returns `202` with `status=running` and
   `skipped_reason=DUPLICATE_UPDATE_IN_PROGRESS`.
+- `POST /api/ingest/*` and `POST /api/supplement/*` accept an optional
+  `Idempotency-Key` header. The same key and canonical payload replay the
+  persisted response; a different payload returns `409` with
+  `error_code=IDEMPOTENCY_KEY_CONFLICT`; a concurrent owner returns `202` with
+  `error_code=IDEMPOTENCY_IN_PROGRESS`. Requests without the header keep the
+  existing behavior.
 
 Examples below document route schemas and deterministic tested behavior. They
 do not by themselves prove live Notion, Telegram, OpenAI, parser, or worker
@@ -67,6 +73,25 @@ workflow run starts or a reply is sent.
 
 These checks are deterministic backend policy. They do not inspect or delegate
 authorization decisions to the LLM.
+
+## Mutation Idempotency
+
+The API middleware applies idempotency to these POST mutation families:
+`/api/ingest/source`, `/api/ingest/document`, `/api/ingest/url`,
+`/api/ingest/youtube`, `/api/ingest/chat-text`, `/api/ingest/image-ocr`, and
+`/api/supplement/propose`, `/accept`, `/reject`, `/edit-later`.
+
+Send the same key on a retry:
+
+```text
+Idempotency-Key: source-upload-2026-07-28-001
+```
+
+The key is scoped by HTTP method and path. JSON payloads are fingerprinted in
+canonical key order; multipart boundaries are normalized. The persistent
+ledger stores only the fingerprint and safe response replay data. Telegram
+webhook requests are excluded because their `update_id` ledger owns that
+contract.
 
 ### GET `/health`
 

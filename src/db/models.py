@@ -198,3 +198,29 @@ class TelegramUpdateLedger(Base):
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
     )
+
+
+class ApiIdempotencyRecord(Base):
+    __tablename__ = "api_idempotency_records"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    request_scope: Mapped[str] = mapped_column(String(256), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    response_status_code: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+    response_body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    response_headers_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )

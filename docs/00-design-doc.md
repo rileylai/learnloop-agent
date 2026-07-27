@@ -493,6 +493,30 @@ Idempotency rules:
 - A duplicate `succeeded` or `failed` update replays the persisted outcome.
 - Updates without `update_id` remain backward-compatible but are not deduped.
 
+### 12.9 api_idempotency_records
+| Column | Type | Description |
+|---|---|---|
+| id | BIGINT (PK) | API idempotency record id. |
+| request_scope | VARCHAR(256) | HTTP method and mutation path. |
+| idempotency_key | VARCHAR(255) | Caller-provided `Idempotency-Key`. |
+| request_fingerprint | VARCHAR(64) | SHA-256 of the canonical request payload. |
+| status | TEXT | `running` / `succeeded` / `failed`. |
+| response_status_code | INT NULL | Persisted response status for replay. |
+| response_body | TEXT NULL | Persisted JSON response body for replay. |
+| response_headers_json | JSON/TEXT NULL | Safe replay headers only. |
+| created_at | TIMESTAMPTZ | Claim time. |
+| updated_at | TIMESTAMPTZ | Last record transition time. |
+
+API mutation idempotency rules:
+- `POST /api/ingest/*` and `POST /api/supplement/*` accept an optional
+  `Idempotency-Key`; no key preserves existing behavior.
+- The first request commits a unique `(request_scope, idempotency_key)` claim
+  before business work. A duplicate running claim returns `202` and does not
+  execute the mutation again.
+- A duplicate completed claim replays the persisted response. Reusing a key
+  with a different canonical payload returns `409`.
+- Telegram webhook deduplication remains owned by `telegram_update_ledger`.
+
 Metadata note:
 - LLM-backed workflows record `provider_name`, `model`, `prompt_id`, and
   `prompt_version` inside workflow metadata JSON.

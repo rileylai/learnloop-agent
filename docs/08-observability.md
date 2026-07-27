@@ -23,6 +23,9 @@ Confirmed:
   service method.
 - Telegram update idempotency persists `running`, `succeeded`, and `failed`
   outcomes without storing raw request payloads or secrets in logs.
+- API ingestion and supplement mutation idempotency persists only a request
+  scope, payload digest, status, and safe response replay fields. It records
+  `running`, `succeeded`, and `failed` outcomes without raw request content.
 
 Missing from the current operator surface:
 
@@ -128,6 +131,8 @@ mode-specific provider configuration is unavailable.
   `EMBEDDING_PROVIDER_NOT_CONFIGURED`, `EMBEDDING_PROVIDER_ERROR`,
   `AUTHENTICATION_FAILED`, `AUTHORIZATION_FAILED`,
   `TELEGRAM_UPDATE_LEDGER_FAILED`,
+  `IDEMPOTENCY_KEY_CONFLICT`, `IDEMPOTENCY_IN_PROGRESS`,
+  `IDEMPOTENCY_STORE_FAILED`,
   `VECTOR_DIMENSION_MISMATCH`, `VECTOR_QUERY_FAILED`,
   `VECTOR_UPSERT_FAILED`, `TELEGRAM_NOT_CONFIGURED`,
   `TELEGRAM_SEND_FAILED`, `TELEGRAM_FILE_DOWNLOAD_FAILED`, and

@@ -48,8 +48,8 @@ The repository is demo-ready, not local-user-ready or release-ready.
   language data installed on the host.
 - Telegram live use additionally needs a bot token, public HTTPS webhook
   delivery, `TELEGRAM_WEBHOOK_SECRET`, and an explicit
-  `TELEGRAM_ALLOWED_CHAT_IDS` policy. Persistent Telegram update idempotency
-  requires applying the latest Alembic migration before starting the API.
+  `TELEGRAM_ALLOWED_CHAT_IDS` policy. Telegram and API mutation idempotency
+  require applying the latest Alembic migration before starting the API.
 
 Release-style local startup must remain blocked until portable preflight,
 live Notion wiring, authentication, worker, and recovery steps in

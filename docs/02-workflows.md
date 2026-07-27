@@ -216,6 +216,28 @@ Rules:
   recovery/reconciliation remains an explicit operator action.
 - Updates without `update_id` retain the pre-Step-75 non-idempotent behavior.
 
+## API Mutation Idempotency Workflow (Step 76)
+
+```text
+POST /api/ingest/* or /api/supplement/* with Idempotency-Key
+-> Canonicalize request payload and compute fingerprint
+-> Atomically claim (method:path, Idempotency-Key) in api_idempotency_records
+-> If running: return 202 processing response
+-> If succeeded/failed: replay persisted response
+-> If fingerprint differs: return 409 conflict
+-> If owner: run the mutation once and persist its response
+```
+
+Rules:
+- The claim is committed before source persistence, proposal generation, or
+  review mutation work starts.
+- JSON object key ordering does not change the fingerprint; multipart boundary
+  values are normalized so equivalent uploads can be retried safely.
+- Only safe response headers are replayed. Request payloads are represented by
+  a digest in the ledger and are not logged as raw content.
+- The middleware scope intentionally excludes Telegram, Notion indexing, QA,
+  and GET routes. Telegram uses its `update_id` ledger.
+
 ## Telegram Ingestion Workflow (Step 33)
 
 ```text
