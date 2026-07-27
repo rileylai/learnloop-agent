@@ -880,7 +880,7 @@ def test_index_incremental_api_returns_not_found_when_any_page_missing() -> None
         client = TestClient(app)
         response = client.post(
             "/api/notion/index/incremental",
-            json={"page_ids": ["page-sync", "missing-page"]},
+            json={"page_ids": ["page-sync", "missing-page", "later-page"]},
         )
         assert response.status_code == 404
         detail = response.json()["detail"]
@@ -894,6 +894,27 @@ def test_index_incremental_api_returns_not_found_when_any_page_missing() -> None
             assert len(workflow_runs) == 1
             assert workflow_runs[0].status == "failed"
             assert workflow_runs[0].failure_reason == "NOTION_PAGE_NOT_FOUND"
+            metadata = json.loads(workflow_runs[0].metadata_json or "{}")
+            assert metadata["processed_page_count"] == 1
+            assert metadata["succeeded_page_count"] == 1
+            assert metadata["succeeded_page_ids"] == ["page-sync"]
+            assert metadata["failed_page_id"] == "missing-page"
+            assert metadata["failed_page_index"] == 1
+            assert metadata["remaining_page_count"] == 1
+            assert metadata["remaining_page_ids"] == ["later-page"]
+
+            persisted_page = (
+                session.query(NotionPage)
+                .filter(NotionPage.notion_page_id == "page-sync")
+                .one_or_none()
+            )
+            assert persisted_page is not None
+            assert (
+                session.query(NotionBlock)
+                .filter(NotionBlock.notion_page_id == persisted_page.id)
+                .count()
+                == 4
+            )
         finally:
             session.close()
     finally:

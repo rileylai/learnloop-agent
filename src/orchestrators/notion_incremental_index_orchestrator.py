@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 from src.orchestrators.notion_page_index_orchestrator import (
     NotionPageIndexError,
@@ -69,6 +69,7 @@ class NotionIncrementalIndexOrchestrator:
 
         indexed_pages: List[NotionIncrementalIndexedPageResult] = []
         current_page_id = ""
+        failed_page_index: Optional[int] = None
         embedding_provider: str | None = None
         embedding_model: str | None = None
         embedding_dimensions: int | None = None
@@ -77,8 +78,9 @@ class NotionIncrementalIndexOrchestrator:
         embedding_estimated_cost_total = 0.0
         embedding_estimated_cost_available = False
         try:
-            for page_id in normalized_page_ids:
+            for page_index, page_id in enumerate(normalized_page_ids):
                 current_page_id = page_id
+                failed_page_index = page_index
                 snapshot = await self._page_index_orchestrator.index_page_snapshot(
                     page_id=page_id,
                     request_workflow_id=request_workflow_id,
@@ -128,6 +130,12 @@ class NotionIncrementalIndexOrchestrator:
                 metadata_json=json.dumps(metadata, sort_keys=True),
             )
         except NotionPageIndexError as exc:
+            succeeded_page_ids = [page.page_id for page in indexed_pages]
+            remaining_page_ids = (
+                normalized_page_ids[failed_page_index + 1 :]
+                if failed_page_index is not None
+                else []
+            )
             self._workflow_run_service.mark_workflow_failed(
                 workflow_run.id,
                 failure_reason=exc.failure_reason,
@@ -135,7 +143,14 @@ class NotionIncrementalIndexOrchestrator:
                     {
                         "operation": "index_incremental",
                         "sync_mode": "manual",
+                        "processed_page_count": len(indexed_pages),
+                        "succeeded_page_count": len(succeeded_page_ids),
+                        "succeeded_page_ids": succeeded_page_ids,
                         "failed_page_id": current_page_id,
+                        "failed_page_index": failed_page_index,
+                        "remaining_page_count": len(remaining_page_ids),
+                        "remaining_page_ids": remaining_page_ids,
+                        "page_ids": normalized_page_ids,
                         "error_code": exc.error_code,
                     },
                     sort_keys=True,

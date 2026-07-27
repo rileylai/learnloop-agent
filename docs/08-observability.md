@@ -31,6 +31,13 @@ What belongs here:
   `embedding_token_input`, and `embedding_estimated_cost`.
 - Manual incremental sync should aggregate embedding token and cost metadata
   across all successfully re-indexed pages in the workflow.
+- Each incremental-sync page is committed through its own short business
+  transaction, so an earlier successful page remains committed when a later
+  page fails.
+- Failed incremental-sync workflow metadata records
+  `succeeded_page_ids`, `failed_page_id`, and `remaining_page_ids`, plus their
+  counts and the zero-based `failed_page_index`. These fields contain page
+  identifiers only, not page content.
 
 ## Vector Retrieval Metadata
 
