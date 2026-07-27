@@ -21,6 +21,11 @@ from src.orchestrators.notion_incremental_index_orchestrator import (
     NotionIncrementalIndexResult,
     NotionIncrementalIndexedPageResult,
 )
+from src.orchestrators.notion_full_index_orchestrator import (
+    NotionFullIndexOrchestrator,
+    NotionFullIndexResult,
+    NotionFullIndexedPageResult,
+)
 from src.orchestrators.notion_page_index_orchestrator import (
     NotionPageIndexError,
     NotionPageIndexOrchestrator,
@@ -99,6 +104,9 @@ __all__ = [
     "NotionIncrementalIndexOrchestrator",
     "NotionIncrementalIndexResult",
     "NotionIncrementalIndexedPageResult",
+    "NotionFullIndexOrchestrator",
+    "NotionFullIndexResult",
+    "NotionFullIndexedPageResult",
     "ChatTextIngestionError",
     "ChatTextIngestionOrchestrator",
     "ChatTextIngestionResult",

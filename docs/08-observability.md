@@ -72,6 +72,11 @@ mode-specific provider configuration is unavailable.
   `succeeded_page_ids`, `failed_page_id`, and `remaining_page_ids`, plus their
   counts and the zero-based `failed_page_index`. These fields contain page
   identifiers only, not page content.
+- Full-index workflow metadata records `discovered_page_count`,
+  `processed_page_count`, and external `page_ids`; a failed full run records
+  succeeded, failed, and remaining page identifiers only.
+- `GET /api/notion/index/status` returns persisted indexing workflow state and
+  safe metadata without re-reading Notion or exposing page content.
 - A stale prepared page snapshot fails with `STALE_PAGE_SNAPSHOT`; this is a
   deterministic concurrency-safety failure and is recorded before page block
   or chunk replacement begins.

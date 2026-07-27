@@ -84,6 +84,41 @@ def test_notion_reader_tool_returns_invalid_argument_for_missing_page_id() -> No
     assert result.error.code == "INVALID_ARGUMENT"
 
 
+def test_notion_reader_tool_lists_page_ids_for_full_index_discovery() -> None:
+    client = InMemoryNotionReaderClient(
+        {
+            "page-b": _sample_page_tree(),
+            "page-a": NotionPageTree(
+                page_id="page-a",
+                title="Earlier Page",
+                notion_path="Knowledge/Earlier",
+            ),
+        }
+    )
+    tool = NotionReaderTool(client)
+    context = ToolContext(workflow_id="wf-001")
+
+    result = asyncio.run(
+        tool.run(context=context, arguments={"action": "list_pages"})
+    )
+
+    assert result.is_error is False
+    assert result.structured_content == {
+        "pages": [
+            {
+                "page_id": "page-a",
+                "title": "Earlier Page",
+                "last_edited_time": None,
+            },
+            {
+                "page_id": "page-nlp-week5",
+                "title": "NLP Week 5",
+                "last_edited_time": "2026-07-27T12:00:00+00:00",
+            },
+        ]
+    }
+
+
 def test_notion_reader_tool_returns_fetch_failed_when_client_raises() -> None:
     client = FailingNotionReaderClient({})
     tool = NotionReaderTool(client)

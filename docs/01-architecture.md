@@ -109,9 +109,15 @@ boundaries and the target MVP integration shape. Current runtime wiring is:
 
 - `get_tool_registry()` registers a bundled JSON/in-memory Notion reader and a
   separate empty in-memory Notion writer. `src/tools/notion_api_reader_client.py`
-  now provides a read-only Notion REST adapter with injected transport, page and
-  block pagination, and safe error mapping. Runtime selection remains on the
-  bundled mock reader until Step 71 adds explicit `NOTION_BACKEND` wiring.
+  now provides a read-only Notion REST adapter with injected transport, page
+  discovery, page/block pagination, and safe error mapping. Runtime selection
+  remains on the bundled mock reader until Step 71 adds explicit
+  `NOTION_BACKEND` wiring.
+- `NotionFullIndexOrchestrator` discovers external Notion page ids through the
+  reader tool, then reuses `NotionPageIndexOrchestrator` for each page's
+  page-level replacement and embedding flow. `GET /api/notion/index/status`
+  reads workflow state through `WorkflowRunService` and does not contact
+  Notion.
 - Real OpenAI LLM and embedding adapters are registered only when
   `OPENAI_API_KEY` is present. Shared page indexing requires the embedding
   adapter and fails closed when it is absent.

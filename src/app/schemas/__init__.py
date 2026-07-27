@@ -1,9 +1,11 @@
 from src.app.schemas.notion_index import (
+    NotionFullIndexResponse,
     NotionIncrementalIndexRequest,
     NotionIncrementalIndexedPage,
     NotionIncrementalIndexResponse,
     NotionPageIndexRequest,
     NotionPageIndexResponse,
+    NotionIndexStatusResponse,
 )
 from src.app.schemas.ops import ReadinessCheck, ReadinessResponse
 from src.app.schemas.qa import QACitation, QARequest, QAResponse
@@ -34,10 +36,12 @@ from src.app.schemas.telegram import (
 __all__ = [
     "QACitation",
     "NotionIncrementalIndexRequest",
+    "NotionFullIndexResponse",
     "NotionIncrementalIndexedPage",
     "NotionIncrementalIndexResponse",
     "NotionPageIndexRequest",
     "NotionPageIndexResponse",
+    "NotionIndexStatusResponse",
     "ReadinessCheck",
     "ReadinessResponse",
     "QARequest",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import List
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -38,3 +39,21 @@ class NotionIncrementalIndexResponse(BaseModel):
     sync_mode: str
     processed_page_count: int
     indexed_pages: List[NotionIncrementalIndexedPage]
+
+
+class NotionFullIndexResponse(BaseModel):
+    workflow_run_id: int
+    status: str
+    discovered_page_count: int
+    processed_page_count: int
+    indexed_pages: List[NotionIncrementalIndexedPage]
+
+
+class NotionIndexStatusResponse(BaseModel):
+    workflow_run_id: int
+    workflow_type: str
+    status: str
+    failure_reason: Optional[str] = None
+    started_at: datetime
+    finished_at: Optional[datetime] = None
+    metadata: Dict[str, Any]

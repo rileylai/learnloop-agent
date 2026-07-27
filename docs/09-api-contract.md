@@ -11,8 +11,10 @@ Implemented routes with release-readiness gaps.
 
 The following routes exist and have deterministic API tests:
 
+- `POST /api/notion/index/full`
 - `POST /api/notion/index/page`
 - `POST /api/notion/index/incremental`
+- `GET /api/notion/index/status`
 - `POST /api/ingest/source`, `/document`, `/url`, `/youtube`, `/chat-text`,
   and `/image-ocr`
 - `POST /api/supplement/propose`, `/accept`, `/reject`, and `/edit-later`
@@ -21,10 +23,10 @@ The following routes exist and have deterministic API tests:
 
 Current contract gaps:
 
-- `/api/notion/index/full` and `/api/notion/index/status` are not implemented.
 - Notion index routes use the bundled mock reader in default runtime wiring;
-  a read-only Notion REST adapter exists behind `NotionReaderTool`, but explicit
-  mock/live runtime selection is deferred to Step 71.
+  a read-only Notion REST adapter with discovery exists behind
+  `NotionReaderTool`, but explicit mock/live runtime selection is deferred to
+  Step 71.
 - Proposal list/detail APIs are missing, and proposal responses do not expose
   enough content for a normal human review.
 - `target_notion_page_id` is an internal database identifier rather than a
@@ -181,6 +183,68 @@ Notes:
 - Route must call orchestrator. Route does not call Notion directly.
 - Reconciliation uses page-level replacement.
 - For each changed page, stale blocks/chunks are removed and current Notion page content is re-indexed.
+
+### POST `/api/notion/index/full`
+
+Discover accessible external Notion page ids and synchronously index each page
+through the shared page-level replacement flow.
+
+Request body: empty.
+
+Success response `200`:
+
+```json
+{
+  "workflow_run_id": 303,
+  "status": "succeeded",
+  "discovered_page_count": 2,
+  "processed_page_count": 2,
+  "indexed_pages": [
+    {
+      "page_id": "page-nlp-week5",
+      "page_title": "NLP Week 5",
+      "notion_path": "Knowledge/NLP/Week5",
+      "indexed_block_count": 18
+    }
+  ]
+}
+```
+
+Notes:
+- Discovery and page reads are read-only Notion operations.
+- The endpoint uses external Notion page ids; internal PostgreSQL ids are not
+  sent to the reader tool.
+- Repeating the operation replaces each discovered page's derived blocks and
+  chunks, so stale content is removed without duplicate page rows.
+- If one page fails, earlier page transactions remain committed and the
+  workflow status records succeeded, failed, and remaining page ids.
+
+### GET `/api/notion/index/status`
+
+Get one indexing workflow status by `workflow_run_id`. If the query parameter
+is omitted, return the latest indexing workflow.
+
+Success response `200`:
+
+```json
+{
+  "workflow_run_id": 303,
+  "workflow_type": "indexing",
+  "status": "succeeded",
+  "failure_reason": null,
+  "started_at": "2026-07-27T10:00:00+00:00",
+  "finished_at": "2026-07-27T10:00:03+00:00",
+  "metadata": {
+    "operation": "index_full",
+    "discovered_page_count": 2,
+    "processed_page_count": 2,
+    "page_ids": ["page-nlp-week5", "page-rag-basics"]
+  }
+}
+```
+
+Status reads PostgreSQL workflow state only and does not contact Notion. Its
+metadata contains counts and identifiers, not page content.
 
 ## Ingestion Foundation API
 

@@ -11,6 +11,7 @@ from src.rag import BlockPathNode, BlockPathSnapshot, build_block_paths
 from src.tools.notion_reader_tool import (
     NotionBlockNode,
     NotionPageTree,
+    NotionPageSummary,
     NotionReaderClient,
     NotionReaderClientError,
 )
@@ -41,6 +42,16 @@ class NotionHTTPTransport:
     ) -> NotionHTTPResponse:
         raise NotImplementedError
 
+    def post_json(
+        self,
+        *,
+        path: str,
+        query: Mapping[str, str],
+        headers: Mapping[str, str],
+        payload: Mapping[str, Any],
+    ) -> NotionHTTPResponse:
+        raise NotionHTTPTransportError("Notion POST transport is not supported")
+
 
 class UrllibNotionHTTPTransport(NotionHTTPTransport):
     """Small stdlib transport for the Notion REST API."""
@@ -66,10 +77,53 @@ class UrllibNotionHTTPTransport(NotionHTTPTransport):
         query: Mapping[str, str],
         headers: Mapping[str, str],
     ) -> NotionHTTPResponse:
+        return self._request_json(
+            method="GET",
+            path=path,
+            query=query,
+            headers=headers,
+            payload=None,
+        )
+
+    def post_json(
+        self,
+        *,
+        path: str,
+        query: Mapping[str, str],
+        headers: Mapping[str, str],
+        payload: Mapping[str, Any],
+    ) -> NotionHTTPResponse:
+        return self._request_json(
+            method="POST",
+            path=path,
+            query=query,
+            headers=headers,
+            payload=payload,
+        )
+
+    def _request_json(
+        self,
+        *,
+        method: str,
+        path: str,
+        query: Mapping[str, str],
+        headers: Mapping[str, str],
+        payload: Optional[Mapping[str, Any]],
+    ) -> NotionHTTPResponse:
         url = f"{self._base_url}/{path.lstrip('/')}"
         if query:
             url = f"{url}?{urlencode(dict(query))}"
-        req = request.Request(url=url, headers=dict(headers), method="GET")
+        request_headers = dict(headers)
+        request_body = None
+        if payload is not None:
+            request_headers["Content-Type"] = "application/json"
+            request_body = json.dumps(dict(payload)).encode("utf-8")
+        req = request.Request(
+            url=url,
+            headers=request_headers,
+            data=request_body,
+            method=method,
+        )
         try:
             with request.urlopen(req, timeout=self._timeout_seconds) as response:
                 status_code = int(response.status)
@@ -175,6 +229,76 @@ class NotionAPIReaderClient(NotionReaderClient):
             blocks=[_to_notion_block_node(block) for block in block_paths],
         )
 
+    def list_pages(self) -> List[NotionPageSummary]:
+        pages: List[NotionPageSummary] = []
+        cursor: Optional[str] = None
+        seen_cursors = set()
+        seen_page_ids = set()
+        while True:
+            payload: Dict[str, Any] = {
+                "filter": {"property": "object", "value": "page"},
+                "page_size": self._page_size,
+            }
+            if cursor is not None:
+                payload["start_cursor"] = cursor
+            response_payload = self._request_json(
+                method="POST",
+                path="/v1/search",
+                query={},
+                payload=payload,
+            )
+            if response_payload is None:
+                raise NotionAPIClientError(
+                    code="NOTION_BLOCK_FETCH_FAILED",
+                    message="Notion discovery response is missing",
+                )
+            raw_results = response_payload.get("results")
+            if not isinstance(raw_results, list):
+                raise NotionAPIClientError(
+                    code="NOTION_BLOCK_FETCH_FAILED",
+                    message="Notion discovery response is invalid",
+                )
+            for item in raw_results:
+                if not isinstance(item, dict) or item.get("object") not in {
+                    None,
+                    "page",
+                }:
+                    continue
+                page_id = item.get("id")
+                if not isinstance(page_id, str) or not page_id.strip():
+                    raise NotionAPIClientError(
+                        code="NOTION_BLOCK_FETCH_FAILED",
+                        message="Notion discovery response is missing page id",
+                    )
+                normalized_page_id = page_id.strip()
+                if normalized_page_id in seen_page_ids:
+                    continue
+                seen_page_ids.add(normalized_page_id)
+                pages.append(
+                    NotionPageSummary(
+                        page_id=normalized_page_id,
+                        title=_extract_page_title(item),
+                        last_edited_time=_parse_datetime(item.get("last_edited_time")),
+                    )
+                )
+
+            if response_payload.get("has_more") is not True:
+                return pages
+            next_cursor = response_payload.get("next_cursor")
+            if not isinstance(next_cursor, str) or not next_cursor.strip():
+                raise NotionAPIClientError(
+                    code="NOTION_BLOCK_FETCH_FAILED",
+                    message="Notion discovery pagination cursor is invalid",
+                )
+            normalized_cursor = next_cursor.strip()
+            if normalized_cursor in seen_cursors:
+                raise NotionAPIClientError(
+                    code="NOTION_BLOCK_FETCH_FAILED",
+                    message="Notion discovery pagination cursor repeated",
+                )
+            seen_cursors.add(normalized_cursor)
+            cursor = normalized_cursor
+
     def _fetch_children(self, parent_id: str) -> List[Dict[str, Any]]:
         results: List[Dict[str, Any]] = []
         cursor: Optional[str] = None
@@ -251,20 +375,31 @@ class NotionAPIReaderClient(NotionReaderClient):
     def _request_json(
         self,
         *,
+        method: str = "GET",
         path: str,
         query: Mapping[str, str],
+        payload: Optional[Mapping[str, Any]] = None,
         not_found_code: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         try:
-            response = self._transport.get_json(
-                path=path,
-                query=query,
-                headers={
-                    "Authorization": f"Bearer {self._token}",
-                    "Notion-Version": self._notion_version,
-                    "Accept": "application/json",
-                },
-            )
+            headers = {
+                "Authorization": f"Bearer {self._token}",
+                "Notion-Version": self._notion_version,
+                "Accept": "application/json",
+            }
+            if method == "POST":
+                response = self._transport.post_json(
+                    path=path,
+                    query=query,
+                    headers=headers,
+                    payload=payload or {},
+                )
+            else:
+                response = self._transport.get_json(
+                    path=path,
+                    query=query,
+                    headers=headers,
+                )
         except NotionHTTPTransportError:
             raise NotionAPIClientError(
                 code="NOTION_BLOCK_FETCH_FAILED",

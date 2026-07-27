@@ -114,6 +114,21 @@ class WorkflowRunService:
             )
         )
 
+    def get_workflow_run(self, workflow_run_id: int) -> Optional[WorkflowRun]:
+        return self._with_repository(
+            lambda repository: repository.get_workflow_run_by_id(workflow_run_id)
+        )
+
+    def get_latest_workflow_run(self, *, workflow_type: str) -> Optional[WorkflowRun]:
+        normalized_type = workflow_type.strip()
+        if not normalized_type:
+            raise WorkflowRunValidationError("workflow_type must not be empty")
+        return self._with_repository(
+            lambda repository: repository.get_latest_workflow_run(
+                workflow_type=normalized_type
+            )
+        )
+
     def mark_workflow_succeeded(
         self,
         workflow_run_id: int,

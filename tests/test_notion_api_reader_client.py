@@ -29,6 +29,17 @@ class _FakeNotionHTTPTransport(NotionHTTPTransport):
         self.calls.append((path, dict(query), dict(headers)))
         return self._responses.pop(0)
 
+    def post_json(
+        self,
+        *,
+        path: str,
+        query: Mapping[str, str],
+        headers: Mapping[str, str],
+        payload: Mapping[str, object],
+    ) -> NotionHTTPResponse:
+        self.calls.append((path, dict(query), dict(headers)))
+        return self._responses.pop(0)
+
 
 def _page_response() -> NotionHTTPResponse:
     return NotionHTTPResponse(
@@ -148,6 +159,68 @@ def test_notion_api_reader_returns_none_for_missing_page() -> None:
 
     assert client.fetch_page_tree("missing-page") is None
     assert len(transport.calls) == 1
+
+
+def test_notion_api_reader_discovers_paginated_external_page_ids() -> None:
+    transport = _FakeNotionHTTPTransport(
+        [
+            NotionHTTPResponse(
+                status_code=200,
+                payload={
+                    "results": [
+                        {
+                            "object": "page",
+                            "id": "page-1",
+                            "last_edited_time": "2026-07-27T10:00:00.000Z",
+                            "properties": {
+                                "Name": {
+                                    "title": [
+                                        {"type": "text", "plain_text": "One"}
+                                    ]
+                                }
+                            },
+                        }
+                    ],
+                    "has_more": True,
+                    "next_cursor": "search-cursor",
+                },
+            ),
+            NotionHTTPResponse(
+                status_code=200,
+                payload={
+                    "results": [
+                        {
+                            "object": "page",
+                            "id": "page-2",
+                            "properties": {
+                                "Name": {
+                                    "title": [
+                                        {"type": "text", "plain_text": "Two"}
+                                    ]
+                                }
+                            },
+                        }
+                    ],
+                    "has_more": False,
+                    "next_cursor": None,
+                },
+            ),
+        ]
+    )
+    client = NotionAPIReaderClient(
+        token="secret-token",
+        transport=transport,
+        page_size=1,
+    )
+
+    pages = client.list_pages()
+
+    assert [(page.page_id, page.title) for page in pages] == [
+        ("page-1", "One"),
+        ("page-2", "Two"),
+    ]
+    assert transport.calls[0][0] == "/v1/search"
+    assert transport.calls[1][0] == "/v1/search"
 
 
 def test_notion_api_reader_tool_maps_auth_and_http_errors_without_redaction_leaks() -> None:

@@ -26,8 +26,18 @@ class NotionPageTree:
     last_edited_time: Optional[datetime] = None
 
 
+@dataclass(frozen=True)
+class NotionPageSummary:
+    page_id: str
+    title: str
+    last_edited_time: Optional[datetime] = None
+
+
 class NotionReaderClient:
     def fetch_page_tree(self, page_id: str) -> Optional[NotionPageTree]:
+        raise NotImplementedError
+
+    def list_pages(self) -> List[NotionPageSummary]:
         raise NotImplementedError
 
 
@@ -47,6 +57,16 @@ class InMemoryNotionReaderClient(NotionReaderClient):
     def fetch_page_tree(self, page_id: str) -> Optional[NotionPageTree]:
         return self._pages.get(page_id)
 
+    def list_pages(self) -> List[NotionPageSummary]:
+        return [
+            NotionPageSummary(
+                page_id=page.page_id,
+                title=page.title,
+                last_edited_time=page.last_edited_time,
+            )
+            for page in sorted(self._pages.values(), key=lambda item: item.page_id)
+        ]
+
 
 class NotionReaderTool(Tool):
     @property
@@ -56,9 +76,9 @@ class NotionReaderTool(Tool):
             description="Read one Notion page as a read-only block tree with paths.",
             input_schema={
                 "type": "object",
-                "required": ["page_id"],
                 "properties": {
                     "page_id": {"type": "string"},
+                    "action": {"type": "string", "enum": ["list_pages"]},
                 },
             },
             output_schema={
@@ -78,6 +98,7 @@ class NotionReaderTool(Tool):
                     },
                     "blocks": {"type": "array"},
                     "printable_tree": {"type": "string"},
+                    "pages": {"type": "array"},
                 },
             },
         )
@@ -87,6 +108,10 @@ class NotionReaderTool(Tool):
 
     async def run(self, context: ToolContext, arguments: Dict[str, Any]) -> ToolResult:
         _ = context
+        action = str(arguments.get("action", "")).strip().lower()
+        if action == "list_pages":
+            return self._run_list_pages()
+
         page_id = str(arguments.get("page_id", "")).strip()
         if not page_id:
             return ToolResult.failure(
@@ -128,6 +153,35 @@ class NotionReaderTool(Tool):
                 "blocks": [self._block_to_dict(block) for block in page_tree.blocks],
                 "printable_tree": printable_tree,
             },
+        )
+
+    def _run_list_pages(self) -> ToolResult:
+        try:
+            pages = self._notion_reader_client.list_pages()
+        except NotionReaderClientError as exc:
+            return ToolResult.failure(code=exc.code, message=exc.message)
+        except Exception as exc:
+            _ = exc
+            return ToolResult.failure(
+                code="NOTION_BLOCK_FETCH_FAILED",
+                message="Failed to discover Notion pages",
+            )
+
+        page_payloads = [
+            {
+                "page_id": page.page_id,
+                "title": page.title,
+                "last_edited_time": (
+                    page.last_edited_time.isoformat()
+                    if page.last_edited_time is not None
+                    else None
+                ),
+            }
+            for page in pages
+        ]
+        return ToolResult.success(
+            content=f"Discovered {len(page_payloads)} Notion pages",
+            structured_content={"pages": page_payloads},
         )
 
     def _render_printable_tree(self, page_tree: NotionPageTree) -> str:

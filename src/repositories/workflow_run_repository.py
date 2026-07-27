@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import func
+from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 
 from src.db.models import WorkflowRun
@@ -46,6 +46,14 @@ class WorkflowRunRepository:
 
     def get_workflow_run_by_id(self, workflow_run_id: int) -> Optional[WorkflowRun]:
         return self._session.get(WorkflowRun, workflow_run_id)
+
+    def get_latest_workflow_run(self, *, workflow_type: str) -> Optional[WorkflowRun]:
+        return (
+            self._session.query(WorkflowRun)
+            .filter(WorkflowRun.workflow_type == workflow_type)
+            .order_by(desc(WorkflowRun.started_at), desc(WorkflowRun.id))
+            .first()
+        )
 
     def update_workflow_run(
         self,
