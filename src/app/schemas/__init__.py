@@ -5,6 +5,7 @@ from src.app.schemas.notion_index import (
     NotionPageIndexRequest,
     NotionPageIndexResponse,
 )
+from src.app.schemas.ops import ReadinessCheck, ReadinessResponse
 from src.app.schemas.qa import QACitation, QARequest, QAResponse
 from src.app.schemas.source_ingest import (
     ChatTextIngestionRequest,
@@ -37,6 +38,8 @@ __all__ = [
     "NotionIncrementalIndexResponse",
     "NotionPageIndexRequest",
     "NotionPageIndexResponse",
+    "ReadinessCheck",
+    "ReadinessResponse",
     "QARequest",
     "QAResponse",
     "ChatTextIngestionRequest",

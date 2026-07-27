@@ -518,6 +518,7 @@ Metadata note:
 | Method | Endpoint | Description |
 |---|---|---|
 | GET | `/health` | Health check endpoint. |
+| GET | `/ready` | Dependency-aware readiness check for database, migration, pgvector, and mode-specific provider configuration. |
 | GET | `/metrics` | Metrics endpoint. |
 
 ### 13.6 Telegram APIs

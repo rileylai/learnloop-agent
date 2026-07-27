@@ -6,7 +6,13 @@ from typing import Optional
 from fastapi import Depends
 
 from src.app.config import get_settings
-from src.db.session import SessionFactory, UnitOfWorkFactory, get_db_session_factory
+from src.db.readiness import SqlAlchemyReadinessProbe
+from src.db.session import (
+    SessionFactory,
+    UnitOfWorkFactory,
+    engine,
+    get_db_session_factory,
+)
 from src.db.unit_of_work import SqlAlchemyUnitOfWork
 from src.providers import (
     EmbeddingClient,
@@ -14,7 +20,7 @@ from src.providers import (
     OpenAIEmbeddingClient,
     ProviderRouter,
 )
-from src.services import CostTracker, PromptTemplateLoader
+from src.services import CostTracker, PromptTemplateLoader, ReadinessService
 from src.tools import (
     DEFAULT_MOCK_NOTION_DATA_DIR,
     DisabledTelegramBotClient,
@@ -41,6 +47,15 @@ def get_business_unit_of_work_factory(
     session_factory: SessionFactory = Depends(get_db_session_factory),
 ) -> UnitOfWorkFactory:
     return lambda: SqlAlchemyUnitOfWork(session_factory)
+
+
+def get_readiness_service() -> ReadinessService:
+    settings = get_settings()
+    return ReadinessService(
+        probe=SqlAlchemyReadinessProbe(engine=engine),
+        mode=settings.app_env,
+        openai_configured=bool(settings.openai_api_key),
+    )
 
 
 @lru_cache(maxsize=1)

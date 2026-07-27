@@ -1,5 +1,3 @@
-from logging.config import fileConfig
-
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 
@@ -12,10 +10,8 @@ import src.db.models  # noqa: F401
 # access to the values within the .ini file in use.
 config = context.config
 
-# Interpret the config file for Python logging.
-# This line sets up loggers basically.
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+# Do not apply alembic.ini logging configuration here. The application owns
+# logging setup, and fileConfig would replace pytest or application handlers.
 
 config.set_main_option("sqlalchemy.url", get_database_url())
 

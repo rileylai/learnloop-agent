@@ -115,6 +115,10 @@ boundaries and the target MVP integration shape. Current runtime wiring is:
   adapter and fails closed when it is absent.
 - PostgreSQL/pgvector repository paths and migrations exist. Their opt-in live
   verification is separate from the default deterministic suite.
+- `/health` remains a shallow liveness route. `/ready` calls the deterministic
+  readiness service, which uses a database readiness probe for connectivity,
+  Alembic revision, and pgvector extension checks plus mode-specific provider
+  configuration checks.
 - `RQQueueClient` exists behind `QueueClient`, but runtime dependencies do not
   enqueue work and the repository has no worker entrypoint. Redis is therefore
   not part of current request execution.

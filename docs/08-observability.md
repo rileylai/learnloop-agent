@@ -25,14 +25,27 @@ Confirmed:
 Missing from the current operator surface:
 
 - `/metrics` and a metrics exporter.
-- A dependency-aware readiness endpoint.
 - A CLI, API, worker, or scheduler that invokes stale-running workflow
   reconciliation.
 - Aggregate cost budgets, alerts, log persistence/rotation, tracing backend,
   and recovery dashboards.
 
-The current `/health` endpoint is liveness only and always reports `ok`; it
-must not be used as release-readiness evidence.
+The `/health` endpoint is liveness only and always reports `ok`; it must not be
+used as release-readiness evidence. `/ready` is the dependency-aware readiness
+surface and returns 503 when database, migration, pgvector, or required
+mode-specific provider configuration is unavailable.
+
+## Readiness Checks
+
+- `database` runs a safe `SELECT 1` through the database readiness probe.
+- `migration` compares the `alembic_version` table with the repository's
+  migration heads.
+- `vector` checks for the PostgreSQL `vector` extension.
+- `mode` requires OpenAI embedding configuration in `local` mode and skips the
+  live provider requirement in `test`, `demo`, and `mock` modes.
+- Readiness failures use deterministic `failure_reason` values and never
+  return raw driver exceptions, connection URLs, or secret values.
+- Redis is not part of readiness until the worker is wired in Step 77.
 
 ## Workflow Metadata Notes
 

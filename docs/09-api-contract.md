@@ -31,11 +31,56 @@ Current contract gaps:
 - API routes and the Telegram webhook are unauthenticated.
 - Telegram `/ingest` does not select a target Notion page, so its normal
   `/accept` follow-up cannot complete.
-- `/health` is shallow liveness. `/ready` and `/metrics` are not implemented.
+- `/health` is shallow liveness. `/ready` is implemented with deterministic
+  dependency checks; `/metrics` is not implemented.
 
 Examples below document route schemas and deterministic tested behavior. They
 do not by themselves prove live Notion, Telegram, OpenAI, parser, or worker
 integration.
+
+## Ops APIs
+
+### GET `/health`
+
+Returns shallow process liveness without contacting PostgreSQL, Alembic,
+pgvector, Redis, providers, or Notion.
+
+Success response `200`:
+
+```json
+{
+  "status": "ok"
+}
+```
+
+### GET `/ready`
+
+Checks database connectivity, current Alembic migration revision, the
+PostgreSQL `vector` extension, and the mode-specific provider configuration.
+The current `local` mode requires `OPENAI_API_KEY`; `test`, `demo`, and `mock`
+modes skip that live-provider requirement. Redis is not checked because the
+worker is not wired until a later roadmap step.
+
+Ready response `200`:
+
+```json
+{
+  "status": "ready",
+  "mode": "local",
+  "checks": {
+    "database": {"status": "ok", "detail": "database connection is available", "failure_reason": null},
+    "migration": {"status": "ok", "detail": "database migration is current", "failure_reason": null},
+    "vector": {"status": "ok", "detail": "pgvector extension is available", "failure_reason": null},
+    "mode": {"status": "ok", "detail": "OpenAI embedding configuration is present", "failure_reason": null}
+  }
+}
+```
+
+Not-ready response `503` keeps the same body shape with `status` set to
+`not_ready`. Deterministic `failure_reason` values include
+`DATABASE_UNAVAILABLE`, `MIGRATION_NOT_CURRENT`,
+`VECTOR_EXTENSION_UNAVAILABLE`, and `OPENAI_API_KEY_NOT_CONFIGURED`.
+Exception text, URLs, credentials, and private content are not returned.
 
 ## Notion Index APIs
 

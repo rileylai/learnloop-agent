@@ -36,7 +36,8 @@ Not yet available as a real-user flow:
   a separate empty in-memory client.
 - Full Notion discovery/index status APIs, reviewable proposal list/detail,
   external target-page selection, API/webhook authentication, a wired
-  Redis/RQ worker, readiness checks, and metrics are not implemented.
+  Redis/RQ worker, and metrics are not implemented. `/ready` now provides
+  dependency-aware readiness; it is distinct from the shallow `/health` route.
 - Telegram transport code is mock-tested, but the current `/ingest` flow does
   not select a target Notion page, so a normal ingest-to-accept flow cannot
   complete.
@@ -210,6 +211,16 @@ Expected response:
 
 `/health` is a shallow liveness endpoint. It does not prove that PostgreSQL,
 Alembic migrations, pgvector, providers, Notion, Telegram, or Redis are ready.
+
+Check release-style local dependencies with:
+
+```bash
+curl http://127.0.0.1:8000/ready
+```
+
+`/ready` returns `200` only when the database, current migrations, pgvector,
+and mode-specific provider configuration are available; otherwise it returns
+`503`. `/health` remains the process liveness check.
 
 ### Portable API entrypoint and preflight
 

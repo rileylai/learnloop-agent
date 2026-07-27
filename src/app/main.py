@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 
 from src.app.api import (
     notion_index_router,
+    ops_router,
     qa_router,
     source_ingest_router,
     supplement_router,
@@ -21,6 +22,7 @@ request_logger = get_logger("learnloop.request")
 
 app = FastAPI(title="LearnLoop Agent")
 app.include_router(notion_index_router)
+app.include_router(ops_router)
 app.include_router(qa_router)
 app.include_router(source_ingest_router)
 app.include_router(supplement_router)

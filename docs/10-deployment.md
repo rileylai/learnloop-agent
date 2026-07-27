@@ -30,7 +30,9 @@ The repository is demo-ready, not local-user-ready or release-ready.
 - The application reads process environment variables directly and does not
   auto-load `.env`.
 - The running API requires PostgreSQL plus migrations for business routes.
-  `/health` remains successful even when those dependencies are unavailable.
+  `/health` remains successful even when those dependencies are unavailable;
+  `/ready` returns 503 when database, migration, pgvector, or required
+  mode-specific provider configuration is unavailable.
 - Shared page indexing requires `OPENAI_API_KEY` because embeddings fail
   closed. The one-command mock demo injects fake embeddings and is the only
   no-key indexing path.
@@ -44,8 +46,20 @@ The repository is demo-ready, not local-user-ready or release-ready.
   are not implemented.
 
 Release-style local startup must remain blocked until portable preflight,
-readiness, live Notion wiring, authentication, worker, and recovery steps in
+live Notion wiring, authentication, worker, and recovery steps in
 the `Real-World Usability + Release Hardening` phase are complete.
+
+## Liveness and Readiness
+
+- `GET /health` is a shallow process liveness check and does not contact
+  external dependencies.
+- `GET /ready` checks database connectivity, current Alembic migrations,
+  pgvector, and the mode-specific provider configuration. It returns `200`
+  with `status=ready` only when all checks pass, otherwise `503` with safe
+  check details.
+- `APP_ENV=local` requires `OPENAI_API_KEY` for server-backed indexing. The
+  `test`, `demo`, and `mock` modes do not require a live provider.
+- Redis is intentionally excluded until the Step 77 worker wiring is complete.
 
 ## Portable Preflight Contract
 
