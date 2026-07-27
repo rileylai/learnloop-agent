@@ -50,6 +50,7 @@ CONFIGURATION_KEYS: Tuple[str, ...] = (
     "DATABASE_URL",
     "REDIS_URL",
     "MOCK_NOTION_DATA_DIR",
+    "NOTION_BACKEND",
     "OPENAI_API_KEY",
     "NOTION_TOKEN",
     "TELEGRAM_BOT_TOKEN",
@@ -170,14 +171,34 @@ def _check_configuration(
                 status = "pass" if path_exists else "fail"
                 detail = "configured directory exists" if path_exists else "configured directory is missing"
             required = True
+        elif key == "NOTION_BACKEND":
+            backend = environ.get(key, "mock").strip().lower() or "mock"
+            if backend not in {"mock", "live"}:
+                status = "fail"
+                detail = "must be mock or live"
+                required = True
+            elif backend == "live" and not environ.get("NOTION_TOKEN", "").strip():
+                status = "fail"
+                detail = "live backend requires NOTION_TOKEN"
+                required = True
+            else:
+                status = "pass"
+                detail = f"using {backend} backend"
+                required = True
         elif key == "OPENAI_API_KEY":
             status = "pass" if configured else "warn"
             detail = "configured" if configured else "missing; server-backed indexing/QA/proposals will fail closed"
             required = False
         elif key == "NOTION_TOKEN":
-            status = "pass" if configured else "warn"
-            detail = "configured but not consumed by the current adapter" if configured else "missing; live Notion adapter is not wired"
-            required = False
+            backend = environ.get("NOTION_BACKEND", "mock").strip().lower() or "mock"
+            if backend == "live":
+                status = "pass" if configured else "fail"
+                detail = "configured for live backend" if configured else "required by live backend"
+                required = True
+            else:
+                status = "pass" if not configured else "warn"
+                detail = "not required by mock backend" if not configured else "configured but unused by mock backend"
+                required = False
         else:
             status = "pass" if configured else "warn"
             detail = "configured" if configured else "missing; Telegram live transport is disabled"

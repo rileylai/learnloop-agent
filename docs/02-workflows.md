@@ -10,12 +10,12 @@ Draft
 
 The workflows below define implemented orchestration contracts, but most
 external boundaries are currently verified with fake or in-memory adapters.
-The runtime still selects mock/in-memory Notion clients; live reader and
-append-only writer adapters now exist behind the tool interfaces but are not
-selected until Step 71. There is no background worker and no complete live
-Telegram flow. In particular, Telegram ingestion does not currently select a
-target Notion page, so its pending proposal cannot normally complete the accept
-path.
+The runtime selects mock/in-memory Notion clients by default, or the live
+reader and append-only writer adapters when `NOTION_BACKEND=live` and
+`NOTION_TOKEN` are configured. There is no background worker and no complete
+live Telegram flow. In particular, Telegram ingestion does not currently
+select a target Notion page, so its pending proposal cannot normally complete
+the accept path.
 
 The deterministic write policy, state-transition, transaction, RAG-exclusion,
 and retry rules remain mandatory when live adapters are added.

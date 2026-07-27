@@ -24,9 +24,8 @@ The following routes exist and have deterministic API tests:
 Current contract gaps:
 
 - Notion index routes use the bundled mock reader in default runtime wiring;
-  a read-only Notion REST adapter with discovery exists behind
-  `NotionReaderTool`, but explicit mock/live runtime selection is deferred to
-  Step 71.
+  setting `NOTION_BACKEND=live` selects the read-only Notion REST adapter and
+  append-only writer together, and requires `NOTION_TOKEN` without fallback.
 - Proposal list/detail APIs are missing, and proposal responses do not expose
   enough content for a normal human review.
 - `target_notion_page_id` is an internal database identifier rather than a
@@ -704,8 +703,8 @@ Step 30-31 notes:
 - Step 30 introduces `NotionWriterTool` as a local append-only tool adapter.
 - Step 31 wires accepted review -> append -> immediate page re-index.
 - Step 70 adds `NotionAPIWriterClient` behind `NotionWriterTool`; it uses only
-  read/locate, append, and bounded verification calls. Runtime selection remains
-  deferred to Step 71.
+  read/locate, append, and bounded verification calls. Step 71 makes the
+  mock/live reader and writer selection explicit and fail closed.
 
 ## QA API
 

@@ -18,10 +18,12 @@ Notion is the source of truth for note content.
 The permission model is enforced in deterministic tests with mock/in-memory
 Notion clients, the read-only live reader adapter's fake-transport tests, and
 the append-only live writer adapter's HTTP contract tests. Runtime dependency
-wiring still selects mock clients until Step 71 adds an explicit backend
-switch, so no real Notion workspace access or append has been verified. The
-live writer exposes append-only operations and must not add update, delete,
-move, or original-note write capabilities.
+wiring defaults to mock clients and selects live clients only when
+`NOTION_BACKEND=live` has a configured `NOTION_TOKEN`; it fails closed instead
+of falling back when live configuration is incomplete. No real Notion
+workspace access or append has been verified. The live writer exposes
+append-only operations and must not add update, delete, move, or original-note
+write capabilities.
 
 ## Ownership Types
 | Ownership type | Meaning |

@@ -36,12 +36,12 @@ The repository is demo-ready, not local-user-ready or release-ready.
 - Shared page indexing requires `OPENAI_API_KEY` because embeddings fail
   closed. The one-command mock demo injects fake embeddings and is the only
   no-key indexing path.
-- The read-only Notion REST adapter exists and consumes `NOTION_TOKEN` when
-  constructed, but default runtime wiring remains on mock data until Step 71
-  adds explicit `NOTION_BACKEND=mock|live` selection.
-- The append-only Notion REST writer adapter is also available behind
-  `NotionWriterTool`; it is not runtime-selected before Step 71 and has not
-  been verified against a real workspace.
+- `NOTION_BACKEND=mock|live` selects the Notion backend and defaults to `mock`.
+  Live mode constructs the read-only and append-only REST adapters and
+  requires `NOTION_TOKEN`; incomplete live configuration fails closed without
+  falling back to mock data.
+- The append-only Notion REST writer adapter is selected with the live backend
+  behind `NotionWriterTool`; it has not been verified against a real workspace.
 - Redis/RQ classes exist, but runtime requests do not enqueue jobs and there is
   no worker entrypoint.
 - Tesseract is required for OCR. Useful non-English OCR also requires matching
@@ -77,10 +77,10 @@ the `Real-World Usability + Release Hardening` phase are complete.
 - Human and JSON output report only presence, absence, or safe status text;
   environment variable values, tokens, URLs, and filesystem values are never
   printed.
-- Missing `OPENAI_API_KEY`, `NOTION_TOKEN`, and `TELEGRAM_BOT_TOKEN` are
-  warnings in the current API profile because the corresponding live paths are
-  optional or not yet wired. Missing Python packages and entrypoint commands
-  are hard failures.
+- Missing `OPENAI_API_KEY` and `TELEGRAM_BOT_TOKEN` remain warnings in the API
+  profile. Missing `NOTION_TOKEN` is a warning for the default mock backend,
+  but a hard failure when `NOTION_BACKEND=live`. Missing Python packages and
+  entrypoint commands are hard failures.
 - Preflight checks dependency/configuration state only. Database, Redis,
   migration, vector, and external-service connectivity belong to the later
   readiness step.

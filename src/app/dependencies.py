@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Optional
+from typing import Optional, Tuple
 
 from fastapi import Depends
 
-from src.app.config import get_settings
+from src.app.config import (
+    NOTION_BACKEND_LIVE,
+    NotionBackendConfigurationError,
+    get_settings,
+    normalize_notion_backend,
+)
 from src.db.readiness import SqlAlchemyReadinessProbe
 from src.db.session import (
     SessionFactory,
@@ -26,10 +31,15 @@ from src.tools import (
     DisabledTelegramBotClient,
     ImageOCRTool,
     InMemoryNotionReaderClient,
+    InMemoryNotionPageSnapshot,
     InMemoryNotionWriterClient,
     JSONMockNotionReaderClient,
     NotionReaderTool,
+    NotionAPIReaderClient,
+    NotionAPIWriterClient,
+    NotionReaderClient,
     NotionWriterTool,
+    NotionWriterClient,
     PDFParserTool,
     PyPDFParserClient,
     TelegramBotTool,
@@ -58,11 +68,9 @@ def get_readiness_service() -> ReadinessService:
     )
 
 
-@lru_cache(maxsize=1)
-def get_tool_registry() -> ToolRegistry:
-    registry = ToolRegistry()
-    settings = get_settings()
-    notion_reader_client = InMemoryNotionReaderClient(pages={})
+def _build_mock_notion_clients(
+    settings,
+) -> Tuple[NotionReaderClient, NotionWriterClient]:
     if settings.mock_notion_data_dir:
         notion_reader_client = JSONMockNotionReaderClient.from_directory(
             settings.mock_notion_data_dir
@@ -71,8 +79,45 @@ def get_tool_registry() -> ToolRegistry:
         notion_reader_client = JSONMockNotionReaderClient.from_directory(
             DEFAULT_MOCK_NOTION_DATA_DIR
         )
+    else:
+        notion_reader_client = InMemoryNotionReaderClient(pages={})
+
+    writer_pages = {}
+    for page_summary in notion_reader_client.list_pages():
+        page_tree = notion_reader_client.fetch_page_tree(page_summary.page_id)
+        if page_tree is None:
+            continue
+        writer_pages[page_tree.page_id] = InMemoryNotionPageSnapshot(
+            page_id=page_tree.page_id,
+            title=page_tree.title,
+            notion_path=page_tree.notion_path,
+        )
+    return notion_reader_client, InMemoryNotionWriterClient(pages=writer_pages)
+
+
+def _build_notion_clients(
+    settings,
+) -> Tuple[NotionReaderClient, NotionWriterClient]:
+    backend = normalize_notion_backend(settings.notion_backend)
+    if backend == NOTION_BACKEND_LIVE:
+        if not settings.notion_token:
+            raise NotionBackendConfigurationError(
+                "NOTION_BACKEND=live requires NOTION_TOKEN"
+            )
+        return (
+            NotionAPIReaderClient(token=settings.notion_token),
+            NotionAPIWriterClient(token=settings.notion_token),
+        )
+    return _build_mock_notion_clients(settings)
+
+
+@lru_cache(maxsize=1)
+def get_tool_registry() -> ToolRegistry:
+    registry = ToolRegistry()
+    settings = get_settings()
+    notion_reader_client, notion_writer_client = _build_notion_clients(settings)
     registry.register_tool(NotionReaderTool(notion_reader_client))
-    registry.register_tool(NotionWriterTool(InMemoryNotionWriterClient(pages={})))
+    registry.register_tool(NotionWriterTool(notion_writer_client))
     registry.register_tool(PDFParserTool(PyPDFParserClient()))
     registry.register_tool(URLArticleParserTool(TrafilaturaURLArticleParserClient()))
     registry.register_tool(YouTubeTranscriptTool(YouTubeTranscriptAPIClient()))

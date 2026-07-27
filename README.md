@@ -29,11 +29,9 @@ Confirmed today:
 
 Not yet available as a real-user flow:
 
-- Runtime dependency wiring has no real Notion reader or writer adapter.
-  `NOTION_TOKEN` is loaded as a setting but is not used to create a Notion
-  client.
-- The default Notion reader uses bundled mock JSON, and the default writer is
-  a separate empty in-memory client.
+- The default Notion backend uses bundled mock JSON. A live read-only reader
+  and append-only writer can be selected with `NOTION_BACKEND=live`, but no
+  real workspace access or append has been verified.
 - Full Notion discovery/index status APIs, reviewable proposal list/detail,
   external target-page selection, API/webhook authentication, a wired
   Redis/RQ worker, and metrics are not implemented. `/ready` now provides
@@ -119,8 +117,8 @@ Notes:
   indexing fails closed when chunk embeddings cannot be generated. It is also
   required for live `POST /api/qa` and supplement proposal calls.
 - `NOTION_TOKEN` is not required for the mock demo flow.
-- Setting `NOTION_TOKEN` does not currently enable real Notion access because
-  the live reader/writer adapter and runtime wiring are not implemented.
+- Set `NOTION_BACKEND=live` together with `NOTION_TOKEN` to select the live
+  reader/writer adapters. Live mode fails closed when the token is missing.
 - `TELEGRAM_BOT_TOKEN` is not required for the mock demo flow.
 - Tesseract is required for screenshot OCR, but not for `/health` or mock QA.
 - The one-command demo script below does not require Docker, Postgres, or an OpenAI key.
@@ -165,8 +163,8 @@ set +a
 Optional:
 
 - `MOCK_NOTION_DATA_DIR` if you want a different mock data directory.
-- `NOTION_TOKEN` is reserved for a future real Notion adapter and has no
-  runtime effect today.
+- `NOTION_BACKEND=mock` is the default; use `NOTION_BACKEND=live` with
+  `NOTION_TOKEN` for the live Notion adapters.
 - `TELEGRAM_BOT_TOKEN` enables Telegram HTTP send/download transport, but does
   not by itself make the Telegram E2E user-ready.
 
@@ -244,9 +242,9 @@ uv run --no-env-file --frozen python scripts/preflight.py --profile ocr
 ```
 
 Missing `OPENAI_API_KEY`, `NOTION_TOKEN`, and `TELEGRAM_BOT_TOKEN` are reported
-without exposing values; they are not hard failures for the current API
-profile because those live integrations are not all wired yet. The `ocr`
-profile additionally requires the `tesseract` executable.
+without exposing values. `NOTION_TOKEN` is a hard failure only when
+`NOTION_BACKEND=live`; the `ocr` profile additionally requires the `tesseract`
+executable.
 
 ## One-command demo script
 

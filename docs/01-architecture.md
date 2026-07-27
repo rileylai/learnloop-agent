@@ -107,12 +107,11 @@ Orchestrator contract:
 The architecture sections in this document describe both implemented
 boundaries and the target MVP integration shape. Current runtime wiring is:
 
-- `get_tool_registry()` registers a bundled JSON/in-memory Notion reader and a
-  separate empty in-memory Notion writer. `notion_api_reader_client.py` and
-  `notion_api_writer_client.py` provide injected-transport REST adapters for
-  read-only discovery/indexing and append-only supplement writes. Runtime
-  selection remains on the bundled mock reader/writer until Step 71 adds
-  explicit `NOTION_BACKEND` wiring.
+- `get_tool_registry()` selects a shared Notion reader/writer backend from
+  `NOTION_BACKEND=mock|live` (default `mock`). Mock mode uses the configured
+  JSON page set for both clients. Live mode constructs the read-only and
+  append-only REST adapters and requires `NOTION_TOKEN`; it never falls back
+  to mock mode.
 - `NotionFullIndexOrchestrator` discovers external Notion page ids through the
   reader tool, then reuses `NotionPageIndexOrchestrator` for each page's
   page-level replacement and embedding flow. `GET /api/notion/index/status`

@@ -12,6 +12,7 @@ def test_settings_load_without_optional_env(monkeypatch) -> None:
         "DATABASE_URL",
         "REDIS_URL",
         "MOCK_NOTION_DATA_DIR",
+        "NOTION_BACKEND",
         "NOTION_TOKEN",
         "OPENAI_API_KEY",
         "TELEGRAM_BOT_TOKEN",
@@ -27,6 +28,7 @@ def test_settings_load_without_optional_env(monkeypatch) -> None:
     assert settings.database_url is None
     assert settings.redis_url is None
     assert settings.mock_notion_data_dir is None
+    assert settings.notion_backend == "mock"
     assert settings.notion_token is None
     assert settings.openai_api_key is None
     assert settings.telegram_bot_token is None
@@ -38,6 +40,7 @@ def test_settings_load_with_env_override(monkeypatch) -> None:
     monkeypatch.setenv("DATABASE_URL", "postgresql://localhost:5432/learnloop")
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.setenv("MOCK_NOTION_DATA_DIR", "mock_data/notion_pages")
+    monkeypatch.setenv("NOTION_BACKEND", "live")
     monkeypatch.setenv("NOTION_TOKEN", "placeholder-notion-token")
     monkeypatch.setenv("OPENAI_API_KEY", "placeholder-openai-key")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "placeholder-telegram-token")
@@ -50,6 +53,7 @@ def test_settings_load_with_env_override(monkeypatch) -> None:
     assert settings.database_url == "postgresql://localhost:5432/learnloop"
     assert settings.redis_url == "redis://localhost:6379/0"
     assert settings.mock_notion_data_dir == "mock_data/notion_pages"
+    assert settings.notion_backend == "live"
     assert settings.notion_token == "placeholder-notion-token"
     assert settings.openai_api_key == "placeholder-openai-key"
     assert settings.telegram_bot_token == "placeholder-telegram-token"
