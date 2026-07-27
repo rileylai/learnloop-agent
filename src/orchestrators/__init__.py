@@ -59,10 +59,19 @@ from src.orchestrators.supplement_review_orchestrator import (
     SupplementReviewResult,
 )
 from src.orchestrators.supplement_proposal_schema import (
+    SupplementProposalCitationSchema,
     SupplementProposalSchema,
     SupplementProposalSourceSchema,
     SupplementProposalValidationError,
     parse_supplement_proposal_json,
+)
+from src.orchestrators.supplement_query_orchestrator import (
+    SupplementCitationResult,
+    SupplementProposalContentResult,
+    SupplementQueryError,
+    SupplementQueryOrchestrator,
+    SupplementReviewItemResult,
+    SupplementTargetResult,
 )
 from src.orchestrators.telegram_gateway_orchestrator import (
     TelegramGatewayError,
@@ -142,9 +151,16 @@ __all__ = [
     "SupplementReviewOrchestrator",
     "SupplementReviewResult",
     "SupplementProposalSchema",
+    "SupplementProposalCitationSchema",
     "SupplementProposalSourceSchema",
     "SupplementProposalValidationError",
     "parse_supplement_proposal_json",
+    "SupplementCitationResult",
+    "SupplementProposalContentResult",
+    "SupplementQueryError",
+    "SupplementQueryOrchestrator",
+    "SupplementReviewItemResult",
+    "SupplementTargetResult",
     "TelegramGatewayError",
     "TelegramGatewayOrchestrator",
     "TelegramGatewayResult",

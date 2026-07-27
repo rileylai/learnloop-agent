@@ -2,9 +2,16 @@ from __future__ import annotations
 
 import json
 import re
-from typing import List
+from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 _JSON_CODE_BLOCK_PATTERN = re.compile(
     r"^```(?:json)?\s*(?P<body>[\s\S]*?)\s*```$",
@@ -27,6 +34,32 @@ class SupplementProposalSourceSchema(BaseModel):
     source_display_name: str = Field(min_length=1)
 
 
+class SupplementProposalCitationSchema(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    source_type: Optional[str] = Field(default=None, min_length=1)
+    source_display_name: Optional[str] = Field(default=None, min_length=1)
+    notion_path: Optional[str] = Field(default=None, min_length=1)
+    page_id: Optional[str] = Field(default=None, min_length=1)
+    quote: Optional[str] = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def _require_citation_reference(self) -> "SupplementProposalCitationSchema":
+        if not any(
+            value is not None
+            for value in (
+                self.source_display_name,
+                self.notion_path,
+                self.page_id,
+                self.quote,
+            )
+        ):
+            raise ValueError(
+                "citation must include source_display_name, notion_path, page_id, or quote"
+            )
+        return self
+
+
 class SupplementProposalSchema(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -36,6 +69,7 @@ class SupplementProposalSchema(BaseModel):
     summary: str = Field(min_length=1)
     concepts: List[str] = Field(min_length=1)
     notes: List[str]
+    citations: List[SupplementProposalCitationSchema] = Field(default_factory=list)
 
     @field_validator("concepts", "notes")
     @classmethod

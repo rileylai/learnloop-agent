@@ -78,6 +78,11 @@ The agent may create Notion blocks only when all conditions are true:
 - The appended entry includes a visible deterministic change-request identity
   so retries can be reconciled against Notion as source of truth.
 
+Proposal review endpoints are read-only. They may show pending proposal
+content, citations, and an external target page id, but they never create or
+modify Notion blocks. Target selection is resolved against indexed Notion page
+ids before a change request is persisted.
+
 The agent must not:
 - Edit original user notes.
 - Edit manual user blocks.

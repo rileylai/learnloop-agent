@@ -1122,3 +1122,173 @@ def test_supplement_review_api_returns_change_request_not_found() -> None:
         assert detail["workflow_run_id"] is not None
     finally:
         app.dependency_overrides.clear()
+
+
+def test_supplement_pending_list_and_detail_expose_review_content_and_external_target() -> None:
+    session_factory = _build_session_factory()
+    seed_session = session_factory()
+    proposal_json = json.dumps(
+        {
+            "title": "Reviewable supplement",
+            "target_path": "Knowledge/NLP/Week5/AI Supplement Zone/Reviewable",
+            "source": {
+                "source_type": "pdf",
+                "source_display_name": "week5.pdf",
+            },
+            "summary": "A grounded review summary.",
+            "concepts": ["attention"],
+            "notes": ["Check the source before accepting."],
+            "citations": [
+                {
+                    "notion_path": "Knowledge/NLP/Week5/Attention",
+                    "quote": "Query and key vectors determine relevance.",
+                }
+            ],
+        }
+    )
+    try:
+        _seed_notion_page(
+            seed_session,
+            page_db_id=201,
+            notion_page_id="notion-page-external-201",
+            title="NLP Week 5",
+            notion_path="Knowledge/NLP/Week5",
+        )
+        _seed_change_request(
+            seed_session,
+            change_request_id=201,
+            status="pending",
+            target_notion_page_id=201,
+            proposal_json=proposal_json,
+        )
+        _seed_change_request(
+            seed_session,
+            change_request_id=202,
+            status="accepted",
+            target_notion_page_id=201,
+            proposal_json=proposal_json,
+        )
+    finally:
+        seed_session.close()
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db_session] = _db_override
+    try:
+        client = TestClient(app)
+        list_response = client.get("/api/supplement/pending")
+        assert list_response.status_code == 200
+        list_payload = list_response.json()
+        assert list_payload["status"] == "succeeded"
+        assert list_payload["count"] == 1
+        item = list_payload["items"][0]
+        assert item["change_request_id"] == 201
+        assert item["target_notion_page_id"] == "notion-page-external-201"
+        assert item["target_page"]["title"] == "NLP Week 5"
+        assert item["proposal"]["summary"] == "A grounded review summary."
+        assert item["citations"][0]["notion_path"] == "Knowledge/NLP/Week5/Attention"
+        assert item["citations"][0]["quote"] == "Query and key vectors determine relevance."
+
+        detail_response = client.get("/api/supplement/201")
+        assert detail_response.status_code == 200
+        detail_payload = detail_response.json()
+        assert detail_payload["status"] == "pending"
+        assert detail_payload["proposal"]["title"] == "Reviewable supplement"
+        assert detail_payload["citations"] == item["citations"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_supplement_propose_resolves_external_target_and_rejects_unknown_target() -> None:
+    session_factory = _build_session_factory()
+    seed_session = session_factory()
+    try:
+        _seed_source_document(
+            seed_session,
+            source_document_id=203,
+            source_type="chat_text",
+            source_display_name="chat-target",
+            raw_text="Notes about external Notion page targeting.",
+        )
+        _seed_notion_page(
+            seed_session,
+            page_db_id=203,
+            notion_page_id="notion-page-external-203",
+            title="Targetable page",
+            notion_path="Knowledge/Targetable",
+        )
+    finally:
+        seed_session.close()
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _provider_router_override() -> ProviderRouter:
+        router = ProviderRouter()
+        router.register_provider(
+            _FakeProposalProvider(
+                output_text=json.dumps(
+                    {
+                        "title": "Targeted proposal",
+                        "target_path": "Knowledge/Targetable/AI Supplement Zone/Targeted",
+                        "source": {
+                            "source_type": "chat_text",
+                            "source_display_name": "chat-target",
+                        },
+                        "summary": "Targeted content.",
+                        "concepts": ["targeting"],
+                        "notes": ["Review before accept."],
+                    }
+                )
+            )
+        )
+        return router
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
+    app.dependency_overrides[get_provider_router] = _provider_router_override
+
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/supplement/propose",
+            json={
+                "source_document_id": 203,
+                "target_notion_page_id": "notion-page-external-203",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["target_notion_page_id"] == "notion-page-external-203"
+
+        verify_session = session_factory()
+        try:
+            stored = verify_session.get(ChangeRequest, response.json()["change_request_id"])
+            assert stored is not None
+            assert stored.target_notion_page_id == 203
+        finally:
+            verify_session.close()
+
+        unknown_response = client.post(
+            "/api/supplement/propose",
+            json={
+                "source_document_id": 203,
+                "target_notion_page_id": "notion-page-does-not-exist",
+            },
+        )
+        assert unknown_response.status_code == 404
+        assert unknown_response.json()["detail"]["error_code"] == "NOTION_PAGE_NOT_FOUND"
+        assert unknown_response.json()["detail"]["failure_reason"] == "NOTION_PAGE_NOT_FOUND"
+    finally:
+        app.dependency_overrides.clear()

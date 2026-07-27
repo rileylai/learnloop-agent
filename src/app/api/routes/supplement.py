@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from src.app.dependencies import (
@@ -17,6 +17,8 @@ from src.app.schemas import (
     SupplementEditLaterRequest,
     SupplementProposeRequest,
     SupplementProposeResponse,
+    SupplementPendingListResponse,
+    SupplementPendingItem,
     SupplementRejectRequest,
     SupplementReviewResponse,
 )
@@ -33,6 +35,9 @@ from src.orchestrators import (
     SupplementProposeOrchestrator,
     SupplementReviewError,
     SupplementReviewOrchestrator,
+    SupplementReviewItemResult,
+    SupplementQueryError,
+    SupplementQueryOrchestrator,
 )
 from src.providers import EmbeddingClient, ProviderRouter
 from src.repositories import (
@@ -66,6 +71,7 @@ def _build_supplement_propose_orchestrator(
         cost_tracker=cost_tracker,
         prompt_template_loader=prompt_template_loader,
         source_document_repository=SourceDocumentRepository(db_session),
+        notion_page_repository=NotionPageRepository(db_session),
         change_request_repository=ChangeRequestRepository(db_session),
         unit_of_work_factory=unit_of_work_factory,
         duplicate_checker=DuplicateKnowledgeChecker(
@@ -73,6 +79,101 @@ def _build_supplement_propose_orchestrator(
         ),
         workflow_run_service=WorkflowRunService(db_session_factory),
     )
+
+
+def _build_supplement_query_orchestrator(
+    *,
+    db_session: Session,
+) -> SupplementQueryOrchestrator:
+    return SupplementQueryOrchestrator(
+        change_request_repository=ChangeRequestRepository(db_session),
+        notion_page_repository=NotionPageRepository(db_session),
+    )
+
+
+def _serialize_pending_item(item: SupplementReviewItemResult) -> dict[str, object]:
+    return {
+        "change_request_id": item.change_request_id,
+        "status": item.status,
+        "source_document_id": item.source_document_id,
+        "target_notion_page_id": item.target_notion_page_id,
+        "target_page": (
+            {
+                "page_id": item.target_page.page_id,
+                "title": item.target_page.title,
+                "notion_path": item.target_page.notion_path,
+            }
+            if item.target_page is not None
+            else None
+        ),
+        "proposal": {
+            "title": item.proposal.title,
+            "target_path": item.proposal.target_path,
+            "source_type": item.proposal.source_type,
+            "source_display_name": item.proposal.source_display_name,
+            "summary": item.proposal.summary,
+            "concepts": item.proposal.concepts,
+            "notes": item.proposal.notes,
+        },
+        "citations": [
+            {
+                "source_type": citation.source_type,
+                "source_display_name": citation.source_display_name,
+                "notion_path": citation.notion_path,
+                "page_id": citation.page_id,
+                "quote": citation.quote,
+            }
+            for citation in item.citations
+        ],
+        "created_at": item.created_at,
+    }
+
+
+@router.get("/api/supplement/pending", response_model=SupplementPendingListResponse)
+def list_pending_supplement_proposals(
+    limit: int = Query(default=50, ge=1, le=100),
+    db_session: Session = Depends(get_db_session),
+) -> SupplementPendingListResponse:
+    orchestrator = _build_supplement_query_orchestrator(db_session=db_session)
+    try:
+        items = orchestrator.list_pending(limit=limit)
+    except SupplementQueryError as exc:
+        raise HTTPException(
+            status_code=exc.http_status_code,
+            detail={
+                "error_code": exc.error_code,
+                "message": exc.message,
+                "failure_reason": exc.failure_reason,
+            },
+        ) from exc
+    return SupplementPendingListResponse(
+        status="succeeded",
+        count=len(items),
+        items=[_serialize_pending_item(item) for item in items],
+    )
+
+
+@router.get(
+    "/api/supplement/{change_request_id}",
+    response_model=SupplementPendingItem,
+)
+def get_supplement_proposal_detail(
+    change_request_id: int,
+    db_session: Session = Depends(get_db_session),
+) -> SupplementPendingItem:
+    orchestrator = _build_supplement_query_orchestrator(db_session=db_session)
+    try:
+        item = orchestrator.get_detail(change_request_id=change_request_id)
+    except SupplementQueryError as exc:
+        raise HTTPException(
+            status_code=exc.http_status_code,
+            detail={
+                "error_code": exc.error_code,
+                "message": exc.message,
+                "failure_reason": exc.failure_reason,
+            },
+        ) from exc
+    return SupplementPendingItem.model_validate(_serialize_pending_item(item))
 
 
 def _build_supplement_review_orchestrator(
@@ -149,6 +250,7 @@ async def propose_supplement_change_request(
         source_document_id=result.source_document_id,
         duplicate_detected=result.duplicate_detected,
         duplicate_notion_path=result.duplicate_notion_path,
+        target_notion_page_id=result.target_notion_page_id,
         provider=result.provider,
         model=result.model,
         token_input=result.token_input,

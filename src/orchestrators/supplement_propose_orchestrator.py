@@ -19,7 +19,11 @@ from src.providers import (
     ProviderRouter,
     ProviderRouterError,
 )
-from src.repositories import ChangeRequestRepository, SourceDocumentRepository
+from src.repositories import (
+    ChangeRequestRepository,
+    NotionPageRepository,
+    SourceDocumentRepository,
+)
 from src.services import (
     CostTracker,
     DuplicateKnowledgeChecker,
@@ -46,6 +50,7 @@ class SupplementProposeResult:
     source_document_id: int
     duplicate_detected: bool
     duplicate_notion_path: Optional[str]
+    target_notion_page_id: Optional[str]
     provider: Optional[str]
     model: Optional[str]
     token_input: Optional[int]
@@ -78,6 +83,7 @@ class SupplementProposeOrchestrator:
         cost_tracker: CostTracker,
         prompt_template_loader: PromptTemplateLoader,
         source_document_repository: SourceDocumentRepository,
+        notion_page_repository: NotionPageRepository,
         change_request_repository: ChangeRequestRepository,
         unit_of_work_factory: UnitOfWorkFactory,
         duplicate_checker: DuplicateKnowledgeChecker,
@@ -87,6 +93,7 @@ class SupplementProposeOrchestrator:
         self._cost_tracker = cost_tracker
         self._prompt_template_loader = prompt_template_loader
         self._source_document_repository = source_document_repository
+        self._notion_page_repository = notion_page_repository
         self._change_request_repository = change_request_repository
         self._unit_of_work_factory = unit_of_work_factory
         self._duplicate_checker = duplicate_checker
@@ -99,7 +106,7 @@ class SupplementProposeOrchestrator:
         provider_name: str,
         model: str,
         request_workflow_id: str,
-        target_notion_page_id: Optional[int] = None,
+        target_notion_page_id: Optional[str] = None,
     ) -> SupplementProposeResult:
         if source_document_id <= 0:
             raise SupplementProposeError(
@@ -122,10 +129,13 @@ class SupplementProposeOrchestrator:
                 message="model must not be empty",
                 http_status_code=HTTPStatus.BAD_REQUEST,
             )
-        if target_notion_page_id is not None and target_notion_page_id <= 0:
+        normalized_target_notion_page_id = (
+            target_notion_page_id.strip() if target_notion_page_id is not None else None
+        )
+        if target_notion_page_id is not None and not normalized_target_notion_page_id:
             raise SupplementProposeError(
                 error_code="INVALID_ARGUMENT",
-                message="target_notion_page_id must be positive when provided",
+                message="target_notion_page_id must not be empty when provided",
                 http_status_code=HTTPStatus.BAD_REQUEST,
             )
 
@@ -135,7 +145,7 @@ class SupplementProposeOrchestrator:
                 {
                     "operation": "propose_change_request",
                     "source_document_id": source_document_id,
-                    "target_notion_page_id": target_notion_page_id,
+                    "target_notion_page_id": normalized_target_notion_page_id,
                     "provider_name": normalized_provider_name,
                     "model": normalized_model,
                     "request_workflow_id": request_workflow_id,
@@ -164,6 +174,23 @@ class SupplementProposeOrchestrator:
                     ),
                     http_status_code=HTTPStatus.NOT_FOUND,
                 )
+
+            target_page_db_id: Optional[int] = None
+            if normalized_target_notion_page_id is not None:
+                target_page = self._notion_page_repository.get_by_notion_page_id(
+                    normalized_target_notion_page_id
+                )
+                if target_page is None:
+                    raise SupplementProposeError(
+                        error_code="NOTION_PAGE_NOT_FOUND",
+                        message=(
+                            "Target Notion page is not found: "
+                            f"target_notion_page_id={normalized_target_notion_page_id}"
+                        ),
+                        http_status_code=HTTPStatus.NOT_FOUND,
+                        failure_reason="NOTION_PAGE_NOT_FOUND",
+                    )
+                target_page_db_id = int(target_page.id)
 
             duplicate_match = self._check_duplicate(source_document.raw_text)
 
@@ -237,7 +264,7 @@ class SupplementProposeOrchestrator:
             with self._unit_of_work_factory() as unit_of_work:
                 change_request = unit_of_work.change_requests.create_change_request(
                     source_document_id=source_document.id,
-                    target_notion_page_id=target_notion_page_id,
+                    target_notion_page_id=target_page_db_id,
                     status=CHANGE_REQUEST_STATUS_PENDING,
                     proposal_json=json.dumps(proposal.model_dump(), sort_keys=True),
                     failure_reason=None,
@@ -253,6 +280,7 @@ class SupplementProposeOrchestrator:
                         "change_request_id": change_request_id,
                         "source_document_id": source_document.id,
                         "change_request_status": CHANGE_REQUEST_STATUS_PENDING,
+                        "target_notion_page_id": normalized_target_notion_page_id,
                         "duplicate_detected": duplicate_match is not None,
                         "duplicate_notion_path": (
                             duplicate_match.notion_path if duplicate_match is not None else None
@@ -279,6 +307,7 @@ class SupplementProposeOrchestrator:
                 duplicate_notion_path=(
                     duplicate_match.notion_path if duplicate_match is not None else None
                 ),
+                target_notion_page_id=normalized_target_notion_page_id,
                 provider=provider,
                 model=model_name,
                 token_input=token_input,
@@ -468,6 +497,9 @@ class SupplementProposeOrchestrator:
                 "notes": [
                     "Do not rewrite the same content.",
                     f"Cite existing path: {duplicate_match.notion_path}",
+                ],
+                "citations": [
+                    {"notion_path": duplicate_match.notion_path},
                 ],
             }
         )

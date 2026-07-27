@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Optional
+from datetime import datetime
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -22,10 +23,10 @@ class SupplementProposeRequest(BaseModel):
         min_length=1,
         description="LLM model name for proposal generation.",
     )
-    target_notion_page_id: Optional[int] = Field(
+    target_notion_page_id: Optional[str] = Field(
         default=None,
-        ge=1,
-        description="Optional target Notion page db id for the pending change request.",
+        min_length=1,
+        description="Optional external Notion page id for the pending change request.",
     )
 
 
@@ -37,6 +38,7 @@ class SupplementProposeResponse(BaseModel):
     source_document_id: int
     duplicate_detected: bool
     duplicate_notion_path: Optional[str] = None
+    target_notion_page_id: Optional[str] = None
     provider: Optional[str] = None
     model: Optional[str] = None
     token_input: Optional[int] = None
@@ -92,3 +94,44 @@ class SupplementReviewResponse(BaseModel):
     review_action: str
     reviewer: Optional[str] = None
     reason: Optional[str] = None
+
+
+class SupplementCitation(BaseModel):
+    source_type: Optional[str] = None
+    source_display_name: Optional[str] = None
+    notion_path: Optional[str] = None
+    page_id: Optional[str] = None
+    quote: Optional[str] = None
+
+
+class SupplementProposalContent(BaseModel):
+    title: str
+    target_path: str
+    source_type: str
+    source_display_name: str
+    summary: str
+    concepts: List[str]
+    notes: List[str]
+
+
+class SupplementTargetPage(BaseModel):
+    page_id: str
+    title: str
+    notion_path: str
+
+
+class SupplementPendingItem(BaseModel):
+    change_request_id: int
+    status: str
+    source_document_id: Optional[int] = None
+    target_notion_page_id: Optional[str] = None
+    target_page: Optional[SupplementTargetPage] = None
+    proposal: SupplementProposalContent
+    citations: List[SupplementCitation]
+    created_at: Optional[datetime] = None
+
+
+class SupplementPendingListResponse(BaseModel):
+    status: str
+    count: int
+    items: List[SupplementPendingItem]

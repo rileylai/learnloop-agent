@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Optional
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -47,6 +47,24 @@ class ChangeRequestRepository:
 
     def get_change_request_by_id(self, change_request_id: int) -> Optional[ChangeRequest]:
         return self._session.get(ChangeRequest, change_request_id)
+
+    def list_change_requests(
+        self,
+        *,
+        status: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[ChangeRequest]:
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+
+        query = self._session.query(ChangeRequest)
+        if status is not None:
+            query = query.filter(ChangeRequest.status == status)
+        return list(
+            query.order_by(ChangeRequest.created_at.desc(), ChangeRequest.id.desc())
+            .limit(limit)
+            .all()
+        )
 
     def get_change_request_by_id_for_update(
         self,

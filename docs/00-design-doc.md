@@ -505,6 +505,8 @@ Metadata note:
 | Method | Endpoint | Description |
 |---|---|---|
 | POST | `/api/supplement/propose` | Create supplement change request. |
+| GET | `/api/supplement/pending` | List pending proposals with review content, citations, and target metadata. |
+| GET | `/api/supplement/{change_request_id}` | Read one reviewable proposal detail. |
 | POST | `/api/supplement/accept` | Accept change request, append to `AI Supplement Zone`, and trigger immediate page re-index. |
 | POST | `/api/supplement/reject` | Reject change request and keep audit/eval record. |
 | POST | `/api/supplement/edit-later` | Keep change request in pending state for later review. |
@@ -528,6 +530,11 @@ Metadata note:
 
 Production-RAG invariant:
 - `pending` and `rejected` change requests are never used in production RAG.
+
+Proposal target invariant:
+- User-facing proposal APIs use external Notion page ids. The backend resolves
+  them to indexed page rows before storing the internal foreign key used by
+  the accept transaction.
 
 ## 14. Tech Stack Decisions
 | Layer | Decision |

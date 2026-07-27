@@ -22,6 +22,30 @@ and retry rules remain mandatory when live adapters are added.
 
 This document will be expanded in later steps.
 
+## Reviewable Proposal Workflow (Step 72)
+
+```text
+GET /api/supplement/pending
+-> Read pending change requests from PostgreSQL
+-> Parse stored proposal content deterministically
+-> Resolve stored target FK to the external Notion page id
+-> Return proposal content, source citation fallback, and target metadata
+
+GET /api/supplement/{change_request_id}
+-> Read one change request and its target metadata
+-> Return the same reviewable proposal detail
+```
+
+Rules:
+- These read APIs do not call Notion and do not write to Notion.
+- A proposal target supplied to `POST /api/supplement/propose` is an external
+  Notion page id. The backend resolves it to the internal indexed page row
+  before persistence; unknown targets fail closed with `NOTION_PAGE_NOT_FOUND`.
+- Legacy proposals without explicit citation entries receive a deterministic
+  source-document citation fallback for human review.
+- Pending proposals remain pending until a separate human review action calls
+  the existing accept/reject/edit-later flow.
+
 What belongs here:
 - Workflow state transitions.
 - Success and failure paths.

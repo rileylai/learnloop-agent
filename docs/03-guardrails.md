@@ -49,6 +49,8 @@ Change Request
 ```
 
 Rules:
+- Proposal review APIs may expose pending content and target metadata, but they
+  must not invoke a Notion write operation.
 - Proposal generation does not write to Notion.
 - `pending` change requests stay in workflow state only and are excluded from production RAG.
 - `rejected` change requests stay available for audit and evaluation only and are excluded from production RAG.
@@ -64,6 +66,13 @@ Rules:
 - The accept transaction must reload and lock the change request, revalidate
   `pending`, persist the page re-index mutation set, and update `accepted` in
   one business transaction. This does not claim cross-system atomicity with Notion.
+
+Target policy:
+- User-facing proposal APIs accept external Notion page ids only.
+- The backend resolves an external id to an indexed `notion_pages` row before
+  storing the internal foreign key used by the accept transaction.
+- Unknown external targets fail closed with `NOTION_PAGE_NOT_FOUND`; no
+  proposal write or Notion write is performed for that target.
 
 ## Manual Notion Edits
 Users may manually edit Notion because Notion is the source of truth.

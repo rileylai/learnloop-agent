@@ -84,6 +84,7 @@ def _build_telegram_gateway_orchestrator(
             cost_tracker=cost_tracker,
             prompt_template_loader=prompt_template_loader,
             source_document_repository=SourceDocumentRepository(db_session),
+            notion_page_repository=NotionPageRepository(db_session),
             change_request_repository=ChangeRequestRepository(db_session),
             unit_of_work_factory=unit_of_work_factory,
             duplicate_checker=DuplicateKnowledgeChecker(

@@ -18,6 +18,7 @@ The following routes exist and have deterministic API tests:
 - `POST /api/ingest/source`, `/document`, `/url`, `/youtube`, `/chat-text`,
   and `/image-ocr`
 - `POST /api/supplement/propose`, `/accept`, `/reject`, and `/edit-later`
+- `GET /api/supplement/pending` and `/{change_request_id}`
 - `POST /api/qa`
 - `POST /api/telegram/webhook`
 
@@ -26,10 +27,6 @@ Current contract gaps:
 - Notion index routes use the bundled mock reader in default runtime wiring;
   setting `NOTION_BACKEND=live` selects the read-only Notion REST adapter and
   append-only writer together, and requires `NOTION_TOKEN` without fallback.
-- Proposal list/detail APIs are missing, and proposal responses do not expose
-  enough content for a normal human review.
-- `target_notion_page_id` is an internal database identifier rather than a
-  user-facing external Notion page identifier.
 - API routes and the Telegram webhook are unauthenticated.
 - Telegram `/ingest` does not select a target Notion page, so its normal
   `/accept` follow-up cannot complete.
@@ -510,7 +507,7 @@ Request:
   "source_document_id": 6,
   "provider_name": "openai",
   "model": "gpt-4o-mini",
-  "target_notion_page_id": null
+  "target_notion_page_id": "notion-page-external-6"
 }
 ```
 
@@ -525,6 +522,7 @@ Success response `200`:
   "source_document_id": 6,
   "duplicate_detected": false,
   "duplicate_notion_path": null,
+  "target_notion_page_id": "notion-page-external-6",
   "provider": "openai",
   "model": "gpt-4o-mini",
   "token_input": 120,
@@ -569,6 +567,26 @@ Notes:
 - Orchestrator creates one `change_requests` row with `status=pending`.
 - This endpoint does not perform Notion write operations.
 - Duplicate detection uses production chunk citations and stores a citation-first pending proposal instead of rewriting duplicated content.
+- `target_notion_page_id` is an external Notion page id. The backend resolves
+  it to an indexed page row before persistence. Unknown targets return
+  `NOTION_PAGE_NOT_FOUND` and do not create a change request.
+
+### GET `/api/supplement/pending`
+
+List pending proposals for human review. This endpoint reads PostgreSQL only;
+it does not call Notion or perform any write. The optional `limit` query
+parameter is 1-100 and defaults to 50.
+
+The response includes proposal content, citations, status, and the external
+Notion target page id/title/path. Legacy proposals without explicit citation
+entries receive a deterministic source-document citation fallback.
+
+### GET `/api/supplement/{change_request_id}`
+
+Return one reviewable proposal with the same content, citations, status, and
+external target metadata as the pending list. Missing requests return
+`CHANGE_REQUEST_NOT_FOUND`. Malformed stored proposal JSON fails closed with
+`INVALID_PROPOSAL_PAYLOAD`.
 
 ### POST `/api/supplement/accept`
 Accept one pending change request.
