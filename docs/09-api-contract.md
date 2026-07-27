@@ -28,8 +28,6 @@ Current contract gaps:
   setting `NOTION_BACKEND=live` selects the read-only Notion REST adapter and
   append-only writer together, and requires `NOTION_TOKEN` without fallback.
 - API routes and the Telegram webhook are unauthenticated.
-- Telegram `/ingest` does not select a target Notion page, so its normal
-  `/accept` follow-up cannot complete.
 - `/health` is shallow liveness. `/ready` is implemented with deterministic
   dependency checks; `/metrics` is not implemented.
 
@@ -804,8 +802,8 @@ Notes:
 ## Telegram Gateway API
 
 ### POST `/api/telegram/webhook`
-Handle one Telegram webhook update for `/help`, `/health`, `/ingest`, `/ask`,
-`/accept`, and `/reject`.
+Handle one Telegram webhook update for `/help`, `/health`, `/pages`, `/ingest`,
+`/ask`, `/accept`, and `/reject`.
 
 Request example (`/help`):
 
@@ -845,6 +843,22 @@ Success response `200`:
 }
 ```
 
+Request example (`/pages`):
+
+```json
+{
+  "update_id": 1002,
+  "message": {
+    "message_id": 12,
+    "chat": {"id": 555},
+    "text": "/pages"
+  }
+}
+```
+
+The reply lists indexed external Notion page ids, titles, and paths, followed
+by `/ingest --page <page_id>` usage. `/pages` is read-only.
+
 Request example (`/ingest` + PDF):
 
 ```json
@@ -855,7 +869,7 @@ Request example (`/ingest` + PDF):
     "chat": {
       "id": 555
     },
-    "caption": "/ingest",
+    "caption": "/ingest --page page-nlp-week5",
     "document": {
       "file_id": "pdf-file-1",
       "file_name": "lesson.pdf",
@@ -879,6 +893,7 @@ Success response `200` (`/ingest`):
   "source_document_id": 12,
   "change_request_id": 34,
   "source_type": "pdf",
+  "target_notion_page_id": "page-nlp-week5",
   "qa_workflow_run_id": null,
   "insufficient_info": null,
   "citations": [],
@@ -887,6 +902,11 @@ Success response `200` (`/ingest`):
   "change_request_status": null
 }
 ```
+
+For a targeted ingest, the Telegram reply also includes a deterministic
+proposal preview with title, summary, concepts, notes, citations, target page,
+and `/accept <change_request_id>` usage. The change request remains `pending`
+until a human sends `/accept`.
 
 Request example (`/ask` with section scope):
 
@@ -1042,6 +1062,8 @@ Failure response example `503` (Telegram bot token not configured):
 
 Notes:
 - Route must call orchestrator only.
+- `/pages` lists indexed external Notion page ids, titles, and paths for target selection.
+- `/ingest --page <page_id>` creates a pending proposal targeted to that external page and returns a deterministic proposal preview with citations and `/accept` usage.
 - Orchestrator sends reply through `ToolRegistry` -> `TelegramBotTool` (`send_message`).
 - `/ingest` downloads Telegram files through `ToolRegistry` -> `TelegramBotTool` (`download_file`).
 - `/ask` syntax is

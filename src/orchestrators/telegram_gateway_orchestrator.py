@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Optional
@@ -20,6 +21,7 @@ from src.orchestrators.telegram_review_orchestrator import (
     TelegramReviewError,
     TelegramReviewOrchestrator,
 )
+from src.orchestrators.telegram_page_orchestrator import TelegramPageOrchestrator
 from src.services import (
     STANDARD_FAILURE_REASONS,
     WorkflowRunAuditUpdateError,
@@ -42,6 +44,7 @@ class TelegramGatewayResult:
     source_document_id: Optional[int]
     change_request_id: Optional[int]
     source_type: Optional[str]
+    target_notion_page_id: Optional[str]
     qa_workflow_run_id: Optional[int]
     insufficient_info: Optional[bool]
     citations: list[str]
@@ -77,12 +80,14 @@ class TelegramGatewayOrchestrator:
         telegram_ingestion_orchestrator: Optional[TelegramIngestionOrchestrator] = None,
         telegram_qa_orchestrator: Optional[TelegramQAOrchestrator] = None,
         telegram_review_orchestrator: Optional[TelegramReviewOrchestrator] = None,
+        telegram_page_orchestrator: Optional[TelegramPageOrchestrator] = None,
     ) -> None:
         self._tool_registry = tool_registry
         self._workflow_run_service = workflow_run_service
         self._telegram_ingestion_orchestrator = telegram_ingestion_orchestrator
         self._telegram_qa_orchestrator = telegram_qa_orchestrator
         self._telegram_review_orchestrator = telegram_review_orchestrator
+        self._telegram_page_orchestrator = telegram_page_orchestrator
 
     async def handle_webhook(
         self,
@@ -141,6 +146,7 @@ class TelegramGatewayOrchestrator:
                     source_document_id=None,
                     change_request_id=None,
                     source_type=None,
+                    target_notion_page_id=None,
                     qa_workflow_run_id=None,
                     insufficient_info=None,
                     citations=[],
@@ -153,6 +159,7 @@ class TelegramGatewayOrchestrator:
             source_document_id: Optional[int] = None
             change_request_id: Optional[int] = None
             source_type: Optional[str] = None
+            target_notion_page_id: Optional[str] = None
             qa_workflow_run_id: Optional[int] = None
             insufficient_info: Optional[bool] = None
             citations: list[str] = []
@@ -163,6 +170,16 @@ class TelegramGatewayOrchestrator:
                 reply_text = self._build_reply_for_command(command)
             elif command == "help":
                 reply_text = self._build_reply_for_command(command)
+            elif command == "pages":
+                if self._telegram_page_orchestrator is None:
+                    raise TelegramGatewayError(
+                        error_code="TELEGRAM_PAGES_NOT_CONFIGURED",
+                        message="Telegram page orchestrator is not configured",
+                        http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                        failure_reason="UNKNOWN_ERROR",
+                    )
+                pages_result = self._telegram_page_orchestrator.list_pages()
+                reply_text = pages_result.reply_text
             elif command == "ask":
                 if self._telegram_qa_orchestrator is None:
                     raise TelegramGatewayError(
@@ -207,16 +224,21 @@ class TelegramGatewayOrchestrator:
                         failure_reason="UNKNOWN_ERROR",
                     )
                 command = "ingest"
+                target_notion_page_id = self._parse_ingest_target(
+                    normalized_input_text
+                )
                 ingestion_result = await self._telegram_ingestion_orchestrator.handle_ingest_command(
                     chat_id=normalized_chat_id,
                     document=document,
                     photos=photos,
                     request_workflow_id=request_workflow_id,
+                    target_notion_page_id=target_notion_page_id,
                 )
                 reply_text = ingestion_result.reply_text
                 source_document_id = ingestion_result.source_document_id
                 change_request_id = ingestion_result.change_request_id
                 source_type = ingestion_result.source_type
+                target_notion_page_id = ingestion_result.target_notion_page_id
             else:
                 reply_text = self._build_reply_for_command(command)
 
@@ -266,6 +288,7 @@ class TelegramGatewayOrchestrator:
                         "source_document_id": source_document_id,
                         "change_request_id": change_request_id,
                         "source_type": source_type,
+                        "target_notion_page_id": target_notion_page_id,
                         "qa_workflow_run_id": qa_workflow_run_id,
                         "insufficient_info": insufficient_info,
                         "citation_count": len(citations),
@@ -288,6 +311,7 @@ class TelegramGatewayOrchestrator:
                 source_document_id=source_document_id,
                 change_request_id=change_request_id,
                 source_type=source_type,
+                target_notion_page_id=target_notion_page_id,
                 qa_workflow_run_id=qa_workflow_run_id,
                 insufficient_info=insufficient_info,
                 citations=citations,
@@ -380,6 +404,51 @@ class TelegramGatewayOrchestrator:
         if command == "help":
             return "Available commands: /help, /health, /ingest, /ask, /accept, /reject"
         return "Unsupported command. Use /help."
+
+    def _parse_ingest_target(self, command_text: str) -> Optional[str]:
+        try:
+            tokens = shlex.split(command_text)
+        except ValueError as exc:
+            raise TelegramGatewayError(
+                error_code="INVALID_ARGUMENT",
+                message=f"Invalid /ingest command: {exc}",
+                http_status_code=HTTPStatus.BAD_REQUEST,
+                failure_reason="UNKNOWN_ERROR",
+            ) from exc
+
+        target_notion_page_id: Optional[str] = None
+        index = 1
+        while index < len(tokens):
+            token = tokens[index]
+            if token == "--page":
+                if index + 1 >= len(tokens):
+                    raise TelegramGatewayError(
+                        error_code="INVALID_ARGUMENT",
+                        message="Usage: /ingest [--page <page_id>] with a PDF or screenshot",
+                        http_status_code=HTTPStatus.BAD_REQUEST,
+                        failure_reason="UNKNOWN_ERROR",
+                    )
+                target_notion_page_id = tokens[index + 1].strip()
+                index += 2
+                continue
+            if token.startswith("--page="):
+                target_notion_page_id = token.split("=", 1)[1].strip()
+                if not target_notion_page_id:
+                    raise TelegramGatewayError(
+                        error_code="INVALID_ARGUMENT",
+                        message="Usage: /ingest [--page <page_id>] with a PDF or screenshot",
+                        http_status_code=HTTPStatus.BAD_REQUEST,
+                        failure_reason="UNKNOWN_ERROR",
+                    )
+                index += 1
+                continue
+            raise TelegramGatewayError(
+                error_code="INVALID_ARGUMENT",
+                message="Usage: /ingest [--page <page_id>] with a PDF or screenshot",
+                http_status_code=HTTPStatus.BAD_REQUEST,
+                failure_reason="UNKNOWN_ERROR",
+            )
+        return target_notion_page_id
 
     def _normalize_failure_reason(self, failure_reason: str) -> str:
         normalized = failure_reason.strip().upper()

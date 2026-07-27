@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import List, Optional
 
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
@@ -26,6 +26,16 @@ class NotionPageRepository:
 
     def get_by_id(self, page_db_id: int) -> Optional[NotionPage]:
         return self._session.get(NotionPage, page_db_id)
+
+    def list_pages(self, *, limit: int = 50) -> List[NotionPage]:
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        return list(
+            self._session.query(NotionPage)
+            .order_by(NotionPage.title.asc(), NotionPage.notion_page_id.asc())
+            .limit(limit)
+            .all()
+        )
 
     def lock_page_for_reindex(self, notion_page_id: str) -> None:
         """Serialize same-page writers for the lifetime of the current transaction."""

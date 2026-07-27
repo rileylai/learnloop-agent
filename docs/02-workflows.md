@@ -13,9 +13,8 @@ external boundaries are currently verified with fake or in-memory adapters.
 The runtime selects mock/in-memory Notion clients by default, or the live
 reader and append-only writer adapters when `NOTION_BACKEND=live` and
 `NOTION_TOKEN` are configured. There is no background worker and no complete
-live Telegram flow. In particular, Telegram ingestion does not currently
-select a target Notion page, so its pending proposal cannot normally complete
-the accept path.
+live Telegram flow. Deterministic Telegram tests cover page selection,
+proposal preview, and select-to-accept; live Telegram delivery remains opt-in.
 
 The deterministic write policy, state-transition, transaction, RAG-exclusion,
 and retry rules remain mandatory when live adapters are added.
@@ -198,12 +197,14 @@ Rules:
 ```text
 POST /api/telegram/webhook
 -> Parse /ingest command or media upload intent
+-> Resolve optional `/ingest --page <external_page_id>` target
 -> Download Telegram file bytes through ToolRegistry -> TelegramBotTool (download_file)
 -> Route to ingestion orchestrator:
    - PDF document -> DocumentIngestionOrchestrator
    - screenshot batch -> ImageOCRIngestionOrchestrator
 -> Create pending change request through SupplementProposeOrchestrator
--> Send ingestion summary reply through ToolRegistry -> TelegramBotTool (send_message)
+-> Read stored proposal detail and send deterministic preview through
+   ToolRegistry -> TelegramBotTool (send_message)
 -> Mark workflow succeeded
 ```
 
@@ -217,6 +218,32 @@ Rules:
 - PDF and screenshot ingestion reuse existing ingestion/propose orchestrators; no duplicate business logic in API route.
 - Screenshot batch upload creates one `source_documents` row with `source_type=screenshot`.
 - Step 33 still follows safe write policy: create `pending` change request only; no Notion append in this workflow.
+- `/ingest --page <external_page_id>` resolves the target against indexed
+  Notion pages; the target is optional for backward compatibility, but accept
+  still fails closed when no target is present.
+
+## Telegram Page and Review Workflow (Step 73)
+
+```text
+POST /api/telegram/webhook with `/pages`
+-> Read indexed Notion page ids through NotionPageRepository
+-> Send deterministic page list and target-aware usage
+
+POST /api/telegram/webhook with `/ingest --page <page_id>` and media
+-> Create pending proposal for the selected external target
+-> Send proposal preview with summary, notes, citations, and review commands
+
+POST /api/telegram/webhook with `/accept <change_request_id>`
+-> Reuse SupplementReviewOrchestrator
+-> Append to AI Supplement Zone and immediately re-index
+-> Send success reply only after the business workflow succeeds
+```
+
+Rules:
+- `/pages` is read-only and does not contact the Notion writer.
+- Preview content is read from the stored pending proposal; preview does not
+  accept, append, or expose pending content to production RAG.
+- Telegram chat id remains the deterministic reviewer identity.
 
 ## Telegram QA Workflow (Step 34)
 

@@ -74,6 +74,13 @@ Target policy:
 - Unknown external targets fail closed with `NOTION_PAGE_NOT_FOUND`; no
   proposal write or Notion write is performed for that target.
 
+Telegram review policy:
+- `/pages` and proposal preview are read-only operations.
+- `/ingest --page <external_page_id>` may create only a `pending` change
+  request; it must not append to Notion.
+- Telegram `/accept` remains the human acceptance event and may append only
+  after the existing target and pending-state checks pass.
+
 ## Manual Notion Edits
 Users may manually edit Notion because Notion is the source of truth.
 Valid user actions include:

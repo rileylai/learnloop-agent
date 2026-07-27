@@ -1427,3 +1427,148 @@ def test_telegram_webhook_ingest_screenshot_batch_creates_one_source_and_change_
             verify_session.close()
     finally:
         app.dependency_overrides.clear()
+
+
+def test_telegram_pages_targeted_ingest_preview_and_accept_e2e() -> None:
+    session_factory = _build_session_factory()
+    snapshot_pages = {
+        "page-telegram-flow": InMemoryNotionPageSnapshot(
+            page_id="page-telegram-flow",
+            title="Targetable NLP Page",
+            notion_path="Knowledge/NLP/Targetable",
+            original_blocks=["Original note stays unchanged."],
+        )
+    }
+    seed_session = session_factory()
+    try:
+        _seed_notion_page(
+            seed_session,
+            page_db_id=91,
+            notion_page_id="page-telegram-flow",
+            title="Targetable NLP Page",
+            notion_path="Knowledge/NLP/Targetable",
+        )
+    finally:
+        seed_session.close()
+
+    telegram_client = InMemoryTelegramBotClient()
+    telegram_client.add_file(
+        file_id="flow-pdf",
+        file_bytes=b"%PDF-1.4 flow content",
+        file_name="flow.pdf",
+    )
+    registry, writer_client = _build_review_tool_registry(
+        snapshot_pages=snapshot_pages,
+        telegram_client=telegram_client,
+    )
+    registry.register_tool(
+        PDFParserTool(
+            _FakePDFParserClient(
+                raw_text="Targeted Telegram learning notes.",
+                page_count=1,
+            )
+        )
+    )
+    registry.register_tool(ImageOCRTool(_FakeImageOCRParserClient()))
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _provider_router_override() -> ProviderRouter:
+        router = ProviderRouter()
+        router.register_provider(
+            _FakeProposalProvider(
+                output_text=json.dumps(
+                    {
+                        "title": "Targeted Telegram proposal",
+                        "target_path": (
+                            "Knowledge/NLP/Targetable/AI Supplement Zone/"
+                            "Targeted Telegram proposal"
+                        ),
+                        "source": {
+                            "source_type": "pdf",
+                            "source_display_name": "flow.pdf",
+                        },
+                        "summary": "A proposal previewed before human acceptance.",
+                        "concepts": ["target selection", "human review"],
+                        "notes": ["Review the source before accepting."],
+                    }
+                )
+            )
+        )
+        return router
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
+    app.dependency_overrides[get_tool_registry] = lambda: registry
+    app.dependency_overrides[get_provider_router] = _provider_router_override
+    app.dependency_overrides[get_embedding_client] = _embedding_client_override
+
+    try:
+        client = TestClient(app)
+        pages_response = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 4001,
+                "message": {
+                    "message_id": 41,
+                    "chat": {"id": 7777},
+                    "text": "/pages",
+                },
+            },
+        )
+        assert pages_response.status_code == 200
+        assert "page-telegram-flow" in pages_response.json()["reply_text"]
+        assert "Knowledge/NLP/Targetable" in pages_response.json()["reply_text"]
+
+        ingest_response = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 4002,
+                "message": {
+                    "message_id": 42,
+                    "chat": {"id": 7777},
+                    "caption": "/ingest --page page-telegram-flow",
+                    "document": {
+                        "file_id": "flow-pdf",
+                        "file_name": "flow.pdf",
+                        "mime_type": "application/pdf",
+                    },
+                },
+            },
+        )
+        assert ingest_response.status_code == 200
+        ingest_payload = ingest_response.json()
+        assert ingest_payload["target_notion_page_id"] == "page-telegram-flow"
+        assert ingest_payload["change_request_status"] is None
+        assert "Target Notion page: page-telegram-flow" in ingest_payload["reply_text"]
+        assert "Proposal ready for review" in ingest_payload["reply_text"]
+        assert "Review with /accept" in ingest_payload["reply_text"]
+        change_request_id = ingest_payload["change_request_id"]
+
+        accept_response = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 4003,
+                "message": {
+                    "message_id": 43,
+                    "chat": {"id": 7777},
+                    "text": f"/accept {change_request_id}",
+                },
+            },
+        )
+        assert accept_response.status_code == 200
+        accept_payload = accept_response.json()
+        assert accept_payload["change_request_status"] == "accepted"
+        assert accept_payload["review_action"] == "accept"
+        assert len(writer_client.list_operations(page_id="page-telegram-flow")) == 1
+        assert len(snapshot_pages["page-telegram-flow"].ai_supplement_entries) == 1
+    finally:
+        app.dependency_overrides.clear()

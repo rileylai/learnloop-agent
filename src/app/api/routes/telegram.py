@@ -27,11 +27,13 @@ from src.orchestrators import (
     QAOrchestrator,
     SupplementProposeOrchestrator,
     SupplementReviewOrchestrator,
+    SupplementQueryOrchestrator,
     TelegramDocumentAttachment,
     TelegramGatewayError,
     TelegramGatewayOrchestrator,
     TelegramIngestionOrchestrator,
     TelegramPhotoAttachment,
+    TelegramPageOrchestrator,
     TelegramQAOrchestrator,
     TelegramReviewOrchestrator,
 )
@@ -92,6 +94,10 @@ def _build_telegram_gateway_orchestrator(
             ),
             workflow_run_service=workflow_run_service,
         ),
+        supplement_query_orchestrator=SupplementQueryOrchestrator(
+            change_request_repository=ChangeRequestRepository(db_session),
+            notion_page_repository=NotionPageRepository(db_session),
+        ),
     )
     telegram_qa_orchestrator = TelegramQAOrchestrator(
         qa_orchestrator=QAOrchestrator(
@@ -121,6 +127,9 @@ def _build_telegram_gateway_orchestrator(
             workflow_run_service=workflow_run_service,
         )
     )
+    telegram_page_orchestrator = TelegramPageOrchestrator(
+        notion_page_repository=NotionPageRepository(db_session)
+    )
 
     return TelegramGatewayOrchestrator(
         tool_registry=tool_registry,
@@ -128,6 +137,7 @@ def _build_telegram_gateway_orchestrator(
         telegram_ingestion_orchestrator=telegram_ingestion_orchestrator,
         telegram_qa_orchestrator=telegram_qa_orchestrator,
         telegram_review_orchestrator=telegram_review_orchestrator,
+        telegram_page_orchestrator=telegram_page_orchestrator,
     )
 
 
@@ -209,6 +219,7 @@ async def handle_telegram_webhook(
         source_document_id=result.source_document_id,
         change_request_id=result.change_request_id,
         source_type=result.source_type,
+        target_notion_page_id=result.target_notion_page_id,
         qa_workflow_run_id=result.qa_workflow_run_id,
         insufficient_info=result.insufficient_info,
         citations=result.citations,

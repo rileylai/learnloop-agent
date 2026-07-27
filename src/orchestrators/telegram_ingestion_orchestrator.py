@@ -21,6 +21,11 @@ from src.orchestrators.supplement_propose_orchestrator import (
     SupplementProposeError,
     SupplementProposeOrchestrator,
 )
+from src.orchestrators.supplement_query_orchestrator import (
+    SupplementQueryError,
+    SupplementQueryOrchestrator,
+    SupplementReviewItemResult,
+)
 from src.services import STANDARD_FAILURE_REASONS
 from src.tools import ToolContext, ToolRegistry
 
@@ -52,6 +57,7 @@ class TelegramIngestionCommandResult:
     source_document_id: Optional[int]
     change_request_id: Optional[int]
     source_type: Optional[str]
+    target_notion_page_id: Optional[str]
 
 
 class TelegramIngestionError(Exception):
@@ -80,11 +86,13 @@ class TelegramIngestionOrchestrator:
         document_ingestion_orchestrator: DocumentIngestionOrchestrator,
         image_ocr_ingestion_orchestrator: ImageOCRIngestionOrchestrator,
         supplement_propose_orchestrator: SupplementProposeOrchestrator,
+        supplement_query_orchestrator: Optional[SupplementQueryOrchestrator] = None,
     ) -> None:
         self._tool_registry = tool_registry
         self._document_ingestion_orchestrator = document_ingestion_orchestrator
         self._image_ocr_ingestion_orchestrator = image_ocr_ingestion_orchestrator
         self._supplement_propose_orchestrator = supplement_propose_orchestrator
+        self._supplement_query_orchestrator = supplement_query_orchestrator
 
     async def handle_ingest_command(
         self,
@@ -93,6 +101,7 @@ class TelegramIngestionOrchestrator:
         document: Optional[TelegramDocumentAttachment],
         photos: List[TelegramPhotoAttachment],
         request_workflow_id: str,
+        target_notion_page_id: Optional[str] = None,
     ) -> TelegramIngestionCommandResult:
         _ = chat_id
         normalized_photos = self._deduplicate_photos(photos)
@@ -104,6 +113,7 @@ class TelegramIngestionOrchestrator:
                 source_document_id=None,
                 change_request_id=None,
                 source_type=None,
+                target_notion_page_id=target_notion_page_id,
             )
 
         try:
@@ -125,6 +135,14 @@ class TelegramIngestionOrchestrator:
                 provider_name=DEFAULT_SUPPLEMENT_PROVIDER_NAME,
                 model=DEFAULT_SUPPLEMENT_MODEL,
                 request_workflow_id=request_workflow_id,
+                target_notion_page_id=target_notion_page_id,
+            )
+            proposal_preview = self._build_proposal_preview(
+                change_request_id=proposal_result.change_request_id,
+                target_notion_page_id=proposal_result.target_notion_page_id,
+                source_type=source_result.source_type,
+                source_document_id=source_result.source_document_id,
+                source_count=source_count,
             )
         except (DocumentIngestionError, ImageOCRIngestionError, SupplementProposeError) as exc:
             raise TelegramIngestionError(
@@ -134,9 +152,16 @@ class TelegramIngestionOrchestrator:
                 failure_reason=self._normalize_failure_reason(exc.failure_reason),
                 workflow_run_id=exc.workflow_run_id,
             ) from exc
+        except SupplementQueryError as exc:
+            raise TelegramIngestionError(
+                error_code=exc.error_code,
+                message=exc.message,
+                http_status_code=exc.http_status_code,
+                failure_reason=exc.failure_reason,
+            ) from exc
 
         return TelegramIngestionCommandResult(
-            reply_text=self._build_success_reply(
+            reply_text=proposal_preview or self._build_success_reply(
                 source_type=source_result.source_type,
                 source_document_id=source_result.source_document_id,
                 change_request_id=proposal_result.change_request_id,
@@ -145,7 +170,75 @@ class TelegramIngestionOrchestrator:
             source_document_id=source_result.source_document_id,
             change_request_id=proposal_result.change_request_id,
             source_type=source_result.source_type,
+            target_notion_page_id=proposal_result.target_notion_page_id,
         )
+
+    def _build_proposal_preview(
+        self,
+        *,
+        change_request_id: int,
+        target_notion_page_id: Optional[str],
+        source_type: str,
+        source_document_id: int,
+        source_count: int,
+    ) -> Optional[str]:
+        if self._supplement_query_orchestrator is None:
+            return None
+        item = self._supplement_query_orchestrator.get_detail(
+            change_request_id=change_request_id
+        )
+        return self._format_proposal_preview(
+            item=item,
+            target_notion_page_id=target_notion_page_id,
+            source_type=source_type,
+            source_document_id=source_document_id,
+            source_count=source_count,
+        )
+
+    def _format_proposal_preview(
+        self,
+        *,
+        item: SupplementReviewItemResult,
+        target_notion_page_id: Optional[str],
+        source_type: str,
+        source_document_id: int,
+        source_count: int,
+    ) -> str:
+        target = target_notion_page_id or "not selected"
+        if source_type == "screenshot":
+            ingestion_summary = (
+                "Ingestion succeeded "
+                f"(screenshots={source_count}, source_document_id={source_document_id}, "
+                f"change_request_id={item.change_request_id}, status=pending)."
+            )
+        else:
+            ingestion_summary = (
+                "Ingestion succeeded "
+                f"(source_type={source_type}, source_document_id={source_document_id}, "
+                f"change_request_id={item.change_request_id}, status=pending)."
+            )
+        lines = [
+            ingestion_summary,
+            f"Proposal ready for review (change_request_id={item.change_request_id})",
+            f"Title: {item.proposal.title}",
+            f"Target Notion page: {target}",
+            f"Summary: {item.proposal.summary}",
+            "Key Concepts: " + ", ".join(item.proposal.concepts),
+            "Notes:",
+        ]
+        lines.extend(f"- {note}" for note in item.proposal.notes)
+        lines.append("Citations:")
+        for citation in item.citations:
+            citation_value = (
+                citation.notion_path
+                or citation.source_display_name
+                or citation.page_id
+                or citation.quote
+                or "unavailable"
+            )
+            lines.append(f"- {citation_value}")
+        lines.append(f"Review with /accept {item.change_request_id} or /reject {item.change_request_id} <reason>.")
+        return "\n".join(lines)
 
     async def _ingest_pdf_document(
         self,
