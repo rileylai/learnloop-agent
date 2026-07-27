@@ -36,6 +36,14 @@ from src.services.workflow_run_service import (
     WorkflowRunValidationError,
 )
 from src.services.trust_boundary import TrustBoundaryError, TrustBoundaryService
+from src.services.telegram_update_idempotency import (
+    TELEGRAM_UPDATE_FAILED,
+    TELEGRAM_UPDATE_RUNNING,
+    TELEGRAM_UPDATE_SUCCEEDED,
+    TelegramUpdateClaim,
+    TelegramUpdateIdempotencyError,
+    TelegramUpdateIdempotencyService,
+)
 
 __all__ = [
     "CostTracker",
@@ -67,4 +75,10 @@ __all__ = [
     "WorkflowRunValidationError",
     "TrustBoundaryError",
     "TrustBoundaryService",
+    "TELEGRAM_UPDATE_FAILED",
+    "TELEGRAM_UPDATE_RUNNING",
+    "TELEGRAM_UPDATE_SUCCEEDED",
+    "TelegramUpdateClaim",
+    "TelegramUpdateIdempotencyError",
+    "TelegramUpdateIdempotencyService",
 ]

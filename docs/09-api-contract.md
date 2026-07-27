@@ -33,6 +33,10 @@ Current contract gaps:
   compatibility and are reported by preflight.
 - `/health` is shallow liveness. `/ready` is implemented with deterministic
   dependency checks; `/metrics` is not implemented.
+- Telegram webhook updates with a non-null `update_id` are idempotent. Duplicate
+  succeeded/failed updates replay the stored outcome; a duplicate currently
+  running update returns `202` with `status=running` and
+  `skipped_reason=DUPLICATE_UPDATE_IN_PROGRESS`.
 
 Examples below document route schemas and deterministic tested behavior. They
 do not by themselves prove live Notion, Telegram, OpenAI, parser, or worker
@@ -1089,6 +1093,11 @@ Failure response example `503` (Telegram bot token not configured):
 
 Notes:
 - Route must call orchestrator only.
+- A non-null Telegram `update_id` is claimed in the persistent ledger before
+  command work starts. Duplicate updates never send a second Telegram reply.
+- Duplicate running updates return `202`; duplicate succeeded and failed
+  updates replay the original result or error. Updates without `update_id` are
+  accepted for backward compatibility without deduplication.
 - `/pages` lists indexed external Notion page ids, titles, and paths for target selection.
 - `/ingest --page <page_id>` creates a pending proposal targeted to that external page and returns a deterministic proposal preview with citations and `/accept` usage.
 - Orchestrator sends reply through `ToolRegistry` -> `TelegramBotTool` (`send_message`).

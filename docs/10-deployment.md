@@ -47,8 +47,9 @@ The repository is demo-ready, not local-user-ready or release-ready.
 - Tesseract is required for OCR. Useful non-English OCR also requires matching
   language data installed on the host.
 - Telegram live use additionally needs a bot token, public HTTPS webhook
-  delivery, webhook authentication, and an allowed-chat policy; the last two
-  are not implemented.
+  delivery, `TELEGRAM_WEBHOOK_SECRET`, and an explicit
+  `TELEGRAM_ALLOWED_CHAT_IDS` policy. Persistent Telegram update idempotency
+  requires applying the latest Alembic migration before starting the API.
 
 Release-style local startup must remain blocked until portable preflight,
 live Notion wiring, authentication, worker, and recovery steps in
@@ -81,6 +82,9 @@ the `Real-World Usability + Release Hardening` phase are complete.
   profile. Missing `NOTION_TOKEN` is a warning for the default mock backend,
   but a hard failure when `NOTION_BACKEND=live`. Missing Python packages and
   entrypoint commands are hard failures.
+- Missing `API_BEARER_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, and
+  `TELEGRAM_ALLOWED_CHAT_IDS` are warnings for local compatibility but should
+  be configured for a real deployment.
 - Preflight checks dependency/configuration state only. Database, Redis,
   migration, vector, and external-service connectivity belong to the later
   readiness step.

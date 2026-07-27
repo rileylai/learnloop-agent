@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import shlex
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from http import HTTPStatus
 from typing import Optional
 
@@ -28,6 +28,9 @@ from src.services import (
     WorkflowRunService,
     TrustBoundaryError,
     TrustBoundaryService,
+    TelegramUpdateClaim,
+    TelegramUpdateIdempotencyError,
+    TelegramUpdateIdempotencyService,
 )
 from src.tools import ToolContext, ToolRegistry
 
@@ -84,6 +87,7 @@ class TelegramGatewayOrchestrator:
         telegram_review_orchestrator: Optional[TelegramReviewOrchestrator] = None,
         telegram_page_orchestrator: Optional[TelegramPageOrchestrator] = None,
         trust_boundary: Optional[TrustBoundaryService] = None,
+        update_idempotency_service: Optional[TelegramUpdateIdempotencyService] = None,
     ) -> None:
         self._tool_registry = tool_registry
         self._workflow_run_service = workflow_run_service
@@ -92,6 +96,7 @@ class TelegramGatewayOrchestrator:
         self._telegram_review_orchestrator = telegram_review_orchestrator
         self._telegram_page_orchestrator = telegram_page_orchestrator
         self._trust_boundary = trust_boundary
+        self._update_idempotency_service = update_idempotency_service
 
     async def handle_webhook(
         self,
@@ -104,17 +109,76 @@ class TelegramGatewayOrchestrator:
         photos: list[TelegramPhotoAttachment],
         request_workflow_id: str,
     ) -> TelegramGatewayResult:
-        if self._trust_boundary is not None:
-            try:
-                self._trust_boundary.require_allowed_telegram_chat(chat_id)
-            except TrustBoundaryError as exc:
-                raise TelegramGatewayError(
+        self._require_allowed_chat(chat_id)
+        claim = self._claim_update(update_id)
+        if claim is not None and not claim.owner:
+            return self._replay_or_report_duplicate(claim)
+
+        try:
+            result = await self._handle_new_webhook(
+                update_id=update_id,
+                chat_id=chat_id,
+                text=text,
+                caption=caption,
+                document=document,
+                photos=photos,
+                request_workflow_id=request_workflow_id,
+            )
+        except TelegramGatewayError as exc:
+            self._mark_update_failed(update_id, exc)
+            raise
+        except WorkflowRunAuditUpdateError as exc:
+            self._mark_update_failed(
+                update_id,
+                TelegramGatewayError(
                     error_code=exc.error_code,
-                    message=exc.message,
+                    message="Telegram workflow audit update failed",
                     http_status_code=exc.http_status_code,
                     failure_reason=exc.failure_reason,
-                ) from exc
+                    workflow_run_id=exc.workflow_run_id,
+                ),
+            )
+            raise
+        except Exception as exc:
+            self._mark_update_failed(
+                update_id,
+                TelegramGatewayError(
+                    error_code="TELEGRAM_GATEWAY_FAILED",
+                    message="Telegram gateway workflow failed",
+                    http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                    failure_reason="UNKNOWN_ERROR",
+                ),
+            )
+            raise
 
+        if self._update_idempotency_service is not None:
+            try:
+                self._update_idempotency_service.mark_succeeded(
+                    update_id,
+                    workflow_run_id=result.workflow_run_id,
+                    result=asdict(result),
+                )
+            except Exception as exc:
+                raise TelegramGatewayError(
+                    error_code="TELEGRAM_UPDATE_LEDGER_FAILED",
+                    message="Telegram update ledger could not be completed",
+                    http_status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                    failure_reason="TELEGRAM_UPDATE_LEDGER_FAILED",
+                    workflow_run_id=result.workflow_run_id,
+                ) from exc
+        return result
+
+    async def _handle_new_webhook(
+        self,
+        *,
+        update_id: Optional[int],
+        chat_id: Optional[str],
+        text: Optional[str],
+        caption: Optional[str],
+        document: Optional[TelegramDocumentAttachment],
+        photos: list[TelegramPhotoAttachment],
+        request_workflow_id: str,
+    ) -> TelegramGatewayResult:
         workflow_run = self._workflow_run_service.start_workflow(
             workflow_type="telegram",
             metadata_json=json.dumps(
@@ -349,6 +413,7 @@ class TelegramGatewayOrchestrator:
                 failure_reason=self._normalize_failure_reason(exc.failure_reason),
                 workflow_run_id=workflow_run.id,
             ) from exc
+
         except TelegramQAError as exc:
             self._mark_failed_workflow(
                 workflow_run_id=workflow_run.id,
@@ -404,6 +469,109 @@ class TelegramGatewayOrchestrator:
                 failure_reason="UNKNOWN_ERROR",
                 workflow_run_id=workflow_run.id,
             ) from exc
+
+    def _require_allowed_chat(self, chat_id: Optional[str]) -> None:
+        if self._trust_boundary is None:
+            return
+        try:
+            self._trust_boundary.require_allowed_telegram_chat(chat_id)
+        except TrustBoundaryError as exc:
+            raise TelegramGatewayError(
+                error_code=exc.error_code,
+                message=exc.message,
+                http_status_code=exc.http_status_code,
+                failure_reason=exc.failure_reason,
+            ) from exc
+
+    def _claim_update(self, update_id: Optional[int]) -> Optional[TelegramUpdateClaim]:
+        if self._update_idempotency_service is None:
+            return None
+        try:
+            return self._update_idempotency_service.claim(update_id)
+        except TelegramUpdateIdempotencyError as exc:
+            raise TelegramGatewayError(
+                error_code="TELEGRAM_UPDATE_LEDGER_FAILED",
+                message="Telegram update ledger could not be claimed",
+                http_status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                failure_reason="TELEGRAM_UPDATE_LEDGER_FAILED",
+            ) from exc
+
+    def _replay_or_report_duplicate(
+        self,
+        claim: TelegramUpdateClaim,
+    ) -> TelegramGatewayResult:
+        if claim.status == "succeeded":
+            if not claim.result_json:
+                raise TelegramGatewayError(
+                    error_code="TELEGRAM_UPDATE_LEDGER_FAILED",
+                    message="Telegram update ledger result is missing",
+                    http_status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                    failure_reason="TELEGRAM_UPDATE_LEDGER_FAILED",
+                    workflow_run_id=claim.workflow_run_id,
+                )
+            try:
+                return TelegramGatewayResult(**json.loads(claim.result_json))
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise TelegramGatewayError(
+                    error_code="TELEGRAM_UPDATE_LEDGER_FAILED",
+                    message="Telegram update ledger result is invalid",
+                    http_status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                    failure_reason="TELEGRAM_UPDATE_LEDGER_FAILED",
+                    workflow_run_id=claim.workflow_run_id,
+                ) from exc
+
+        if claim.status == "failed":
+            failure = {}
+            if claim.failure_json:
+                try:
+                    failure = json.loads(claim.failure_json)
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    failure = {}
+            raise TelegramGatewayError(
+                error_code=str(failure.get("error_code", "TELEGRAM_GATEWAY_FAILED")),
+                message=str(failure.get("message", "Telegram update previously failed")),
+                http_status_code=int(failure.get("http_status_code", HTTPStatus.INTERNAL_SERVER_ERROR)),
+                failure_reason=str(failure.get("failure_reason", "UNKNOWN_ERROR")),
+                workflow_run_id=claim.workflow_run_id,
+            )
+
+        return TelegramGatewayResult(
+            workflow_run_id=claim.workflow_run_id,
+            status="running",
+            handled=False,
+            command=None,
+            reply_text=None,
+            telegram_message_id=None,
+            skipped_reason="DUPLICATE_UPDATE_IN_PROGRESS",
+            source_document_id=None,
+            change_request_id=None,
+            source_type=None,
+            target_notion_page_id=None,
+            qa_workflow_run_id=None,
+            insufficient_info=None,
+            citations=[],
+            review_workflow_run_id=None,
+            review_action=None,
+            change_request_status=None,
+        )
+
+    def _mark_update_failed(
+        self,
+        update_id: Optional[int],
+        error: TelegramGatewayError,
+    ) -> None:
+        if self._update_idempotency_service is None:
+            return
+        self._update_idempotency_service.mark_failed(
+            update_id,
+            workflow_run_id=error.workflow_run_id,
+            failure={
+                "error_code": error.error_code,
+                "message": error.message,
+                "http_status_code": error.http_status_code,
+                "failure_reason": error.failure_reason,
+            },
+        )
 
     def _parse_command(self, text: str) -> str:
         command_text = text.split(maxsplit=1)[0].strip().lower()

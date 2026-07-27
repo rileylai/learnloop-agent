@@ -21,6 +21,8 @@ Confirmed:
 - LLM and embedding metadata can record per-workflow token and estimated cost.
 - Final workflow audit-update failure has a deterministic reconciliation
   service method.
+- Telegram update idempotency persists `running`, `succeeded`, and `failed`
+  outcomes without storing raw request payloads or secrets in logs.
 
 Missing from the current operator surface:
 
@@ -125,6 +127,7 @@ mode-specific provider configuration is unavailable.
   `PROVIDER_NOT_FOUND`, `LLM_PROVIDER_ERROR`, `LLM_OUTPUT_INVALID`,
   `EMBEDDING_PROVIDER_NOT_CONFIGURED`, `EMBEDDING_PROVIDER_ERROR`,
   `AUTHENTICATION_FAILED`, `AUTHORIZATION_FAILED`,
+  `TELEGRAM_UPDATE_LEDGER_FAILED`,
   `VECTOR_DIMENSION_MISMATCH`, `VECTOR_QUERY_FAILED`,
   `VECTOR_UPSERT_FAILED`, `TELEGRAM_NOT_CONFIGURED`,
   `TELEGRAM_SEND_FAILED`, `TELEGRAM_FILE_DOWNLOAD_FAILED`, and

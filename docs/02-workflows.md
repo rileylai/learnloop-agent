@@ -195,6 +195,27 @@ Rules:
 - Secret and allowed-chat checks happen before a Telegram workflow starts; a
   rejected caller does not create a workflow run or send a reply.
 
+## Telegram Update Idempotency Workflow (Step 75)
+
+```text
+POST /api/telegram/webhook with update_id
+-> Validate webhook trust boundary
+-> Atomically claim unique update_id in telegram_update_ledger
+-> If running: return 202 processing response
+-> If succeeded/failed: replay stored result or failure
+-> If owner: run the Telegram gateway workflow once
+-> Persist succeeded/failed outcome for future replay
+```
+
+Rules:
+- The ledger claim is committed before ingestion, review, provider, or Telegram
+  send work begins.
+- A unique-constraint race has one owner; the other request never runs the
+  command or sends a reply.
+- A failed update is replayed as failed rather than automatically retried;
+  recovery/reconciliation remains an explicit operator action.
+- Updates without `update_id` retain the pre-Step-75 non-idempotent behavior.
+
 ## Telegram Ingestion Workflow (Step 33)
 
 ```text

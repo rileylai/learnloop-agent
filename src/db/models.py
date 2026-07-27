@@ -174,3 +174,27 @@ class WorkflowRun(Base):
         server_default=text("CURRENT_TIMESTAMP"),
     )
     finished_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TelegramUpdateLedger(Base):
+    __tablename__ = "telegram_update_ledger"
+
+    update_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    workflow_run_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        ForeignKey("workflow_runs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    result_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    failure_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )

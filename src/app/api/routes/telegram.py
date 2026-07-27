@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from src.app.dependencies import (
@@ -52,6 +53,7 @@ from src.services import (
     PromptTemplateLoader,
     TrustBoundaryError,
     TrustBoundaryService,
+    TelegramUpdateIdempotencyService,
     WorkflowRunService,
 )
 from src.tools import ToolRegistry
@@ -72,6 +74,9 @@ def _build_telegram_gateway_orchestrator(
     trust_boundary: TrustBoundaryService,
 ) -> TelegramGatewayOrchestrator:
     workflow_run_service = WorkflowRunService(db_session_factory)
+    update_idempotency_service = TelegramUpdateIdempotencyService(
+        db_session_factory
+    )
 
     telegram_ingestion_orchestrator = TelegramIngestionOrchestrator(
         tool_registry=tool_registry,
@@ -143,6 +148,7 @@ def _build_telegram_gateway_orchestrator(
         telegram_review_orchestrator=telegram_review_orchestrator,
         telegram_page_orchestrator=telegram_page_orchestrator,
         trust_boundary=trust_boundary,
+        update_idempotency_service=update_idempotency_service,
     )
 
 
@@ -232,7 +238,7 @@ async def handle_telegram_webhook(
             },
         ) from exc
 
-    return TelegramWebhookResponse(
+    response = TelegramWebhookResponse(
         workflow_run_id=result.workflow_run_id,
         status=result.status,
         handled=result.handled,
@@ -251,3 +257,11 @@ async def handle_telegram_webhook(
         review_action=result.review_action,
         change_request_status=result.change_request_status,
     )
+    if result.status == "running":
+        content = (
+            response.model_dump()
+            if hasattr(response, "model_dump")
+            else response.dict()
+        )
+        return JSONResponse(status_code=202, content=content)
+    return response

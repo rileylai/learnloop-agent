@@ -40,7 +40,7 @@ class TelegramWebhookRequest(BaseModel):
 
 
 class TelegramWebhookResponse(BaseModel):
-    workflow_run_id: int
+    workflow_run_id: Optional[int] = None
     status: str
     handled: bool
     command: Optional[str] = None

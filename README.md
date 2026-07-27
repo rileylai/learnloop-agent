@@ -32,13 +32,12 @@ Not yet available as a real-user flow:
 - The default Notion backend uses bundled mock JSON. A live read-only reader
   and append-only writer can be selected with `NOTION_BACKEND=live`, but no
   real workspace access or append has been verified.
-- Full Notion discovery/index status APIs, reviewable proposal list/detail,
-  external target-page selection, API/webhook authentication, a wired
-  Redis/RQ worker, and metrics are not implemented. `/ready` now provides
+- A wired Redis/RQ worker and metrics are not implemented. API/webhook
+  authentication, persistent Telegram update idempotency, and `/ready` are
+  implemented; `/ready` now provides
   dependency-aware readiness; it is distinct from the shallow `/health` route.
-- Telegram transport code is mock-tested, but the current `/ingest` flow does
-  not select a target Notion page, so a normal ingest-to-accept flow cannot
-  complete.
+- Telegram transport and target-aware `/ingest` are mock-tested, but live
+  Telegram delivery still requires operator configuration and verification.
 - No complete real Notion indexing -> QA -> proposal -> accept -> append ->
   re-index or Telegram E2E has been live-verified.
 

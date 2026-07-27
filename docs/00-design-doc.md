@@ -475,6 +475,24 @@ Rollout note:
 | started_at | TIMESTAMPTZ | Start time. |
 | finished_at | TIMESTAMPTZ NULL | Finish time. |
 
+### 12.8 telegram_update_ledger
+| Column | Type | Description |
+|---|---|---|
+| update_id | BIGINT (PK) | Telegram update id and idempotency key. |
+| status | TEXT | `running` / `succeeded` / `failed`. |
+| workflow_run_id | BIGINT NULL | Linked Telegram workflow run when available. |
+| result_json | JSON/TEXT NULL | Deterministic successful response for replay. |
+| failure_json | JSON/TEXT NULL | Deterministic failure response for replay. |
+| created_at | TIMESTAMPTZ | Claim time. |
+| updated_at | TIMESTAMPTZ | Last ledger transition time. |
+
+Idempotency rules:
+- A unique `update_id` claim is committed before Telegram business work starts.
+- A duplicate `running` update returns processing status and does not execute
+  the command again.
+- A duplicate `succeeded` or `failed` update replays the persisted outcome.
+- Updates without `update_id` remain backward-compatible but are not deduped.
+
 Metadata note:
 - LLM-backed workflows record `provider_name`, `model`, `prompt_id`, and
   `prompt_version` inside workflow metadata JSON.

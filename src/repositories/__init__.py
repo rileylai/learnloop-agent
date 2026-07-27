@@ -14,6 +14,9 @@ from src.repositories.notion_page_repository import (
     StaleNotionPageSnapshotError,
 )
 from src.repositories.source_document_repository import SourceDocumentRepository
+from src.repositories.telegram_update_ledger_repository import (
+    TelegramUpdateLedgerRepository,
+)
 from src.repositories.workflow_run_repository import WorkflowRunRepository
 
 __all__ = [
@@ -30,5 +33,6 @@ __all__ = [
     "NotionPageRepository",
     "StaleNotionPageSnapshotError",
     "SourceDocumentRepository",
+    "TelegramUpdateLedgerRepository",
     "WorkflowRunRepository",
 ]

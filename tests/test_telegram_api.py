@@ -22,6 +22,7 @@ from src.db.models import (
     NotionBlock,
     NotionPage,
     SourceDocument,
+    TelegramUpdateLedger,
     WorkflowRun,
 )
 from src.db.session import get_db_session, get_db_session_factory, get_unit_of_work_factory
@@ -213,6 +214,7 @@ def _build_session_factory():
             KnowledgeChunk.__table__,
             NotionBlock.__table__,
             NotionPage.__table__,
+            TelegramUpdateLedger.__table__,
         ],
     )
     return sessionmaker(bind=engine, autoflush=False, autocommit=False)
@@ -394,6 +396,20 @@ def test_telegram_webhook_help_command_sends_reply() -> None:
         assert payload["change_request_id"] is None
         assert payload["source_type"] is None
 
+        duplicate_response = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 1001,
+                "message": {
+                    "message_id": 11,
+                    "chat": {"id": 555},
+                    "text": "/help",
+                },
+            },
+        )
+        assert duplicate_response.status_code == 200
+        assert duplicate_response.json() == payload
+
         sent_messages = telegram_client.list_sent_messages()
         assert len(sent_messages) == 1
         assert sent_messages[0].chat_id == "555"
@@ -412,6 +428,10 @@ def test_telegram_webhook_help_command_sends_reply() -> None:
             assert metadata["command"] == "help"
             assert metadata["handled"] is True
             assert metadata["telegram_message_id"] == 1
+            ledger = verify_session.get(TelegramUpdateLedger, 1001)
+            assert ledger is not None
+            assert ledger.status == "succeeded"
+            assert ledger.workflow_run_id == payload["workflow_run_id"]
         finally:
             verify_session.close()
     finally:
