@@ -18,7 +18,8 @@ What belongs here:
 The repository is demo-ready, not local-user-ready or release-ready.
 
 - Docker Compose starts PostgreSQL/pgvector and Redis only. It does not define
-  the FastAPI app or a worker service.
+  the FastAPI app or worker service; start the latter with
+  `scripts/run_worker.py` after exporting `REDIS_URL`.
 - `scripts/run_live.sh` is a portable repository-relative API entrypoint. It
   runs `scripts/preflight.py` first and then starts Uvicorn through the locked
   `uv` environment with `--no-env-file`. It does not load `.env` or print
@@ -42,8 +43,11 @@ The repository is demo-ready, not local-user-ready or release-ready.
   falling back to mock data.
 - The append-only Notion REST writer adapter is selected with the live backend
   behind `NotionWriterTool`; it has not been verified against a real workspace.
-- Redis/RQ classes exist, but runtime requests do not enqueue jobs and there is
-  no worker entrypoint.
+- Telegram runtime requests enqueue background jobs through `QueueClient` when
+  `REDIS_URL` is configured. Run `uv run --no-env-file --frozen python
+  scripts/run_worker.py` in a separate process to consume them. Jobs use two
+  bounded retries after the initial attempt; expected Telegram/domain failures
+  are persisted as terminal ledger outcomes.
 - Tesseract is required for OCR. Useful non-English OCR also requires matching
   language data installed on the host.
 - Telegram live use additionally needs a bot token, public HTTPS webhook
@@ -65,7 +69,8 @@ the `Real-World Usability + Release Hardening` phase are complete.
   check details.
 - `APP_ENV=local` requires `OPENAI_API_KEY` for server-backed indexing. The
   `test`, `demo`, and `mock` modes do not require a live provider.
-- Redis is intentionally excluded until the Step 77 worker wiring is complete.
+- Redis is required in local readiness because Telegram webhook work depends on
+  the queue when `REDIS_URL` is configured. Test/demo/mock modes may skip it.
 
 ## Portable Preflight Contract
 

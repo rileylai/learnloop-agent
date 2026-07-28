@@ -32,8 +32,13 @@ Current contract gaps:
   allowed-chat policy. Missing optional settings preserve local/test
   compatibility and are reported by preflight.
 - `/health` is shallow liveness. `/ready` is implemented with deterministic
-  dependency checks; `/metrics` is not implemented.
-- Telegram webhook updates with a non-null `update_id` are idempotent. Duplicate
+  dependency checks, including Redis/RQ in local mode; `/metrics` is not
+  implemented.
+- Telegram webhook updates with a non-null `update_id` are idempotent. When
+  `REDIS_URL` is configured, the first request claims the ledger, enqueues the
+  background job, and returns `202` with `status=running` and
+  `skipped_reason=QUEUED`; the worker later persists the terminal outcome.
+  Duplicate
   succeeded/failed updates replay the stored outcome; a duplicate currently
   running update returns `202` with `status=running` and
   `skipped_reason=DUPLICATE_UPDATE_IN_PROGRESS`.
@@ -110,9 +115,8 @@ Success response `200`:
 
 Checks database connectivity, current Alembic migration revision, the
 PostgreSQL `vector` extension, and the mode-specific provider configuration.
-The current `local` mode requires `OPENAI_API_KEY`; `test`, `demo`, and `mock`
-modes skip that live-provider requirement. Redis is not checked because the
-worker is not wired until a later roadmap step.
+The current `local` mode requires `OPENAI_API_KEY` and a reachable Redis/RQ
+backend; `test`, `demo`, and `mock` modes skip those live dependencies.
 
 Ready response `200`:
 
@@ -1120,6 +1124,9 @@ Notes:
 - Route must call orchestrator only.
 - A non-null Telegram `update_id` is claimed in the persistent ledger before
   command work starts. Duplicate updates never send a second Telegram reply.
+- With Redis configured, command work starts in `scripts/run_worker.py` rather
+  than in the webhook request. The worker consumes the `telegram` queue and
+  applies bounded retries.
 - Duplicate running updates return `202`; duplicate succeeded and failed
   updates replay the original result or error. Updates without `update_id` are
   accepted for backward compatibility without deduplication.

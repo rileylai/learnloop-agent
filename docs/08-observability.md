@@ -50,7 +50,10 @@ mode-specific provider configuration is unavailable.
   live provider requirement in `test`, `demo`, and `mock` modes.
 - Readiness failures use deterministic `failure_reason` values and never
   return raw driver exceptions, connection URLs, or secret values.
-- Redis is not part of readiness until the worker is wired in Step 77.
+- `queue` checks the Redis/RQ backend through `QueueClient.is_available()`.
+  Local mode reports `REDIS_URL_NOT_CONFIGURED` when no queue URL is supplied
+  and `REDIS_UNAVAILABLE` when Redis cannot answer `PING`. Test/demo/mock modes
+  may omit the queue dependency.
 
 ## Workflow Metadata Notes
 
@@ -129,6 +132,7 @@ mode-specific provider configuration is unavailable.
   `URL_FETCH_FAILED`, `YOUTUBE_TRANSCRIPT_NOT_FOUND`,
   `PROVIDER_NOT_FOUND`, `LLM_PROVIDER_ERROR`, `LLM_OUTPUT_INVALID`,
   `EMBEDDING_PROVIDER_NOT_CONFIGURED`, `EMBEDDING_PROVIDER_ERROR`,
+  `TELEGRAM_QUEUE_UNAVAILABLE`, `REDIS_URL_NOT_CONFIGURED`, `REDIS_UNAVAILABLE`,
   `AUTHENTICATION_FAILED`, `AUTHORIZATION_FAILED`,
   `TELEGRAM_UPDATE_LEDGER_FAILED`,
   `IDEMPOTENCY_KEY_CONFLICT`, `IDEMPOTENCY_IN_PROGRESS`,

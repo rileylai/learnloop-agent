@@ -160,7 +160,11 @@ def _check_configuration(
             required = False
         elif key == "REDIS_URL":
             status = "pass" if configured else "warn"
-            detail = "configured" if configured else "not configured; queue is not used by current requests"
+            detail = (
+                "configured"
+                if configured
+                else "not configured; async Telegram and local readiness are disabled"
+            )
             required = False
         elif key == "MOCK_NOTION_DATA_DIR":
             if not configured:

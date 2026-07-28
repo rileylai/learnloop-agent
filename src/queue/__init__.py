@@ -1,6 +1,12 @@
 from src.queue.base import QueueClient
 from src.queue.fake_queue_client import FakeQueueClient
-from src.queue.models import EnqueuedJob
+from src.queue.models import EnqueuedJob, QueueRetryPolicy
 from src.queue.rq_queue_client import RQQueueClient
 
-__all__ = ["EnqueuedJob", "FakeQueueClient", "QueueClient", "RQQueueClient"]
+__all__ = [
+    "EnqueuedJob",
+    "FakeQueueClient",
+    "QueueClient",
+    "QueueRetryPolicy",
+    "RQQueueClient",
+]

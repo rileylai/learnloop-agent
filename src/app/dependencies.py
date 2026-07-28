@@ -25,6 +25,7 @@ from src.providers import (
     OpenAIEmbeddingClient,
     ProviderRouter,
 )
+from src.queue import QueueClient, RQQueueClient
 from src.services import (
     CostTracker,
     PromptTemplateLoader,
@@ -67,11 +68,25 @@ def get_business_unit_of_work_factory(
 
 def get_readiness_service() -> ReadinessService:
     settings = get_settings()
+    queue_client = get_queue_client()
     return ReadinessService(
         probe=SqlAlchemyReadinessProbe(engine=engine),
         mode=settings.app_env,
         openai_configured=bool(settings.openai_api_key),
+        queue_client=queue_client,
+        queue_required=settings.app_env not in {"test", "demo", "mock"},
     )
+
+
+@lru_cache(maxsize=1)
+def get_queue_client() -> Optional[QueueClient]:
+    settings = get_settings()
+    if not settings.redis_url:
+        return None
+
+    from redis import Redis
+
+    return RQQueueClient(connection=Redis.from_url(settings.redis_url))
 
 
 def get_trust_boundary() -> TrustBoundaryService:

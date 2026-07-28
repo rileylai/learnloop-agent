@@ -245,6 +245,16 @@ Sync behavior in MVP:
   - Manual sync for user manual Notion edits: /api/notion/index/incremental
   - Auto page re-index after accepted append
   - No always-on cloud sync
+
+Telegram queue behavior:
+  - With `REDIS_URL` configured, the webhook claims update idempotency and
+    enqueues long work through `QueueClient` before returning `202`.
+  - `scripts/run_worker.py` consumes the RQ `telegram` queue.
+  - Telegram jobs use bounded retries; expected domain failures are terminal
+    ledger outcomes and unexpected worker crashes can retry while an update is
+    still `running`.
+  - Local compatibility without `REDIS_URL` retains synchronous Telegram
+    handling, but local readiness remains unavailable until Redis is configured.
 ```
 
 Boundary rules:

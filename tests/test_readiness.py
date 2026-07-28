@@ -23,6 +23,14 @@ class _FakeReadinessProbe:
         return self._failed_check != "vector"
 
 
+class _FakeQueueClient:
+    def __init__(self, available: bool) -> None:
+        self._available = available
+
+    def is_available(self) -> bool:
+        return self._available
+
+
 def _override_readiness_service(
     *,
     failed_check: Optional[str] = None,
@@ -113,3 +121,18 @@ def test_health_remains_liveness_when_readiness_is_unavailable() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_ready_reports_redis_failure_when_queue_is_required() -> None:
+    service = ReadinessService(
+        probe=_FakeReadinessProbe(),
+        mode="local",
+        openai_configured=True,
+        queue_client=_FakeQueueClient(available=False),
+        queue_required=True,
+    )
+
+    report = service.check()
+
+    assert report.is_ready is False
+    assert report.checks["queue"].failure_reason == "REDIS_UNAVAILABLE"

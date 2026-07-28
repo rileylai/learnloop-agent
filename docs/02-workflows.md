@@ -12,9 +12,9 @@ The workflows below define implemented orchestration contracts, but most
 external boundaries are currently verified with fake or in-memory adapters.
 The runtime selects mock/in-memory Notion clients by default, or the live
 reader and append-only writer adapters when `NOTION_BACKEND=live` and
-`NOTION_TOKEN` are configured. There is no background worker and no complete
-live Telegram flow. Deterministic Telegram tests cover page selection,
-proposal preview, and select-to-accept; live Telegram delivery remains opt-in.
+`NOTION_TOKEN` are configured. Telegram long work is queued through
+`QueueClient`/RQ when `REDIS_URL` is configured; live Telegram delivery and
+worker execution remain opt-in.
 
 The deterministic write policy, state-transition, transaction, RAG-exclusion,
 and retry rules remain mandatory when live adapters are added.
@@ -215,6 +215,32 @@ Rules:
 - A failed update is replayed as failed rather than automatically retried;
   recovery/reconciliation remains an explicit operator action.
 - Updates without `update_id` retain the pre-Step-75 non-idempotent behavior.
+
+## Telegram Background Queue Workflow (Step 77)
+
+```text
+POST /api/telegram/webhook
+-> Validate webhook secret and allowed chat policy
+-> Atomically claim unique update_id in telegram_update_ledger
+-> Enqueue serializable payload in QueueClient -> RQ (`telegram` queue)
+-> Return 202 with status=running and skipped_reason=QUEUED
+-> Worker reconstructs the Telegram gateway and processes the claimed update
+-> Persist succeeded/failed ledger outcome and workflow audit
+```
+
+Rules:
+- The API route does not run ingestion, QA, review, file download, provider,
+  or Telegram send work when the queue is configured.
+- The Telegram job uses bounded RQ retries (`max_retries=2`, intervals of 5
+  and 30 seconds). Expected domain failures are terminal ledger failures and
+  are not retried by RQ; an unexpected worker crash can retry while the ledger
+  is still `running`.
+- A duplicate update returns the existing terminal replay or the existing
+  `202` running response and does not enqueue a second job.
+- If enqueue fails after the ledger claim, the ledger is marked `failed` with
+  `TELEGRAM_QUEUE_UNAVAILABLE` so the failure is explicit and replayable.
+- If `REDIS_URL` is absent, local/test compatibility uses the existing
+  synchronous gateway path. Release readiness still requires Redis.
 
 ## API Mutation Idempotency Workflow (Step 76)
 

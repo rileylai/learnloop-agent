@@ -178,9 +178,16 @@ This starts:
 - PostgreSQL with pgvector on `localhost:5432`
 - Redis on `localhost:6379`
 
-The current API uses PostgreSQL/pgvector. Redis and the included QueueClient
-implementation are not wired into request execution yet, and there is no
-runtime worker process.
+The API uses PostgreSQL/pgvector. When `REDIS_URL` is configured, Telegram
+webhook work is acknowledged quickly and processed by the RQ worker. Start the
+worker in a separate shell with:
+
+```bash
+uv run --no-env-file --frozen python scripts/run_worker.py
+```
+
+Without `REDIS_URL`, local/test compatibility keeps the synchronous Telegram
+path; local readiness still requires Redis for release-style operation.
 
 ### 4. Run database migrations
 
@@ -216,8 +223,8 @@ curl http://127.0.0.1:8000/ready
 ```
 
 `/ready` returns `200` only when the database, current migrations, pgvector,
-and mode-specific provider configuration are available; otherwise it returns
-`503`. `/health` remains the process liveness check.
+Redis/RQ, and mode-specific provider configuration are available; otherwise it
+returns `503`. `/health` remains the process liveness check.
 
 ### Portable API entrypoint and preflight
 

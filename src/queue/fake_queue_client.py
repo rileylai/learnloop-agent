@@ -4,7 +4,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from src.queue.base import QueueClient
-from src.queue.models import EnqueuedJob
+from src.queue.models import EnqueuedJob, QueueRetryPolicy
 
 
 class FakeQueueClient(QueueClient):
@@ -19,6 +19,7 @@ class FakeQueueClient(QueueClient):
         args: Tuple[Any, ...] = (),
         kwargs: Optional[Dict[str, Any]] = None,
         description: Optional[str] = None,
+        retry_policy: Optional[QueueRetryPolicy] = None,
     ) -> EnqueuedJob:
         _ = description
         job = EnqueuedJob(
@@ -27,6 +28,10 @@ class FakeQueueClient(QueueClient):
             function_name=function.__name__,
             args=args,
             kwargs=kwargs or {},
+            retry_policy=retry_policy,
         )
         self.enqueued_jobs.append(job)
         return job
+
+    def is_available(self) -> bool:
+        return True

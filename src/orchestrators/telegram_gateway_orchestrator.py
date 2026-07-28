@@ -7,6 +7,7 @@ from http import HTTPStatus
 from typing import Optional
 
 from src.observability.redaction import sanitize_sensitive_text
+from src.queue import QueueClient, QueueRetryPolicy
 from src.orchestrators.telegram_ingestion_orchestrator import (
     TelegramDocumentAttachment,
     TelegramIngestionError,
@@ -39,7 +40,7 @@ TELEGRAM_BOT_TOOL_NAME = "telegram_bot"
 
 @dataclass
 class TelegramGatewayResult:
-    workflow_run_id: int
+    workflow_run_id: Optional[int]
     status: str
     handled: bool
     command: Optional[str]
@@ -88,6 +89,7 @@ class TelegramGatewayOrchestrator:
         telegram_page_orchestrator: Optional[TelegramPageOrchestrator] = None,
         trust_boundary: Optional[TrustBoundaryService] = None,
         update_idempotency_service: Optional[TelegramUpdateIdempotencyService] = None,
+        queue_client: Optional[QueueClient] = None,
     ) -> None:
         self._tool_registry = tool_registry
         self._workflow_run_service = workflow_run_service
@@ -97,6 +99,7 @@ class TelegramGatewayOrchestrator:
         self._telegram_page_orchestrator = telegram_page_orchestrator
         self._trust_boundary = trust_boundary
         self._update_idempotency_service = update_idempotency_service
+        self._queue_client = queue_client
 
     async def handle_webhook(
         self,
@@ -113,6 +116,130 @@ class TelegramGatewayOrchestrator:
         claim = self._claim_update(update_id)
         if claim is not None and not claim.owner:
             return self._replay_or_report_duplicate(claim)
+
+        return await self._process_claimed_webhook(
+            update_id=update_id,
+            chat_id=chat_id,
+            text=text,
+            caption=caption,
+            document=document,
+            photos=photos,
+            request_workflow_id=request_workflow_id,
+        )
+
+    async def handle_claimed_webhook(
+        self,
+        *,
+        update_id: Optional[int],
+        chat_id: Optional[str],
+        text: Optional[str],
+        caption: Optional[str],
+        document: Optional[TelegramDocumentAttachment],
+        photos: list[TelegramPhotoAttachment],
+        request_workflow_id: str,
+    ) -> TelegramGatewayResult:
+        """Process work after the API route has claimed the update ledger."""
+
+        self._require_allowed_chat(chat_id)
+        return await self._process_claimed_webhook(
+            update_id=update_id,
+            chat_id=chat_id,
+            text=text,
+            caption=caption,
+            document=document,
+            photos=photos,
+            request_workflow_id=request_workflow_id,
+        )
+
+    async def enqueue_webhook(
+        self,
+        *,
+        update_id: Optional[int],
+        chat_id: Optional[str],
+        text: Optional[str],
+        caption: Optional[str],
+        document: Optional[TelegramDocumentAttachment],
+        photos: list[TelegramPhotoAttachment],
+        request_workflow_id: str,
+    ) -> TelegramGatewayResult:
+        """Claim and enqueue a Telegram update, returning without long work."""
+
+        self._require_allowed_chat(chat_id)
+        claim = self._claim_update(update_id)
+        if claim is not None and not claim.owner:
+            return self._replay_or_report_duplicate(claim)
+
+        if self._queue_client is None:
+            return await self._process_claimed_webhook(
+                update_id=update_id,
+                chat_id=chat_id,
+                text=text,
+                caption=caption,
+                document=document,
+                photos=photos,
+                request_workflow_id=request_workflow_id,
+            )
+
+        from src.worker.telegram import process_telegram_webhook_job
+
+        retry_policy = QueueRetryPolicy(max_retries=2, retry_intervals=(5, 30))
+        try:
+            self._queue_client.enqueue(
+                queue_name="telegram",
+                function=process_telegram_webhook_job,
+                args=(
+                    update_id,
+                    chat_id,
+                    text,
+                    caption,
+                    asdict(document) if document is not None else None,
+                    [asdict(photo) for photo in photos],
+                    request_workflow_id,
+                ),
+                description="Process one Telegram webhook update",
+                retry_policy=retry_policy,
+            )
+        except Exception as exc:
+            error = TelegramGatewayError(
+                error_code="TELEGRAM_QUEUE_UNAVAILABLE",
+                message="Telegram background queue is unavailable",
+                http_status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                failure_reason="TELEGRAM_QUEUE_UNAVAILABLE",
+            )
+            self._mark_update_failed(update_id, error)
+            raise error from exc
+
+        return TelegramGatewayResult(
+            workflow_run_id=None,
+            status="running",
+            handled=False,
+            command=None,
+            reply_text=None,
+            telegram_message_id=None,
+            skipped_reason="QUEUED",
+            source_document_id=None,
+            change_request_id=None,
+            source_type=None,
+            target_notion_page_id=None,
+            qa_workflow_run_id=None,
+            insufficient_info=None,
+            citations=[],
+            review_workflow_run_id=None,
+            review_action=None,
+            change_request_status=None,
+        )
+
+    async def _process_claimed_webhook(
+        self,
+        *,
+        update_id: Optional[int],
+        chat_id: Optional[str],
+        text: Optional[str],
+        caption: Optional[str],
+        document: Optional[TelegramDocumentAttachment],
+        photos: list[TelegramPhotoAttachment],
+        request_workflow_id: str,
+    ) -> TelegramGatewayResult:
 
         try:
             result = await self._handle_new_webhook(

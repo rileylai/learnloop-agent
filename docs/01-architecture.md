@@ -126,9 +126,12 @@ boundaries and the target MVP integration shape. Current runtime wiring is:
   readiness service, which uses a database readiness probe for connectivity,
   Alembic revision, and pgvector extension checks plus mode-specific provider
   configuration checks.
-- `RQQueueClient` exists behind `QueueClient`, but runtime dependencies do not
-  enqueue work and the repository has no worker entrypoint. Redis is therefore
-  not part of current request execution.
+- `RQQueueClient` is wired behind `QueueClient` for Telegram webhook work when
+  `REDIS_URL` is configured. The webhook claims the update ledger, enqueues a
+  serializable job, and returns before ingestion, QA, review, or Telegram send
+  work. `scripts/run_worker.py` consumes the `telegram` queue. Local
+  compatibility without `REDIS_URL` keeps the previous synchronous path, while
+  local readiness remains blocked until Redis is configured and reachable.
 - API routes support a configured bearer-token boundary. Telegram webhook
   requests support a configured secret-token boundary and optional allowed-chat
   policy. Local/test compatibility remains available when these optional
@@ -169,3 +172,6 @@ Logic that must stay deterministic backend code (not MCP-owned):
 - pgvector distance ordering, NULL-vector exclusion, and filter-before-top-k
   behavior must stay inside repository queries rather than Python-side
   orchestrator ranking.
+- Queue retry policy is deterministic and bounded at the enqueue boundary;
+  expected Telegram/domain failures become terminal ledger outcomes, while
+  unexpected worker crashes remain eligible for RQ retry.

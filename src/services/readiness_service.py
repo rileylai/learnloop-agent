@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Optional, Protocol
 
+from src.queue import QueueClient
+
 
 READINESS_OK = "ok"
 READINESS_FAILED = "failed"
@@ -43,10 +45,14 @@ class ReadinessService:
         probe: ReadinessProbe,
         mode: str,
         openai_configured: bool,
+        queue_client: Optional[QueueClient] = None,
+        queue_required: bool = False,
     ) -> None:
         self._probe = probe
         self._mode = mode
         self._openai_configured = openai_configured
+        self._queue_client = queue_client
+        self._queue_required = queue_required
 
     def check(self) -> ReadinessReport:
         checks = {
@@ -67,7 +73,27 @@ class ReadinessService:
             ),
             "mode": self._check_mode_dependency(),
         }
+        if self._queue_required:
+            checks["queue"] = self._check_queue_dependency()
         return ReadinessReport(mode=self._mode, checks=checks)
+
+    def _check_queue_dependency(self) -> ReadinessCheckResult:
+        if self._queue_client is None:
+            return ReadinessCheckResult(
+                status=READINESS_FAILED,
+                detail="Redis queue configuration is missing",
+                failure_reason="REDIS_URL_NOT_CONFIGURED",
+            )
+        if self._queue_client.is_available():
+            return ReadinessCheckResult(
+                status=READINESS_OK,
+                detail="Redis queue is available",
+            )
+        return ReadinessCheckResult(
+            status=READINESS_FAILED,
+            detail="Redis queue is unavailable",
+            failure_reason="REDIS_UNAVAILABLE",
+        )
 
     def _check_mode_dependency(self) -> ReadinessCheckResult:
         if self._mode in {"test", "demo", "mock"}:
