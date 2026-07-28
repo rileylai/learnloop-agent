@@ -297,3 +297,28 @@ Expected output includes:
 ```text
 manual_sync_reconciliation: pass (4/4)
 ```
+
+## Prompt-Injection and Adversarial Evaluation (Step 80)
+
+`tests/evals/prompt_injection_eval.py` runs deterministic checks with synthetic
+public-safe data. It does not call an LLM and does not require an API key.
+
+Checks include:
+
+- English and Traditional Chinese source/context instructions remain inside
+  explicit untrusted-data prompt blocks.
+- Proposal target paths remain scoped to the selected page's `AI Supplement Zone`.
+- Backend-derived citation paths stay accurate and production-RAG retrieval
+  excludes unsafe/pending/rejected paths.
+- Append-only write safety and fail-closed `WRITE_POLICY_VIOLATION` behavior
+  remain intact.
+
+Run:
+
+```bash
+uv run python tests/evals/prompt_injection_eval.py
+```
+
+The evaluation reports `prompt_injection: pass (5/5)` when all deterministic
+checks pass. It is not evidence of live model resistance; live provider tests
+remain opt-in and must never replace backend invariants.

@@ -184,7 +184,7 @@ def test_qa_api_returns_grounded_answer_with_citations() -> None:
             assert metadata["provider_name"] == "openai"
             assert metadata["model"] == "gpt-4o-mini"
             assert metadata["prompt_id"] == "qa_answer"
-            assert metadata["prompt_version"] == "qa_answer_v1"
+            assert metadata["prompt_version"] == "qa_answer_v2"
             assert metadata["retrieval_mode"] == "lexical_fallback"
             assert (
                 metadata["retrieval_fallback_reason"]
@@ -311,7 +311,7 @@ def test_qa_api_returns_provider_not_found_when_provider_missing() -> None:
             assert metadata["provider_name"] == "openai"
             assert metadata["model"] == "gpt-4o-mini"
             assert metadata["prompt_id"] == "qa_answer"
-            assert metadata["prompt_version"] == "qa_answer_v1"
+            assert metadata["prompt_version"] == "qa_answer_v2"
             assert metadata["estimated_cost"] is None
         finally:
             verify_session.close()
@@ -372,7 +372,7 @@ def test_qa_api_returns_llm_provider_error_when_provider_request_fails() -> None
             assert metadata["provider_name"] == "openai"
             assert metadata["model"] == "gpt-4o-mini"
             assert metadata["prompt_id"] == "qa_answer"
-            assert metadata["prompt_version"] == "qa_answer_v1"
+            assert metadata["prompt_version"] == "qa_answer_v2"
             assert metadata["estimated_cost"] is None
         finally:
             verify_session.close()

@@ -337,6 +337,8 @@ User asks question
 Checklist:
 - [ ] `pending` and `rejected` proposals are excluded.
 - [ ] Missing citations are handled safely.
+- [ ] Retrieved context is treated as untrusted data; embedded instructions
+  cannot change write, target, or citation policy.
 - [ ] Query-time vector failures degrade to deterministic lexical fallback instead of failing the whole QA workflow.
 - [ ] Workflow metadata records provider name, model name, prompt id, and prompt version.
 
@@ -355,6 +357,8 @@ Checklist:
   output limits revalidated after extraction.
 - [ ] PDF page, image pixel, MIME, file-count, byte, and extracted-text limits
   fail closed with deterministic failure reasons.
+- [ ] Proposal target paths are validated against the selected page's
+  `AI Supplement Zone` before a change request is created.
 - [ ] Supplement proposal workflow metadata records provider name, model name, prompt id, and prompt version.
 
 ### 11.7 Human Review
@@ -533,7 +537,8 @@ API mutation idempotency rules:
 
 Metadata note:
 - LLM-backed workflows record `provider_name`, `model`, `prompt_id`, and
-  `prompt_version` inside workflow metadata JSON.
+  `prompt_version` inside workflow metadata JSON, plus the deterministic
+  `prompt_safety_version` used for untrusted-content boundaries.
 - When token usage is available, the same workflow metadata also records
   `token_input`, `token_output`, and `estimated_cost`.
 - Prompt templates under `docs/prompts/*.md` are runtime inputs only when code
@@ -646,6 +651,7 @@ Decision notes:
 | Pending/rejected exclusion | `pending` and `rejected` are excluded from production RAG. |
 | Notion source of truth | Notion content is authoritative for reconciliation. |
 | Secrets management | Never log secrets or private raw source content. |
+| Untrusted prompt data | Query, retrieved context, and source text cannot change citations, targets, tools, or write policy. |
 
 ## 16. Evaluation Plan
 Evaluation metrics:

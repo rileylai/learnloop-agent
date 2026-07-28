@@ -24,11 +24,13 @@ from src.rag import (
 from src.services import (
     CostTracker,
     PROMPT_ID_QA_ANSWER,
+    PROMPT_SAFETY_VERSION,
     PromptTemplateLoader,
     PromptTemplateLoaderError,
     STANDARD_FAILURE_REASONS,
     WorkflowRunAuditUpdateError,
     WorkflowRunService,
+    format_untrusted_prompt_block,
 )
 
 INSUFFICIENT_INFO_ANSWER = (
@@ -226,8 +228,14 @@ class QAOrchestrator:
             context_text = self._build_context_text(retrieved_chunks)
             system_message, user_message = prompt_bundle.render_messages(
                 variables={
-                    "query": normalized_query,
-                    "context_text": context_text,
+                    "query": format_untrusted_prompt_block(
+                        label="USER_QUESTION",
+                        value=normalized_query,
+                    ),
+                    "context_text": format_untrusted_prompt_block(
+                        label="RETRIEVED_CONTEXT",
+                        value=context_text,
+                    ),
                 }
             )
             llm_response = await self._provider_router.route(
@@ -251,6 +259,7 @@ class QAOrchestrator:
                         "operation": "qa_answer",
                         "prompt_id": prompt_id,
                         "prompt_version": prompt_version,
+                        "prompt_safety_version": PROMPT_SAFETY_VERSION,
                         "provider_name": normalized_provider_name,
                         "model": normalized_model,
                     },
@@ -546,6 +555,7 @@ class QAOrchestrator:
             "model": model,
             "prompt_id": prompt_id,
             "prompt_version": prompt_version,
+            "prompt_safety_version": PROMPT_SAFETY_VERSION,
             "token_input": token_input,
             "token_output": token_output,
             "estimated_cost": estimated_cost,

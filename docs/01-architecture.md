@@ -184,3 +184,8 @@ Logic that must stay deterministic backend code (not MCP-owned):
   checks every DNS result before each request, follows only bounded redirects,
   and enforces response content-type and byte limits. These checks are
   deterministic backend policy and are not delegated to the LLM.
+- Prompt safety keeps untrusted query, retrieved context, and source text
+  formatting in a small service used by LLM orchestrators. Provider adapters
+  receive the bounded prompt, while target resolution, citation construction,
+  output validation, and Notion write policy remain deterministic backend
+  responsibilities.

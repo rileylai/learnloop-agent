@@ -16,6 +16,12 @@ from src.services.prompt_template_loader import (
     PromptTemplateLoader,
     PromptTemplateLoaderError,
 )
+from src.services.prompt_safety import (
+    AI_SUPPLEMENT_ZONE,
+    PROMPT_SAFETY_VERSION,
+    format_untrusted_prompt_block,
+    is_safe_supplement_target_path,
+)
 from src.services.readiness_service import (
     READINESS_FAILED,
     READINESS_OK,
@@ -87,6 +93,10 @@ __all__ = [
     "PromptTemplateBundle",
     "PromptTemplateLoader",
     "PromptTemplateLoaderError",
+    "AI_SUPPLEMENT_ZONE",
+    "PROMPT_SAFETY_VERSION",
+    "format_untrusted_prompt_block",
+    "is_safe_supplement_target_path",
     "READINESS_FAILED",
     "READINESS_OK",
     "ReadinessCheckResult",

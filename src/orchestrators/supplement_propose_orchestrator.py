@@ -29,11 +29,14 @@ from src.services import (
     DuplicateKnowledgeChecker,
     DuplicateMatch,
     PROMPT_ID_SUPPLEMENT_PROPOSAL,
+    PROMPT_SAFETY_VERSION,
     PromptTemplateLoader,
     PromptTemplateLoaderError,
     STANDARD_FAILURE_REASONS,
     WorkflowRunAuditUpdateError,
     WorkflowRunService,
+    format_untrusted_prompt_block,
+    is_safe_supplement_target_path,
 )
 
 CHANGE_REQUEST_STATUS_PENDING = "pending"
@@ -159,6 +162,7 @@ class SupplementProposeOrchestrator:
         token_input: Optional[int] = None
         token_output: Optional[int] = None
         estimated_cost: Optional[float] = None
+        target_page_path: Optional[str] = None
         try:
             prompt_bundle = self._prompt_template_loader.load_bundle(prompt_id)
             prompt_version = prompt_bundle.version
@@ -191,6 +195,7 @@ class SupplementProposeOrchestrator:
                         failure_reason="NOTION_PAGE_NOT_FOUND",
                     )
                 target_page_db_id = int(target_page.id)
+                target_page_path = target_page.notion_path
 
             duplicate_match = self._check_duplicate(source_document.raw_text)
 
@@ -199,9 +204,18 @@ class SupplementProposeOrchestrator:
             if duplicate_match is None:
                 system_message, user_message = prompt_bundle.render_messages(
                     variables={
-                        "source_type": source_document.source_type,
-                        "source_display_name": source_document.source_display_name,
-                        "source_text": source_document.raw_text,
+                        "source_type": format_untrusted_prompt_block(
+                            label="SOURCE_TYPE",
+                            value=source_document.source_type,
+                        ),
+                        "source_display_name": format_untrusted_prompt_block(
+                            label="SOURCE_DISPLAY_NAME",
+                            value=source_document.source_display_name,
+                        ),
+                        "source_text": format_untrusted_prompt_block(
+                            label="SOURCE_TEXT",
+                            value=source_document.raw_text,
+                        ),
                     }
                 )
                 llm_response = await self._provider_router.route(
@@ -225,6 +239,7 @@ class SupplementProposeOrchestrator:
                             "operation": "propose_change_request",
                             "prompt_id": prompt_id,
                             "prompt_version": prompt_version,
+                            "prompt_safety_version": PROMPT_SAFETY_VERSION,
                             "provider_name": normalized_provider_name,
                             "model": normalized_model,
                         },
@@ -244,6 +259,7 @@ class SupplementProposeOrchestrator:
                     llm_output=llm_response.output_text,
                     source_type=source_document.source_type,
                     source_display_name=source_document.source_display_name,
+                    target_page_path=target_page_path,
                 )
                 duplicate_match = self._check_duplicate(
                     self._build_duplicate_candidate_from_proposal(proposal)
@@ -289,6 +305,7 @@ class SupplementProposeOrchestrator:
                         "model": normalized_model,
                         "prompt_id": prompt_id,
                         "prompt_version": prompt_version,
+                        "prompt_safety_version": PROMPT_SAFETY_VERSION,
                         "token_input": token_input,
                         "token_output": token_output,
                         "estimated_cost": estimated_cost,
@@ -462,6 +479,7 @@ class SupplementProposeOrchestrator:
         llm_output: str,
         source_type: str,
         source_display_name: str,
+        target_page_path: Optional[str],
     ) -> SupplementProposalSchema:
         proposal = parse_supplement_proposal_json(llm_output)
         if proposal.source.source_type != source_type:
@@ -471,6 +489,13 @@ class SupplementProposeOrchestrator:
         if proposal.source.source_display_name != source_display_name:
             raise SupplementProposalValidationError(
                 "LLM output source.source_display_name does not match input source"
+            )
+        if not is_safe_supplement_target_path(
+            target_path=proposal.target_path,
+            target_page_path=target_page_path,
+        ):
+            raise SupplementProposalValidationError(
+                "LLM output target_path must stay under the selected page's AI Supplement Zone"
             )
         return proposal
 
@@ -548,6 +573,7 @@ class SupplementProposeOrchestrator:
                     "model": model,
                     "prompt_id": prompt_id,
                     "prompt_version": prompt_version,
+                    "prompt_safety_version": PROMPT_SAFETY_VERSION,
                     "token_input": token_input,
                     "token_output": token_output,
                     "estimated_cost": estimated_cost,

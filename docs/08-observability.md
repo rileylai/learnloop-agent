@@ -58,7 +58,7 @@ mode-specific provider configuration is unavailable.
 ## Workflow Metadata Notes
 
 - LLM-backed workflows record `provider_name`, `model`, `prompt_id`, and
-  `prompt_version` in workflow metadata JSON.
+  `prompt_version` and `prompt_safety_version` in workflow metadata JSON.
 - Prompt templates live under `docs/prompts/*.md` and become runtime inputs
   only when code explicitly loads them.
 - Prompt version tracking must be deterministic so prompt changes can be tied

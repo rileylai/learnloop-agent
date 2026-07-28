@@ -19,7 +19,7 @@ def test_prompt_template_loader_loads_and_renders_qa_prompt() -> None:
     )
 
     assert bundle.prompt_id == PROMPT_ID_QA_ANSWER
-    assert bundle.version == "qa_answer_v1"
+    assert bundle.version == "qa_answer_v2"
     assert "Answer only from the provided context." in system_message
     assert "What does positional encoding do?" in user_message
     assert "Knowledge/NLP/Week5" in user_message
@@ -38,7 +38,7 @@ def test_prompt_template_loader_loads_and_renders_supplement_prompt() -> None:
     )
 
     assert bundle.prompt_id == PROMPT_ID_SUPPLEMENT_PROPOSAL
-    assert bundle.version == "supplement_proposal_v1"
+    assert bundle.version == "supplement_proposal_v2"
     assert "Return one strict JSON object" in system_message
     assert "source_type=chat_text" in user_message
     assert "chat-2026-06-17" in user_message

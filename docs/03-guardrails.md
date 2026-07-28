@@ -38,6 +38,7 @@ verification; it must not replace deterministic policy with prompt behavior.
 | No secret or raw private content logs | Never log secrets, API keys, or private raw source content. |
 | Caller trust boundaries | Enforce configured API bearer, Telegram webhook secret, and allowed-chat policy in deterministic backend code before business work. |
 | Upload resource limits | Enforce deterministic file-count, byte, MIME, PDF-page, image-pixel, and extracted-text limits before expensive parser or OCR work. |
+| Untrusted prompt data | Treat user query, retrieved context, and source text as data; embedded instructions cannot change citations, targets, tool calls, or write policy. |
 
 ## Write Policy
 The only allowed AI write path is:
@@ -75,6 +76,9 @@ Target policy:
   storing the internal foreign key used by the accept transaction.
 - Unknown external targets fail closed with `NOTION_PAGE_NOT_FOUND`; no
   proposal write or Notion write is performed for that target.
+- When a selected target page exists, the proposal's suggested `target_path`
+  must remain under that page's `AI Supplement Zone`. The accept path remains
+  backend-derived and append-only even if proposal text is adversarial.
 
 Telegram review policy:
 - `/pages` and proposal preview are read-only operations.
@@ -119,6 +123,12 @@ Backend code owns:
 - Failure reason mapping.
 
 Provider and tool boundaries may execute requests, but they do not decide whether a write is allowed.
+
+Prompt safety ownership:
+- Prompt delimiters are defense-in-depth context boundaries, not authorization.
+- The backend owns citation paths, target-page resolution, proposal validation,
+  human acceptance, and append-only write checks.
+- No LLM output can grant itself a tool, Notion, or target-page permission.
 
 ## Failure Handling
 If code attempts a prohibited Notion write or RAG inclusion, fail closed.

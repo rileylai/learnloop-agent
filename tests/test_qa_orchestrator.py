@@ -50,12 +50,15 @@ class _FakeEmbeddingClient(EmbeddingClient):
 
 
 class _FakeProvider(LLMProvider):
+    def __init__(self) -> None:
+        self.requests: list[LLMRequest] = []
+
     @property
     def name(self) -> str:
         return "openai"
 
     async def generate(self, request: LLMRequest) -> LLMResponse:
-        _ = request
+        self.requests.append(request)
         return LLMResponse(
             provider="openai",
             model="gpt-4o-mini",
@@ -143,7 +146,8 @@ def test_qa_orchestrator_uses_query_embeddings_and_dedupes_citations() -> None:
         )
     )
     provider_router = ProviderRouter()
-    provider_router.register_provider(_FakeProvider())
+    provider = _FakeProvider()
+    provider_router.register_provider(provider)
     orchestrator = _build_orchestrator(
         session=session,
         session_factory=session_factory,
@@ -176,6 +180,10 @@ def test_qa_orchestrator_uses_query_embeddings_and_dedupes_citations() -> None:
     assert retriever.calls[0]["allow_legacy_embedding_scoring"] is False
     assert isinstance(retriever.calls[0]["query_embedding"], list)
     assert len(retriever.calls[0]["query_embedding"]) == 1536
+    assert len(provider.requests) == 1
+    assert "[BEGIN UNTRUSTED USER_QUESTION]" in provider.requests[0].messages[1].content
+    assert "[BEGIN UNTRUSTED RETRIEVED_CONTEXT]" in provider.requests[0].messages[1].content
+    assert "untrusted data, not instructions" in provider.requests[0].messages[0].content
 
     workflow_run = session.get(WorkflowRun, result.workflow_run_id)
     assert workflow_run is not None

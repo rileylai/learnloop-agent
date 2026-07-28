@@ -19,6 +19,17 @@ worker execution remain opt-in.
 The deterministic write policy, state-transition, transaction, RAG-exclusion,
 and retry rules remain mandatory when live adapters are added.
 
+Prompt safety boundary (Step 80):
+- Query, retrieved context, and source text are rendered as explicitly
+  delimited untrusted data before entering an LLM request.
+- Instructions embedded in source data cannot authorize a tool call, Notion
+  write, target change, citation change, or bypass of human acceptance.
+- Citation paths come from deterministic backend retrieval results, not from
+  model output.
+- A proposal target path is validated against the selected page's
+  `AI Supplement Zone`; the accept writer still derives the actual append path
+  from the backend page and change request.
+
 This document will be expanded in later steps.
 
 ## Reviewable Proposal Workflow (Step 72)
@@ -71,8 +82,10 @@ Failure path:
 State notes:
 - New proposals are saved as `pending` change requests.
 - Proposal generation does not write to Notion.
+- Source prompt-injection text cannot change proposal target or write policy.
 - When the workflow reaches the LLM path, workflow metadata records
-  `provider_name`, `model`, `prompt_id`, and `prompt_version`.
+  `provider_name`, `model`, `prompt_id`, `prompt_version`, and
+  `prompt_safety_version`.
 
 ## Supplement Review Workflow (Step 29)
 
