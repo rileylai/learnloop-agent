@@ -9,9 +9,17 @@ from typing import Any, Dict, List, Optional
 
 from src.db.unit_of_work import UnitOfWorkFactory
 from src.services import (
+    MAX_OCR_IMAGE_BYTES,
+    MAX_OCR_IMAGE_COUNT,
     STANDARD_FAILURE_REASONS,
+    UploadValidationError,
     WorkflowRunAuditUpdateError,
     WorkflowRunService,
+    validate_extracted_text,
+    validate_file_bytes,
+    validate_image_metadata,
+    validate_ocr_batch,
+    upload_error_http_status,
 )
 from src.tools import ToolContext, ToolRegistry
 
@@ -19,6 +27,13 @@ IMAGE_OCR_TOOL_NAME = "image_ocr_parser"
 
 TOOL_ERROR_TO_HTTP_STATUS: Dict[str, int] = {
     "INVALID_ARGUMENT": HTTPStatus.BAD_REQUEST,
+    "INVALID_UPLOAD_MIME": HTTPStatus.BAD_REQUEST,
+    "EMPTY_UPLOAD": HTTPStatus.BAD_REQUEST,
+    "UPLOAD_LIMIT_EXCEEDED": HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+    "UPLOAD_TOO_LARGE": HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+    "IMAGE_PIXEL_LIMIT_EXCEEDED": HTTPStatus.UNPROCESSABLE_ENTITY,
+    "INVALID_IMAGE": HTTPStatus.UNPROCESSABLE_ENTITY,
+    "EXTRACTED_TEXT_LIMIT_EXCEEDED": HTTPStatus.UNPROCESSABLE_ENTITY,
     "OCR_FAILED": HTTPStatus.UNPROCESSABLE_ENTITY,
 }
 
@@ -27,6 +42,7 @@ TOOL_ERROR_TO_HTTP_STATUS: Dict[str, int] = {
 class ImageUploadInput:
     file_name: str
     file_bytes: bytes
+    mime_type: Optional[str] = None
 
 
 @dataclass
@@ -171,8 +187,18 @@ class ImageOCRIngestionOrchestrator:
                 message="images must contain at least one image",
                 http_status_code=HTTPStatus.BAD_REQUEST,
             )
+        if len(images) > MAX_OCR_IMAGE_COUNT:
+            raise ImageOCRIngestionError(
+                error_code="UPLOAD_LIMIT_EXCEEDED",
+                message=(
+                    f"OCR image count exceeds the {MAX_OCR_IMAGE_COUNT} image limit"
+                ),
+                http_status_code=HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                failure_reason="UPLOAD_LIMIT_EXCEEDED",
+            )
 
         normalized_images: List[ImageUploadInput] = []
+        total_bytes = 0
         for index, image in enumerate(images, start=1):
             file_name = image.file_name.strip()
             if not file_name:
@@ -183,8 +209,31 @@ class ImageOCRIngestionOrchestrator:
                     message=f"images[{index}] is empty",
                     http_status_code=HTTPStatus.BAD_REQUEST,
                 )
+            try:
+                validate_image_metadata(mime_type=image.mime_type)
+                validate_file_bytes(
+                    file_bytes=image.file_bytes,
+                    maximum_bytes=MAX_OCR_IMAGE_BYTES,
+                    label=f"images[{index}]",
+                )
+                total_bytes += len(image.file_bytes)
+                validate_ocr_batch(
+                    image_count=index,
+                    total_bytes=total_bytes,
+                )
+            except UploadValidationError as exc:
+                raise ImageOCRIngestionError(
+                    error_code=exc.error_code,
+                    message=exc.message,
+                    http_status_code=upload_error_http_status(exc.error_code),
+                    failure_reason=exc.failure_reason,
+                ) from exc
             normalized_images.append(
-                ImageUploadInput(file_name=file_name, file_bytes=image.file_bytes)
+                ImageUploadInput(
+                    file_name=file_name,
+                    file_bytes=image.file_bytes,
+                    mime_type=image.mime_type,
+                )
             )
         return normalized_images
 
@@ -259,6 +308,15 @@ class ImageOCRIngestionOrchestrator:
                 http_status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                 failure_reason="OCR_FAILED",
             )
+        try:
+            validate_extracted_text(normalized_raw_text)
+        except UploadValidationError as exc:
+            raise ImageOCRIngestionError(
+                error_code=exc.error_code,
+                message=exc.message,
+                http_status_code=upload_error_http_status(exc.error_code),
+                failure_reason=exc.failure_reason,
+            ) from exc
         return normalized_raw_text
 
     def _build_source_display_name(self, image_count: int) -> str:

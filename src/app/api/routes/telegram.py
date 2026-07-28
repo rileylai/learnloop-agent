@@ -97,6 +97,7 @@ async def handle_telegram_webhook(
         document = TelegramDocumentAttachment(
             file_id=message.document.file_id,
             file_name=message.document.file_name,
+            mime_type=message.document.mime_type,
         )
     if message is not None:
         photos = [

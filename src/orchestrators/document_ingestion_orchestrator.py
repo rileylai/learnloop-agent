@@ -9,9 +9,16 @@ from typing import Any, Dict, Optional
 
 from src.db.unit_of_work import UnitOfWorkFactory
 from src.services import (
+    MAX_PDF_BYTES,
     STANDARD_FAILURE_REASONS,
+    UploadValidationError,
     WorkflowRunAuditUpdateError,
     WorkflowRunService,
+    upload_error_http_status,
+    validate_extracted_text,
+    validate_file_bytes,
+    validate_pdf_metadata,
+    validate_pdf_page_count,
 )
 from src.tools import ToolContext, ToolRegistry
 
@@ -19,7 +26,14 @@ PDF_PARSER_TOOL_NAME = "pdf_parser"
 
 TOOL_ERROR_TO_HTTP_STATUS: Dict[str, int] = {
     "INVALID_ARGUMENT": HTTPStatus.BAD_REQUEST,
+    "INVALID_UPLOAD_TYPE": HTTPStatus.BAD_REQUEST,
+    "INVALID_UPLOAD_MIME": HTTPStatus.BAD_REQUEST,
+    "EMPTY_UPLOAD": HTTPStatus.BAD_REQUEST,
+    "UPLOAD_LIMIT_EXCEEDED": HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+    "UPLOAD_TOO_LARGE": HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
     "PDF_PARSE_FAILED": HTTPStatus.UNPROCESSABLE_ENTITY,
+    "PDF_PAGE_LIMIT_EXCEEDED": HTTPStatus.UNPROCESSABLE_ENTITY,
+    "EXTRACTED_TEXT_LIMIT_EXCEEDED": HTTPStatus.UNPROCESSABLE_ENTITY,
 }
 
 
@@ -68,27 +82,33 @@ class DocumentIngestionOrchestrator:
         *,
         file_name: str,
         file_bytes: bytes,
+        mime_type: Optional[str] = None,
         request_workflow_id: str,
     ) -> DocumentIngestionResult:
         normalized_file_name = file_name.strip()
-        if not normalized_file_name:
-            raise DocumentIngestionError(
-                error_code="INVALID_ARGUMENT",
-                message="file_name must not be empty",
-                http_status_code=HTTPStatus.BAD_REQUEST,
+        try:
+            if not normalized_file_name:
+                raise UploadValidationError(
+                    error_code="INVALID_ARGUMENT",
+                    message="file_name must not be empty",
+                    failure_reason="INVALID_ARGUMENT",
+                )
+            validate_pdf_metadata(
+                file_name=normalized_file_name,
+                mime_type=mime_type,
             )
-        if not normalized_file_name.lower().endswith(".pdf"):
-            raise DocumentIngestionError(
-                error_code="INVALID_ARGUMENT",
-                message="Uploaded document must be a .pdf file",
-                http_status_code=HTTPStatus.BAD_REQUEST,
+            validate_file_bytes(
+                file_bytes=file_bytes,
+                maximum_bytes=MAX_PDF_BYTES,
+                label="Uploaded document",
             )
-        if not file_bytes:
+        except UploadValidationError as exc:
             raise DocumentIngestionError(
-                error_code="INVALID_ARGUMENT",
-                message="Uploaded document is empty",
-                http_status_code=HTTPStatus.BAD_REQUEST,
-            )
+                error_code=exc.error_code,
+                message=exc.message,
+                http_status_code=upload_error_http_status(exc.error_code),
+                failure_reason=exc.failure_reason,
+            ) from exc
 
         workflow_run = self._workflow_run_service.start_workflow(
             workflow_type="ingestion",
@@ -110,6 +130,17 @@ class DocumentIngestionOrchestrator:
                 file_bytes=file_bytes,
                 request_workflow_id=request_workflow_id,
             )
+            page_count = parsed.get("page_count")
+            if isinstance(page_count, int):
+                try:
+                    validate_pdf_page_count(page_count)
+                except UploadValidationError as exc:
+                    raise DocumentIngestionError(
+                        error_code=exc.error_code,
+                        message=exc.message,
+                        http_status_code=upload_error_http_status(exc.error_code),
+                        failure_reason=exc.failure_reason,
+                    ) from exc
             raw_text = self._extract_raw_text(parsed)
             content_hash = self._build_content_hash(raw_text)
             with self._unit_of_work_factory() as unit_of_work:
@@ -242,6 +273,15 @@ class DocumentIngestionOrchestrator:
                 http_status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                 failure_reason="PDF_PARSE_FAILED",
             )
+        try:
+            validate_extracted_text(normalized_raw_text)
+        except UploadValidationError as exc:
+            raise DocumentIngestionError(
+                error_code=exc.error_code,
+                message=exc.message,
+                http_status_code=upload_error_http_status(exc.error_code),
+                failure_reason=exc.failure_reason,
+            ) from exc
         return normalized_raw_text
 
     def _build_content_hash(self, raw_text: str) -> str:

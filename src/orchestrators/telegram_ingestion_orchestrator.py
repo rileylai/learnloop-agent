@@ -42,6 +42,7 @@ TOOL_ERROR_TO_HTTP_STATUS: Dict[str, int] = {
 class TelegramDocumentAttachment:
     file_id: str
     file_name: Optional[str] = None
+    mime_type: Optional[str] = None
 
 
 @dataclass
@@ -263,6 +264,7 @@ class TelegramIngestionOrchestrator:
         return await self._document_ingestion_orchestrator.ingest_document(
             file_name=source_file_name,
             file_bytes=downloaded.file_bytes,
+            mime_type=document.mime_type,
             request_workflow_id=request_workflow_id,
         )
 

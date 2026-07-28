@@ -30,10 +30,49 @@ from src.orchestrators import (
     URLIngestionError,
     URLIngestionOrchestrator,
 )
-from src.services import WorkflowRunService
+from src.services import (
+    MAX_OCR_IMAGE_BYTES,
+    MAX_OCR_IMAGE_COUNT,
+    MAX_OCR_TOTAL_BYTES,
+    MAX_PDF_BYTES,
+    UploadValidationError,
+    WorkflowRunService,
+    validate_file_bytes,
+    validate_image_metadata,
+    validate_ocr_batch,
+    validate_pdf_metadata,
+    upload_error_http_status,
+)
 from src.tools import ToolRegistry
 
 router = APIRouter()
+
+
+def _upload_http_exception(exc: UploadValidationError) -> HTTPException:
+    return HTTPException(
+        status_code=upload_error_http_status(exc.error_code),
+        detail={
+            "error_code": exc.error_code,
+            "message": exc.message,
+            "failure_reason": exc.failure_reason,
+            "workflow_run_id": None,
+        },
+    )
+
+
+async def _read_upload_with_limit(
+    upload: UploadFile,
+    *,
+    maximum_bytes: int,
+    label: str,
+) -> bytes:
+    file_bytes = await upload.read(maximum_bytes + 1)
+    validate_file_bytes(
+        file_bytes=file_bytes,
+        maximum_bytes=maximum_bytes,
+        label=label,
+    )
+    return file_bytes
 
 
 def _build_source_document_orchestrator(
@@ -208,10 +247,22 @@ async def ingest_pdf_document(
     request_workflow_id = str(getattr(request.state, "workflow_id", ""))
 
     try:
-        document_bytes = await document.read()
+        try:
+            validate_pdf_metadata(
+                file_name=document.filename or "",
+                mime_type=document.content_type,
+            )
+            document_bytes = await _read_upload_with_limit(
+                document,
+                maximum_bytes=MAX_PDF_BYTES,
+                label="Uploaded document",
+            )
+        except UploadValidationError as exc:
+            raise _upload_http_exception(exc) from exc
         result = await orchestrator.ingest_document(
             file_name=document.filename or "",
             file_bytes=document_bytes,
+            mime_type=document.content_type,
             request_workflow_id=request_workflow_id,
         )
     except DocumentIngestionError as exc:
@@ -335,11 +386,42 @@ async def ingest_image_ocr(
 
     image_inputs: list[ImageUploadInput] = []
     try:
+        if len(images) > MAX_OCR_IMAGE_COUNT:
+            raise _upload_http_exception(
+                UploadValidationError(
+                    error_code="UPLOAD_LIMIT_EXCEEDED",
+                    message=(
+                        f"OCR image count exceeds the {MAX_OCR_IMAGE_COUNT} image limit"
+                    ),
+                    failure_reason="UPLOAD_LIMIT_EXCEEDED",
+                )
+            )
+        total_bytes = 0
         for index, image in enumerate(images, start=1):
-            image_bytes = await image.read()
+            try:
+                validate_image_metadata(mime_type=image.content_type)
+                image_bytes = await _read_upload_with_limit(
+                    image,
+                    maximum_bytes=MAX_OCR_IMAGE_BYTES,
+                    label=f"images[{index}]",
+                )
+            except UploadValidationError as exc:
+                raise _upload_http_exception(exc) from exc
+            total_bytes += len(image_bytes)
+            try:
+                validate_ocr_batch(
+                    image_count=len(image_inputs) + 1,
+                    total_bytes=total_bytes,
+                )
+            except UploadValidationError as exc:
+                raise _upload_http_exception(exc) from exc
             image_file_name = (image.filename or "").strip() or f"image-{index}"
             image_inputs.append(
-                ImageUploadInput(file_name=image_file_name, file_bytes=image_bytes)
+                ImageUploadInput(
+                    file_name=image_file_name,
+                    file_bytes=image_bytes,
+                    mime_type=image.content_type,
+                )
             )
 
         result = await orchestrator.ingest_image_ocr(

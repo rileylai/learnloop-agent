@@ -50,6 +50,10 @@ The repository is demo-ready, not local-user-ready or release-ready.
   are persisted as terminal ledger outcomes.
 - Tesseract is required for OCR. Useful non-English OCR also requires matching
   language data installed on the host.
+- Upload limits are enforced in API routes, orchestrators, and parser adapters;
+  changing them requires updating the shared `upload_limits` policy and its
+  deterministic tests. The limits bound parser/OCR memory and CPU exposure but
+  do not replace reverse-proxy request-size limits in a production deployment.
 - Telegram live use additionally needs a bot token, public HTTPS webhook
   delivery, `TELEGRAM_WEBHOOK_SECRET`, and an explicit
   `TELEGRAM_ALLOWED_CHAT_IDS` policy. Telegram and API mutation idempotency

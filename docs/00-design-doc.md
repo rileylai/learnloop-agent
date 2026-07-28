@@ -351,6 +351,10 @@ Receive source (PDF/URL/YouTube/OCR/chat)
 Checklist:
 - [ ] Source display format follows source type rule.
 - [ ] Chat text length limit is enforced.
+- [ ] PDF and OCR upload limits are enforced before parser work, with parser
+  output limits revalidated after extraction.
+- [ ] PDF page, image pixel, MIME, file-count, byte, and extracted-text limits
+  fail closed with deterministic failure reasons.
 - [ ] Supplement proposal workflow metadata records provider name, model name, prompt id, and prompt version.
 
 ### 11.7 Human Review
@@ -711,6 +715,15 @@ Failure taxonomy:
 - `TELEGRAM_NOT_CONFIGURED`
 - `TELEGRAM_SEND_FAILED`
 - `TELEGRAM_FILE_DOWNLOAD_FAILED`
+- `INVALID_UPLOAD_TYPE`
+- `INVALID_UPLOAD_MIME`
+- `EMPTY_UPLOAD`
+- `UPLOAD_LIMIT_EXCEEDED`
+- `UPLOAD_TOO_LARGE`
+- `PDF_PAGE_LIMIT_EXCEEDED`
+- `IMAGE_PIXEL_LIMIT_EXCEEDED`
+- `INVALID_IMAGE`
+- `EXTRACTED_TEXT_LIMIT_EXCEEDED`
 - `UNKNOWN_ERROR`
 
 ## 18. Architectural Decisions

@@ -8,6 +8,14 @@ from typing import Any, Dict
 
 from src.tools.base import Tool
 from src.tools.models import ToolContext, ToolResult, ToolSpec
+from src.services import (
+    MAX_PDF_BYTES,
+    MAX_EXTRACTED_TEXT_CHARS,
+    UploadValidationError,
+    validate_extracted_text,
+    validate_file_bytes,
+    validate_pdf_page_count,
+)
 
 
 @dataclass
@@ -17,7 +25,9 @@ class ParsedPDFDocument:
 
 
 class PDFParserClientError(Exception):
-    pass
+    def __init__(self, message: str, *, error_code: str = "PDF_PARSE_FAILED") -> None:
+        super().__init__(message)
+        self.error_code = error_code
 
 
 class PDFParserClient:
@@ -38,7 +48,16 @@ class PyPDFParserClient(PDFParserClient):
         except Exception as exc:
             raise PDFParserClientError(f"Failed to open PDF: {exc}") from exc
 
+        try:
+            validate_pdf_page_count(len(reader.pages))
+        except UploadValidationError as exc:
+            raise PDFParserClientError(
+                exc.message,
+                error_code=exc.error_code,
+            ) from exc
+
         page_texts = []
+        extracted_chars = 0
         for page in reader.pages:
             try:
                 text = page.extract_text() or ""
@@ -48,11 +67,27 @@ class PyPDFParserClient(PDFParserClient):
                 ) from exc
             stripped = text.strip()
             if stripped:
+                extracted_chars += len(stripped)
+                if extracted_chars > MAX_EXTRACTED_TEXT_CHARS:
+                    raise PDFParserClientError(
+                        (
+                            "Extracted text exceeds the "
+                            f"{MAX_EXTRACTED_TEXT_CHARS} character limit"
+                        ),
+                        error_code="EXTRACTED_TEXT_LIMIT_EXCEEDED",
+                    )
                 page_texts.append(stripped)
 
         raw_text = "\n\n".join(page_texts).strip()
         if not raw_text:
             raise PDFParserClientError("No extractable text found in PDF")
+        try:
+            validate_extracted_text(raw_text)
+        except UploadValidationError as exc:
+            raise PDFParserClientError(
+                exc.message,
+                error_code=exc.error_code,
+            ) from exc
 
         return ParsedPDFDocument(raw_text=raw_text, page_count=len(reader.pages))
 
@@ -113,6 +148,17 @@ class PDFParserTool(Tool):
                 code="INVALID_ARGUMENT",
                 message="file_bytes_base64 decoded to empty bytes",
             )
+        try:
+            validate_file_bytes(
+                file_bytes=file_bytes,
+                maximum_bytes=MAX_PDF_BYTES,
+                label="Uploaded PDF",
+            )
+        except UploadValidationError as exc:
+            return ToolResult.failure(
+                code=exc.error_code,
+                message=exc.message,
+            )
 
         try:
             parsed = self._parser_client.parse_document(
@@ -120,10 +166,13 @@ class PDFParserTool(Tool):
                 file_bytes=file_bytes,
             )
         except PDFParserClientError as exc:
-            return ToolResult.failure(
-                code="PDF_PARSE_FAILED",
-                message=str(exc),
-            )
+            return ToolResult.failure(code=exc.error_code, message=str(exc))
+
+        try:
+            validate_pdf_page_count(parsed.page_count)
+            validate_extracted_text(parsed.raw_text)
+        except UploadValidationError as exc:
+            return ToolResult.failure(code=exc.error_code, message=exc.message)
 
         return ToolResult.success(
             content=(

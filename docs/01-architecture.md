@@ -175,3 +175,7 @@ Logic that must stay deterministic backend code (not MCP-owned):
 - Queue retry policy is deterministic and bounded at the enqueue boundary;
   expected Telegram/domain failures become terminal ledger outcomes, while
   unexpected worker crashes remain eligible for RQ retry.
+- Upload resource policy is shared by API routes, ingestion orchestrators, and
+  parser adapters. The route bounds bytes and metadata reads; orchestrators
+  revalidate caller-independent limits; real PDF/OCR adapters enforce page,
+  pixel, and extraction limits before expensive work.

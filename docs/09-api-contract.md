@@ -384,6 +384,11 @@ Notes:
 - Orchestrator must call `ToolRegistry` -> `PDFParserTool`.
 - This endpoint does not perform Notion write operations.
 - Source display name is the uploaded filename.
+- Upload limits are deterministic: PDF size is at most 10 MiB, page count is
+  at most 100, and extracted text is at most 200,000 characters.
+- The route accepts only `application/pdf` when a MIME type is supplied. It
+  reads at most one byte beyond the configured size limit and rejects an
+  over-limit request before creating a workflow.
 
 ### POST `/api/ingest/url`
 Ingest one URL article, extract normalized text, and create one source document.
@@ -552,6 +557,12 @@ Notes:
 - Orchestrator must call `ToolRegistry` -> `ImageOCRTool`.
 - This endpoint does not perform Notion write operations.
 - Uploaded image order must be preserved in OCR text concatenation.
+- OCR accepts at most 10 images, 5 MiB per image, and 20 MiB per batch.
+  Supported supplied MIME types are JPEG, PNG, WebP, GIF, BMP, and TIFF.
+- The real Tesseract adapter rejects images over 40 million pixels before OCR;
+  extracted OCR text is limited to 200,000 characters. Limit failures return
+  deterministic `failure_reason` values such as `UPLOAD_TOO_LARGE`,
+  `IMAGE_PIXEL_LIMIT_EXCEEDED`, and `EXTRACTED_TEXT_LIMIT_EXCEEDED`.
 
 ## Supplement Proposal API
 

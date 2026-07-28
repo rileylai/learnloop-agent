@@ -8,6 +8,15 @@ from typing import Any, Dict, List
 
 from src.tools.base import Tool
 from src.tools.models import ToolContext, ToolResult, ToolSpec
+from src.services import (
+    MAX_OCR_IMAGE_BYTES,
+    MAX_OCR_IMAGE_COUNT,
+    UploadValidationError,
+    validate_extracted_text,
+    validate_file_bytes,
+    validate_ocr_batch,
+    inspect_image_dimensions,
+)
 
 
 @dataclass
@@ -23,7 +32,9 @@ class ParsedImageOCR:
 
 
 class ImageOCRParserClientError(Exception):
-    pass
+    def __init__(self, message: str, *, error_code: str = "OCR_FAILED") -> None:
+        super().__init__(message)
+        self.error_code = error_code
 
 
 class ImageOCRParserClient:
@@ -47,17 +58,24 @@ class TesseractImageOCRParserClient(ImageOCRParserClient):
         extracted_sections: List[str] = []
         for index, image in enumerate(images, start=1):
             try:
+                inspect_image_dimensions(
+                    image.file_bytes,
+                    file_name=image.file_name,
+                )
                 opened = Image.open(BytesIO(image.file_bytes))
             except Exception as exc:
+                error_code = getattr(exc, "failure_reason", "OCR_FAILED")
                 raise ImageOCRParserClientError(
-                    f"Failed to open image '{image.file_name}': {exc}"
+                    f"Failed to open image '{image.file_name}'",
+                    error_code=error_code,
                 ) from exc
 
             try:
-                text = pytesseract.image_to_string(opened)
+                with opened:
+                    text = pytesseract.image_to_string(opened)
             except Exception as exc:
                 raise ImageOCRParserClientError(
-                    f"Failed to OCR image '{image.file_name}': {exc}"
+                    f"Failed to OCR image '{image.file_name}'",
                 ) from exc
 
             normalized_text = text.strip()
@@ -120,8 +138,16 @@ class ImageOCRTool(Tool):
                 code="INVALID_ARGUMENT",
                 message="images must be a non-empty list",
             )
+        if len(images_argument) > MAX_OCR_IMAGE_COUNT:
+            return ToolResult.failure(
+                code="UPLOAD_LIMIT_EXCEEDED",
+                message=(
+                    f"OCR image count exceeds the {MAX_OCR_IMAGE_COUNT} image limit"
+                ),
+            )
 
         images: List[OCRImageInput] = []
+        total_bytes = 0
         for index, item in enumerate(images_argument, start=1):
             if not isinstance(item, dict):
                 return ToolResult.failure(
@@ -152,15 +178,28 @@ class ImageOCRTool(Tool):
                     code="INVALID_ARGUMENT",
                     message=f"images[{index}] decoded to empty bytes",
                 )
+            try:
+                validate_file_bytes(
+                    file_bytes=file_bytes,
+                    maximum_bytes=MAX_OCR_IMAGE_BYTES,
+                    label=f"images[{index}]",
+                )
+                total_bytes += len(file_bytes)
+                validate_ocr_batch(
+                    image_count=index,
+                    total_bytes=total_bytes,
+                )
+            except UploadValidationError as exc:
+                return ToolResult.failure(
+                    code=exc.error_code,
+                    message=exc.message,
+                )
             images.append(OCRImageInput(file_name=file_name, file_bytes=file_bytes))
 
         try:
             parsed = self._parser_client.parse_images(images=images)
         except ImageOCRParserClientError as exc:
-            return ToolResult.failure(
-                code="OCR_FAILED",
-                message=str(exc),
-            )
+            return ToolResult.failure(code=exc.error_code, message=str(exc))
 
         normalized_raw_text = parsed.raw_text.strip()
         if not normalized_raw_text:
@@ -168,6 +207,10 @@ class ImageOCRTool(Tool):
                 code="OCR_FAILED",
                 message="No extractable text found in images",
             )
+        try:
+            validate_extracted_text(normalized_raw_text)
+        except UploadValidationError as exc:
+            return ToolResult.failure(code=exc.error_code, message=exc.message)
 
         return ToolResult.success(
             content=(

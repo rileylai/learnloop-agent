@@ -37,6 +37,7 @@ verification; it must not replace deterministic policy with prompt behavior.
 | Auto re-index after accept | Accepted agent appends must trigger immediate page re-index. |
 | No secret or raw private content logs | Never log secrets, API keys, or private raw source content. |
 | Caller trust boundaries | Enforce configured API bearer, Telegram webhook secret, and allowed-chat policy in deterministic backend code before business work. |
+| Upload resource limits | Enforce deterministic file-count, byte, MIME, PDF-page, image-pixel, and extracted-text limits before expensive parser or OCR work. |
 
 ## Write Policy
 The only allowed AI write path is:
@@ -128,6 +129,13 @@ Expected behavior:
 - Do not include unsafe content in production RAG.
 - Record an audit or workflow failure event without secrets or raw private content.
 - Return a deterministic error that callers can test.
+
+Upload safety behavior:
+- Reject oversized or unsupported uploads before starting an ingestion
+  workflow when the API can validate metadata and bytes at the boundary.
+- Revalidate limits in orchestrators and parser adapters because Telegram
+  downloads and non-HTTP callers bypass multipart metadata.
+- Never log upload bytes, extracted raw text, or full parser exception bodies.
 
 ## MVP Non-Goals
 The MVP does not support:
