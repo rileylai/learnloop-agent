@@ -137,6 +137,16 @@ Upload safety behavior:
   downloads and non-HTTP callers bypass multipart metadata.
 - Never log upload bytes, extracted raw text, or full parser exception bodies.
 
+URL fetch safety behavior:
+- Accept only absolute HTTP(S) URLs without embedded credentials.
+- Reject localhost and non-public IPv4/IPv6 addresses, including any private
+  or link-local address returned by DNS.
+- Disable implicit redirect following; validate every redirect target and stop
+  after the bounded redirect limit.
+- Accept only text article response types and read at most the configured URL
+  response byte limit. Return specific failure reasons without exposing
+  upstream exception bodies.
+
 ## MVP Non-Goals
 The MVP does not support:
 - Direct original note editing by the agent.

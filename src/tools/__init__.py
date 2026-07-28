@@ -79,11 +79,16 @@ from src.tools.telegram_bot_tool import (
     TelegramSentMessage,
 )
 from src.tools.url_article_parser_tool import (
+    MAX_URL_REDIRECTS,
+    MAX_URL_RESPONSE_BYTES,
     ParsedURLArticle,
     TrafilaturaURLArticleParserClient,
     URLArticleParserClient,
     URLArticleParserClientError,
+    URLHTTPTransport,
     URLArticleParserTool,
+    URLSafetyPolicy,
+    UrllibURLHTTPTransport,
 )
 from src.tools.youtube_transcript_tool import (
     ParsedYouTubeTranscript,
@@ -141,7 +146,12 @@ __all__ = [
     "TrafilaturaURLArticleParserClient",
     "URLArticleParserClient",
     "URLArticleParserClientError",
+    "URLHTTPTransport",
     "URLArticleParserTool",
+    "URLSafetyPolicy",
+    "UrllibURLHTTPTransport",
+    "MAX_URL_REDIRECTS",
+    "MAX_URL_RESPONSE_BYTES",
     "ParsedYouTubeTranscript",
     "OCRImageInput",
     "ParsedImageOCR",

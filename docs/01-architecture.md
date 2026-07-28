@@ -179,3 +179,8 @@ Logic that must stay deterministic backend code (not MCP-owned):
   parser adapters. The route bounds bytes and metadata reads; orchestrators
   revalidate caller-independent limits; real PDF/OCR adapters enforce page,
   pixel, and extraction limits before expensive work.
+- URL ingestion keeps outbound HTTP in the URL tool adapter. The adapter
+  validates the scheme, rejects credentials and non-public IPv4/IPv6 targets,
+  checks every DNS result before each request, follows only bounded redirects,
+  and enforces response content-type and byte limits. These checks are
+  deterministic backend policy and are not delegated to the LLM.

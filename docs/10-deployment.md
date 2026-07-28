@@ -54,6 +54,11 @@ The repository is demo-ready, not local-user-ready or release-ready.
   changing them requires updating the shared `upload_limits` policy and its
   deterministic tests. The limits bound parser/OCR memory and CPU exposure but
   do not replace reverse-proxy request-size limits in a production deployment.
+- URL ingestion performs outbound requests only through its guarded URL tool:
+  public-address DNS validation, per-redirect validation, bounded redirects,
+  supported article content types, and a 5 MiB response limit. A production
+  network policy should still restrict application egress to HTTP(S) as a
+  second independent boundary.
 - Telegram live use additionally needs a bot token, public HTTPS webhook
   delivery, `TELEGRAM_WEBHOOK_SECRET`, and an explicit
   `TELEGRAM_ALLOWED_CHAT_IDS` policy. Telegram and API mutation idempotency

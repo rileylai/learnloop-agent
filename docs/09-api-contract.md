@@ -432,6 +432,13 @@ Notes:
 - Orchestrator must call `ToolRegistry` -> `URLArticleParserTool`.
 - This endpoint does not perform Notion write operations.
 - Source display name preserves the full URL string.
+- The URL tool rejects embedded credentials, localhost, and non-public IPv4 or
+  IPv6 DNS results; redirect targets are checked independently and the
+  redirect chain is bounded.
+- URL responses are limited to article text content types and 5 MiB of body
+  bytes. Deterministic failures use `URL_SSRF_BLOCKED`,
+  `URL_DNS_RESOLUTION_FAILED`, `URL_REDIRECT_LIMIT_EXCEEDED`,
+  `URL_RESPONSE_TYPE_UNSUPPORTED`, or `URL_RESPONSE_TOO_LARGE` as applicable.
 
 ### POST `/api/ingest/youtube`
 Ingest one YouTube video transcript and create one source document.
