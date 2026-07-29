@@ -350,3 +350,31 @@ send check requires `TELEGRAM_BOT_TOKEN`,
 `LEARNLOOP_SMOKE_ALLOW_TELEGRAM_SEND=1`. Telegram sends a synthetic smoke
 message and must use a dedicated test chat. Live checks may use network,
 database, or provider quota and are never part of the default pytest suite.
+
+## Guarded Notion Read/Index/QA Canary (Step 82)
+
+`tests/evals/notion_read_index_qa_canary.py` is the opt-in canary for a
+dedicated synthetic Notion workspace. It discovers pages, runs full indexing,
+re-indexes one configured page through the manual incremental path, and runs
+scoped QA with a deterministic local answer provider. Its database state is
+ephemeral SQLite state and its embedding provider is deterministic, so the
+canary requires only a Notion token.
+
+The live wrapper requires `NOTION_TOKEN`,
+`LEARNLOOP_NOTION_CANARY_PAGE_ID`, and an optional
+`LEARNLOOP_NOTION_CANARY_QUERY` (default:
+`LearnLoop Step 82 canary anchor`). Run it only against a dedicated synthetic
+workspace:
+
+```bash
+LEARNLOOP_RUN_NOTION_READ_CANARY=1 \
+  uv run --no-env-file --frozen python \
+  tests/evals/notion_read_index_qa_canary.py --json
+```
+
+The wrapper records only fixed operation classes and blocks all write-shaped
+requests before dispatch. A passing report requires a full index, an
+incremental page, a scoped citation, and zero Notion write attempts. It never
+prints page ids, titles, paths, source text, credentials, or exception bodies.
+This is read/index/QA evidence only; the human-approved append canary is Step
+83.

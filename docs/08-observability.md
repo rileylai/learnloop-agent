@@ -130,6 +130,14 @@ absent; it is not equivalent to a passing live dependency check. Reports from
 `tests/evals/adapter_smoke_matrix.py` are release evidence only when the
 operator records which opt-in live checks were intentionally run.
 
+The Step 82 Notion canary emits fixed counts for indexed pages, blocks, chunks,
+incremental pages, citations, Notion requests, and blocked write attempts. Its
+HTTP audit reports only operation classes (`POST /v1/search`, `GET
+/v1/pages/{id}`, and `GET /v1/blocks/{id}/children`); it must not expose page
+ids, paths, titles, credentials, source text, or upstream exception bodies.
+`status=passed` requires zero write attempts. A skipped canary is not evidence
+of live Notion connectivity.
+
 ## Failure Reason Taxonomy
 
 - Use one shared `failure_reason` taxonomy for workflow runs, API responses,

@@ -123,6 +123,26 @@ an explicitly permitted Telegram synthetic send. The matrix does not call
 Notion and never performs a Notion write. Keep the JSON report as release
 evidence only after checking that it contains no secret or private content.
 
+## Guarded Notion Read/Index/QA Canary
+
+After the adapter matrix passes, the read-only Notion canary may be run against
+a dedicated synthetic workspace. It uses ephemeral SQLite state and local
+deterministic embedding/answer adapters; no OpenAI key or production database
+is required. Set `NOTION_TOKEN`,
+`LEARNLOOP_NOTION_CANARY_PAGE_ID`, and, when the fixture uses a different
+anchor, `LEARNLOOP_NOTION_CANARY_QUERY`, then run:
+
+```bash
+LEARNLOOP_RUN_NOTION_READ_CANARY=1 \
+  uv run --no-env-file --frozen python \
+  tests/evals/notion_read_index_qa_canary.py --json
+```
+
+The transport blocks non-reader operations before dispatch. Do not continue to
+Step 83 unless the report is `passed`, the target workspace is synthetic, and
+the report shows zero Notion write attempts. This canary does not authorize or
+perform an append.
+
 ## Local Secret Handling
 
 - Keep runtime secrets in local shell environment or ignored `.env` files only.

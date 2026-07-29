@@ -16,10 +16,11 @@ Do not weaken these rules without updating the design docs and recording a decis
 ## Current Verification Boundary
 
 These invariants are confirmed by deterministic backend tests, in-memory
-Notion writer evaluations, and fake-transport tests for the read-only live
-Notion reader and append-only live Notion writer. They have not yet been
-verified against a real Notion writer or workspace. Live integration work must
-preserve every invariant below and add contract plus opt-in sandbox
+Notion writer evaluations, fake-transport tests for the read-only live Notion
+reader and append-only live Notion writer, and the Step 82 guarded read/index/QA
+canary contract. The canary has not been run against a real workspace in the
+latest local verification and does not verify writing. Live integration work
+must preserve every invariant below and add contract plus opt-in sandbox
 verification; it must not replace deterministic policy with prompt behavior.
 
 ## Safety Invariants

@@ -152,6 +152,13 @@ transports for URL fixtures, and reports only fixed redacted statuses. It does
 not bypass route/orchestrator boundaries in production code, does not write to
 Notion, and keeps live dependency checks behind an explicit opt-in flag.
 
+The Step 82 Notion canary is also an evaluation entrypoint. It wraps the real
+read-only Notion REST adapter with a recording transport that permits only page
+reads, block-child reads, and page discovery search. Any other operation is
+blocked before network dispatch. Full index, incremental index, and QA still
+run through the existing tool, orchestrator, repository, and provider
+interfaces against ephemeral SQLite state.
+
 ## Future MCP Server Boundary (Post-MVP)
 Tools that may be extracted into MCP servers later:
 

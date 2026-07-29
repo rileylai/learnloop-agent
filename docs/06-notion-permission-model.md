@@ -25,6 +25,11 @@ workspace access or append has been verified. The live writer exposes
 append-only operations and must not add update, delete, move, or original-note
 write capabilities.
 
+Step 82 adds a separate guarded read/index/QA canary. Its recording transport
+allows only page discovery and page/block reads, blocks all write-shaped
+requests before dispatch, and uses ephemeral derived state. It is not an
+append verification; human-approved append remains Step 83.
+
 ## Ownership Types
 | Ownership type | Meaning |
 |---|---|

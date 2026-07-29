@@ -361,7 +361,28 @@ Checklist:
   `AI Supplement Zone` before a change request is created.
 - [ ] Supplement proposal workflow metadata records provider name, model name, prompt id, and prompt version.
 
-### 11.7 Human Review
+### 11.7 Guarded Notion Read/Index/QA Canary
+```text
+Explicit operator opt-in
+-> Read a dedicated synthetic workspace through the Notion reader
+-> Run full indexing into ephemeral local state
+-> Run one-page incremental indexing
+-> Run scoped QA and verify a Notion path citation
+-> Verify the Notion HTTP audit contains no write operation
+```
+
+Rules:
+- The canary uses only the read-only Notion adapter and a write-blocking HTTP
+  transport; Step 82 must not append, patch, delete, or move Notion blocks.
+- Full and incremental indexing use the existing indexing orchestrators and
+  repository boundaries.
+- Embeddings and the QA answer provider may be deterministic local adapters so
+  the read canary does not require OpenAI credentials or spend provider quota.
+- The canary requires explicit opt-in and a dedicated synthetic workspace/page;
+  its report contains counts and redacted operation classes, never page text,
+  credentials, page ids, or exception bodies.
+
+### 11.8 Human Review
 ```text
 Open change request
 -> Accept or Reject
