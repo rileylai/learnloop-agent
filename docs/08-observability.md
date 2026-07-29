@@ -140,6 +140,17 @@ of live Notion connectivity. A failed report includes a redacted
 `failed_stage` and a standard `failure_reason`; the canary must not expose the
 underlying exception text.
 
+The Step 83 Notion append canary emits fixed counts for indexed blocks/chunks,
+citation count, appended block count, accepted change-request state, durable
+identity visibility, Notion requests, and unexpected operations. Its HTTP audit
+reports only `GET /v1/pages/{id}`, `GET /v1/blocks/{id}/children`, and
+`PATCH /v1/blocks/{id}/children`. It must not expose page ids, paths, titles,
+credentials, source text, request payloads, or upstream exception bodies.
+`status=passed` requires both explicit live opt-in and explicit human approval,
+`pending -> accepted`, durable identity visibility, successful re-index, and a
+target-scoped QA citation. A skipped or approval-blocked canary is not live
+append evidence.
+
 ## Failure Reason Taxonomy
 
 - Use one shared `failure_reason` taxonomy for workflow runs, API responses,

@@ -394,6 +394,27 @@ Checklist:
 - [ ] No write before accept.
 - [ ] Reject records are preserved for audit/eval only.
 
+### 11.9 Human-approved Notion Append Canary
+```text
+Explicit live opt-in + human approval
+-> Prepare one synthetic pending change request in ephemeral SQLite
+-> Run the existing accept orchestrator
+-> Append only under AI Supplement Zone
+-> Verify durable change-request identity by read-after-write
+-> Re-index the target page in the same accept workflow
+-> Run scoped QA and verify a citation for the target page
+```
+
+Rules:
+- The canary requires both a live opt-in and a separate approval flag before
+  any Notion request is sent.
+- The target must be a dedicated sandbox page; the report contains counts and
+  redacted operation classes, never page ids, credentials, or source text.
+- The canary transport allows page/block reads and append-only
+  `PATCH /v1/blocks/{id}/children` requests only.
+- A passed report requires `pending -> accepted`, visible durable identity,
+  indexed blocks/chunks, and a scoped QA citation.
+
 ## 12. Database Design
 Design notes:
 - PostgreSQL and pgvector store derived state from Notion plus workflow state.

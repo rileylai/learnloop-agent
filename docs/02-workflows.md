@@ -184,6 +184,30 @@ Rules:
 - `reconcile_stale_running_workflow()` only transitions a workflow currently in
   `running` to an explicitly supplied terminal status.
 
+## Human-approved Notion Append Canary (Step 83)
+
+```text
+Explicit --live + --approve opt-in
+-> Prepare one synthetic pending proposal in ephemeral SQLite
+-> Run SupplementReviewOrchestrator.accept_change_request
+-> Append through NotionWriterTool to AI Supplement Zone
+-> Verify LearnLoop Change Request: change-request-<id>
+-> Prepare and persist the target page re-index
+-> Verify accepted DB state and scoped QA citation
+```
+
+Rules:
+- The canary is an eval-only operator command and does not change the normal
+  API review contract.
+- Both flags are required; without them the canary sends zero Notion requests.
+- The transport allowlist permits page/block reads and append-only block-child
+  PATCH requests. Page updates, deletes, moves, and arbitrary POST requests are
+  blocked.
+- Derived DB state is ephemeral. Notion remains the source of truth, and the
+  report is redacted to operation classes and numeric counts.
+- A retry is safe because the writer's durable identity lookup detects the
+  existing supplement before another append.
+
 ## Telegram Entrypoint Workflow (Step 32)
 
 ```text

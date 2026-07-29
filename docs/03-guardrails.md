@@ -17,11 +17,11 @@ Do not weaken these rules without updating the design docs and recording a decis
 
 These invariants are confirmed by deterministic backend tests, in-memory
 Notion writer evaluations, fake-transport tests for the read-only live Notion
-reader and append-only live Notion writer, and the Step 82 guarded read/index/QA
-canary contract. The canary has not been run against a real workspace in the
-latest local verification and does not verify writing. Live integration work
-must preserve every invariant below and add contract plus opt-in sandbox
-verification; it must not replace deterministic policy with prompt behavior.
+reader and append-only live Notion writer, and guarded Step 82/83 canary
+contracts. Step 83 requires separate live opt-in and human approval before a
+sandbox append. Live integration work must preserve every invariant below and
+add redacted contract evidence; it must not replace deterministic policy with
+prompt behavior.
 
 ## Safety Invariants
 | Guardrail | Rule |
@@ -179,3 +179,15 @@ Use this checklist before demos and release-style local runs.
 | Raw private source content | `raw_text` and `source_text` values must not appear in logs or surfaced error messages. |
 | Workflow metadata | Metadata may include workflow IDs, provider/model names, prompt version, token counts, and cost. It must not include secrets or raw source text. |
 | Production RAG | Development docs, `pending`, and `rejected` change requests remain excluded from production retrieval. |
+
+## Step 83 Canary Boundary
+
+- The canary uses ephemeral SQLite for the pending proposal and derived index;
+  it does not write proposal state to the production database.
+- It may append only after the operator supplies both live opt-in and explicit
+  human approval flags.
+- The canary's transport allows only page/block reads and append-only block
+  child PATCH calls, and reports no page ids, credentials, or source content.
+- A successful run must verify the visible durable change-request identity,
+  accepted DB state, re-indexed chunks, and a citation scoped to the target
+  page.

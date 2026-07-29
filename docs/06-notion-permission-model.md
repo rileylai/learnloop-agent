@@ -27,8 +27,11 @@ write capabilities.
 
 Step 82 adds a separate guarded read/index/QA canary. Its recording transport
 allows only page discovery and page/block reads, blocks all write-shaped
-requests before dispatch, and uses ephemeral derived state. It is not an
-append verification; human-approved append remains Step 83.
+requests before dispatch, and uses ephemeral derived state. Step 83 adds a
+separate append canary that requires live opt-in plus explicit human approval,
+uses ephemeral derived state, and allows only append-only block-child PATCH
+requests. Neither canary exposes credentials, page ids, or source content in
+its report.
 
 ## Ownership Types
 | Ownership type | Meaning |
