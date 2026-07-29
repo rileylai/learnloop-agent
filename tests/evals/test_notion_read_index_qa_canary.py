@@ -16,7 +16,13 @@ from .notion_read_index_qa_canary import (
     run_canary_workflow,
     run_notion_read_index_qa_canary,
 )
-from src.tools import InMemoryNotionReaderClient, NotionBlockNode, NotionPageTree
+from src.tools import (
+    InMemoryNotionReaderClient,
+    NotionBlockNode,
+    NotionPageTree,
+    NotionReaderClient,
+    NotionReaderClientError,
+)
 
 
 class _NoopTransport(NotionHTTPTransport):
@@ -44,6 +50,18 @@ def _reader() -> InMemoryNotionReaderClient:
     return InMemoryNotionReaderClient({page.page_id: page})
 
 
+class _DiscoveryFailureReader(NotionReaderClient):
+    def list_pages(self):
+        raise NotionReaderClientError(
+            code="NOTION_BLOCK_FETCH_FAILED",
+            message="safe synthetic discovery failure",
+        )
+
+    def fetch_page_tree(self, page_id):
+        _ = page_id
+        return None
+
+
 def test_default_canary_is_opt_in_and_does_not_contact_notion() -> None:
     report = run_notion_read_index_qa_canary(
         include_live=False,
@@ -63,6 +81,8 @@ def test_live_canary_requires_explicit_configuration() -> None:
     )
 
     assert report.status == "failed"
+    assert report.failed_stage == "configuration"
+    assert report.failure_reason == "NOTION_AUTH_FAILED"
     assert report.notion_request_count == 0
     assert report.notion_write_attempt_count == 0
 
@@ -82,6 +102,22 @@ def test_canary_workflow_indexes_incrementally_and_returns_scoped_citation() -> 
     assert report.indexed_chunk_count == 1
     assert report.incremental_page_count == 1
     assert report.citation_count == 1
+
+
+def test_canary_reports_full_discovery_failure_without_raw_exception() -> None:
+    report = asyncio.run(
+        run_canary_workflow(
+            reader_client=_DiscoveryFailureReader(),
+            target_page_id="synthetic-page",
+            query="LearnLoop Step 82 canary anchor",
+        )
+    )
+
+    assert report.status == "failed"
+    assert report.failed_stage == "full_discovery"
+    assert report.failure_reason == "NOTION_BLOCK_FETCH_FAILED"
+    assert report.message == "Notion read/index/QA canary failed at full_discovery"
+    assert "synthetic discovery failure" not in str(report.to_dict())
 
 
 def test_transport_allows_only_reader_operations_and_blocks_writes() -> None:

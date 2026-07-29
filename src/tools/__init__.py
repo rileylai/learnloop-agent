@@ -34,6 +34,7 @@ from src.tools.notion_api_reader_client import (
     NotionHTTPTransport,
     NotionHTTPTransportError,
     UrllibNotionHTTPTransport,
+    normalize_notion_page_id,
 )
 from src.tools.notion_api_writer_client import NotionAPIWriterClient
 from src.tools.notion_writer_tool import (
@@ -123,6 +124,7 @@ __all__ = [
     "NotionHTTPTransport",
     "NotionHTTPTransportError",
     "UrllibNotionHTTPTransport",
+    "normalize_notion_page_id",
     "NotionAPIWriterClient",
     "InMemoryAISupplementEntry",
     "InMemoryNotionPageSnapshot",

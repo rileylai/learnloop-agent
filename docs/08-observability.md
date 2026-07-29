@@ -136,7 +136,9 @@ HTTP audit reports only operation classes (`POST /v1/search`, `GET
 /v1/pages/{id}`, and `GET /v1/blocks/{id}/children`); it must not expose page
 ids, paths, titles, credentials, source text, or upstream exception bodies.
 `status=passed` requires zero write attempts. A skipped canary is not evidence
-of live Notion connectivity.
+of live Notion connectivity. A failed report includes a redacted
+`failed_stage` and a standard `failure_reason`; the canary must not expose the
+underlying exception text.
 
 ## Failure Reason Taxonomy
 

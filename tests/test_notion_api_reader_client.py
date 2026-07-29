@@ -11,6 +11,7 @@ from src.tools import (
     NotionHTTPTransport,
     NotionReaderTool,
     ToolContext,
+    normalize_notion_page_id,
 )
 
 
@@ -159,6 +160,49 @@ def test_notion_api_reader_returns_none_for_missing_page() -> None:
 
     assert client.fetch_page_tree("missing-page") is None
     assert len(transport.calls) == 1
+
+
+def test_normalize_notion_page_id_accepts_compact_uuid() -> None:
+    assert (
+        normalize_notion_page_id("3AC80014E94F806EA0F9E7A72A010C02")
+        == "3ac80014-e94f-806e-a0f9-e7a72a010c02"
+    )
+    assert normalize_notion_page_id("page-1") == "page-1"
+
+
+def test_notion_api_reader_does_not_inline_child_page_contents() -> None:
+    transport = _FakeNotionHTTPTransport(
+        [
+            _page_response(),
+            NotionHTTPResponse(
+                status_code=200,
+                payload={
+                    "results": [
+                        {
+                            "id": "child-page-block",
+                            "type": "child_page",
+                            "has_children": True,
+                            "child_page": {"title": "Child Page"},
+                        }
+                    ],
+                    "has_more": False,
+                    "next_cursor": None,
+                },
+            ),
+        ]
+    )
+    client = NotionAPIReaderClient(token="secret-token", transport=transport)
+
+    page = client.fetch_page_tree("parent-page")
+
+    assert page is not None
+    assert len(page.blocks) == 1
+    assert page.blocks[0].block_type == "child_page"
+    assert page.blocks[0].children == []
+    assert [call[0] for call in transport.calls] == [
+        "/v1/pages/parent-page",
+        "/v1/blocks/parent-page/children",
+    ]
 
 
 def test_notion_api_reader_discovers_paginated_external_page_ids() -> None:

@@ -29,6 +29,12 @@ Rules:
 - If block `content_text` is empty, inherit parent path.
 - The same rule applies to mixed block types, including heading, toggle, and child page blocks.
 
+The live Notion reader treats `child_page` and `link_to_page` blocks as page
+references. It keeps the reference block in the parent tree but does not inline
+the referenced page's children; full discovery indexes that page separately.
+This preserves globally unique Notion block IDs while retaining the reference
+path for citation metadata.
+
 Example:
 
 ```text

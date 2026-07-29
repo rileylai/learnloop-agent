@@ -13,11 +13,12 @@ import asyncio
 import json
 import os
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
 from sqlalchemy import create_engine, func
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -36,6 +37,7 @@ from src.orchestrators import (  # noqa: E402
 )
 from src.providers import (  # noqa: E402
     EmbeddingClient,
+    EmbeddingClientError,
     EmbeddingRequest,
     EmbeddingResponse,
     LLMMessage,
@@ -45,8 +47,13 @@ from src.providers import (  # noqa: E402
     ProviderRouter,
 )
 from src.rag import ProductionChunkRetriever  # noqa: E402
-from src.repositories import ChunkRepository  # noqa: E402
-from src.services import CostTracker, PromptTemplateLoader, WorkflowRunService  # noqa: E402
+from src.repositories import ChunkRepository, ChunkRepositoryError  # noqa: E402
+from src.services import (  # noqa: E402
+    STANDARD_FAILURE_REASONS,
+    CostTracker,
+    PromptTemplateLoader,
+    WorkflowRunService,
+)
 from src.tools import (  # noqa: E402
     NotionAPIReaderClient,
     NotionHTTPResponse,
@@ -55,8 +62,8 @@ from src.tools import (  # noqa: E402
     NotionReaderClient,
     NotionReaderTool,
     ToolRegistry,
-    ToolContext,
     UrllibNotionHTTPTransport,
+    normalize_notion_page_id,
 )
 
 RUN_FLAG_ENV = "LEARNLOOP_RUN_NOTION_READ_CANARY"
@@ -167,11 +174,15 @@ def _is_allowed_read_operation(entry: NotionHTTPAuditEntry) -> bool:
 
 
 class _DeterministicEmbeddingClient(EmbeddingClient):
+    def __init__(self, *, stage_tracker: "_CanaryStageTracker") -> None:
+        self._stage_tracker = stage_tracker
+
     @property
     def name(self) -> str:
         return CANARY_PROVIDER
 
     async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
+        self._stage_tracker.failed_stage = "embedding"
         dimensions = request.dimensions or EMBEDDING_DIMENSIONS
         embeddings = []
         for value in request.inputs:
@@ -203,10 +214,32 @@ class _DeterministicLLMProvider(LLMProvider):
         )
 
 
+@dataclass
+class _CanaryStageTracker:
+    failed_stage: str = "setup"
+
+
+class _StageTrackingPageIndexOrchestrator(NotionPageIndexOrchestrator):
+    def __init__(self, *, stage_tracker: _CanaryStageTracker, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._stage_tracker = stage_tracker
+
+    async def prepare_page_snapshot(self, **kwargs: Any):
+        self._stage_tracker.failed_stage = "page_preparation"
+        return await super().prepare_page_snapshot(**kwargs)
+
+    def persist_prepared_page_snapshot(self, **kwargs: Any):
+        self._stage_tracker.failed_stage = "db_persistence"
+        return super().persist_prepared_page_snapshot(**kwargs)
+
+
 @dataclass(frozen=True)
 class NotionReadIndexQACanaryReport:
     status: str
     message: str
+    failed_stage: Optional[str] = None
+    failure_reason: Optional[str] = None
+    failure_code: Optional[str] = None
     indexed_page_count: int = 0
     indexed_block_count: int = 0
     indexed_chunk_count: int = 0
@@ -214,11 +247,7 @@ class NotionReadIndexQACanaryReport:
     citation_count: int = 0
     notion_request_count: int = 0
     notion_write_attempt_count: int = 0
-    notion_operations: List[str] = None  # type: ignore[assignment]
-
-    def __post_init__(self) -> None:
-        if self.notion_operations is None:
-            object.__setattr__(self, "notion_operations", [])
+    notion_operations: List[str] = field(default_factory=list)
 
     @property
     def passed(self) -> bool:
@@ -239,6 +268,7 @@ async def run_canary_workflow(
     query: str,
     audit: Optional[NotionReadAudit] = None,
 ) -> NotionReadIndexQACanaryReport:
+    stage_tracker = _CanaryStageTracker()
     engine = create_engine(
         "sqlite+pysqlite://",
         connect_args={"check_same_thread": False},
@@ -249,8 +279,9 @@ async def run_canary_workflow(
     workflow_service = WorkflowRunService(session_factory)
     tool_registry = ToolRegistry()
     tool_registry.register_tool(NotionReaderTool(reader_client))
-    embedding_client = _DeterministicEmbeddingClient()
-    page_index_orchestrator = NotionPageIndexOrchestrator(
+    embedding_client = _DeterministicEmbeddingClient(stage_tracker=stage_tracker)
+    page_index_orchestrator = _StageTrackingPageIndexOrchestrator(
+        stage_tracker=stage_tracker,
         tool_registry=tool_registry,
         unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(session_factory),
         workflow_run_service=workflow_service,
@@ -268,13 +299,21 @@ async def run_canary_workflow(
     )
 
     try:
+        stage_tracker.failed_stage = "full_discovery"
         full_result = await full_index_orchestrator.index_all(
             request_workflow_id="step-82-notion-canary",
         )
         indexed_page_ids = {page.page_id for page in full_result.indexed_pages}
         if target_page_id not in indexed_page_ids:
-            return _failed_report(audit, "target page was not discovered")
+            return _failed_report(
+                audit,
+                message="Notion read/index/QA canary failed at full discovery",
+                failed_stage="full_discovery",
+                failure_reason="NOTION_PAGE_NOT_FOUND",
+                failure_code="NOTION_PAGE_NOT_FOUND",
+            )
 
+        stage_tracker.failed_stage = "incremental_index"
         incremental_result = await incremental_orchestrator.sync_pages(
             page_ids=[target_page_id],
             request_workflow_id="step-82-notion-canary-incremental",
@@ -282,6 +321,7 @@ async def run_canary_workflow(
 
         qa_session = session_factory()
         try:
+            stage_tracker.failed_stage = "qa"
             provider_router = ProviderRouter()
             provider_router.register_provider(_DeterministicLLMProvider())
             qa_orchestrator = QAOrchestrator(
@@ -308,9 +348,21 @@ async def run_canary_workflow(
             qa_session.close()
 
         if qa_result.insufficient_info or not qa_result.citations:
-            return _failed_report(audit, "QA did not return a citation")
+            return _failed_report(
+                audit,
+                message="Notion read/index/QA canary failed at QA citation validation",
+                failed_stage="qa",
+                failure_reason="UNKNOWN_ERROR",
+                failure_code="QA_CITATION_MISSING",
+            )
         if any(citation.page_id != target_page_id for citation in qa_result.citations):
-            return _failed_report(audit, "QA citation escaped the target page scope")
+            return _failed_report(
+                audit,
+                message="Notion read/index/QA canary failed at QA citation validation",
+                failed_stage="qa",
+                failure_reason="WRITE_POLICY_VIOLATION",
+                failure_code="QA_SCOPE_VIOLATION",
+            )
 
         verification_session = session_factory()
         try:
@@ -324,13 +376,22 @@ async def run_canary_workflow(
         if audit is not None and audit.write_attempts:
             return NotionReadIndexQACanaryReport(
                 status="failed",
-                message="Notion HTTP audit detected a write-shaped operation",
+                message="Notion read/index/QA canary failed at write audit",
+                failed_stage="write_audit",
+                failure_reason="WRITE_POLICY_VIOLATION",
+                failure_code="WRITE_POLICY_VIOLATION",
                 notion_request_count=len(audit.entries),
                 notion_write_attempt_count=len(audit.write_attempts),
                 notion_operations=operations,
             )
         if audit is not None and not audit.entries:
-            return _failed_report(audit, "Notion HTTP audit recorded no requests")
+            return _failed_report(
+                audit,
+                message="Notion read/index/QA canary failed at write audit",
+                failed_stage="write_audit",
+                failure_reason="UNKNOWN_ERROR",
+                failure_code="NOTION_READ_AUDIT_EMPTY",
+            )
 
         return NotionReadIndexQACanaryReport(
             status="passed",
@@ -344,23 +405,83 @@ async def run_canary_workflow(
             notion_write_attempt_count=0,
             notion_operations=operations,
         )
-    except Exception:
-        return _failed_report(audit, "Notion read/index/QA canary failed")
+    except Exception as exc:
+        failure_reason, failure_code = _failure_details(exc)
+        return _failed_report(
+            audit,
+            message=(
+                "Notion read/index/QA canary failed at "
+                f"{stage_tracker.failed_stage}"
+            ),
+            failed_stage=stage_tracker.failed_stage,
+            failure_reason=failure_reason,
+            failure_code=failure_code,
+        )
     finally:
         engine.dispose()
 
 
 def _failed_report(
     audit: Optional[NotionReadAudit],
+    *,
     message: str,
+    failed_stage: str,
+    failure_reason: str,
+    failure_code: Optional[str] = None,
 ) -> NotionReadIndexQACanaryReport:
     return NotionReadIndexQACanaryReport(
         status="failed",
         message=message,
+        failed_stage=failed_stage,
+        failure_reason=failure_reason,
+        failure_code=failure_code,
         notion_request_count=len(audit.entries) if audit is not None else 0,
         notion_write_attempt_count=len(audit.write_attempts) if audit is not None else 0,
         notion_operations=_render_operations(audit),
     )
+
+
+def _failure_details(exception: Optional[BaseException]) -> tuple[str, str]:
+    if exception is None:
+        return "UNKNOWN_ERROR", "UNKNOWN_ERROR"
+
+    error_code: Optional[str] = None
+    current: Optional[BaseException] = exception
+    while current is not None:
+        candidate_code = getattr(current, "error_code", None)
+        if isinstance(candidate_code, str) and candidate_code.strip():
+            error_code = candidate_code.strip().upper()
+        candidate_reason = getattr(current, "failure_reason", None)
+        if (
+            isinstance(candidate_reason, str)
+            and candidate_reason.upper() in STANDARD_FAILURE_REASONS
+            and candidate_reason.upper() != "UNKNOWN_ERROR"
+        ):
+            return candidate_reason.upper(), error_code or candidate_reason.upper()
+        if isinstance(current, NotionCanaryWriteBlocked):
+            return "WRITE_POLICY_VIOLATION", "WRITE_POLICY_VIOLATION"
+        if isinstance(current, EmbeddingClientError):
+            return "EMBEDDING_PROVIDER_ERROR", "EMBEDDING_PROVIDER_ERROR"
+        if isinstance(current, ChunkRepositoryError):
+            return "VECTOR_UPSERT_FAILED", "VECTOR_UPSERT_FAILED"
+        if isinstance(current, SQLAlchemyError):
+            database_error_codes = {
+                "CompileError": "DATABASE_COMPILE_ERROR",
+                "DataError": "DATABASE_DATA_ERROR",
+                "IntegrityError": "DATABASE_INTEGRITY_ERROR",
+                "OperationalError": "DATABASE_OPERATIONAL_ERROR",
+                "ProgrammingError": "DATABASE_PROGRAMMING_ERROR",
+                "StatementError": "DATABASE_STATEMENT_ERROR",
+            }
+            error_type = type(current).__name__
+            return "VECTOR_UPSERT_FAILED", database_error_codes.get(
+                error_type,
+                "DATABASE_ERROR",
+            )
+        if isinstance(current, NotionHTTPTransportError):
+            return "NOTION_BLOCK_FETCH_FAILED", "NOTION_BLOCK_FETCH_FAILED"
+        current = current.__cause__ or current.__context__
+    return "UNKNOWN_ERROR", error_code or "UNKNOWN_ERROR"
 
 
 def _render_operations(audit: Optional[NotionReadAudit]) -> List[str]:
@@ -389,10 +510,16 @@ def run_notion_read_index_qa_canary(
         return _skipped("live Notion canary is disabled")
 
     token = env.get(NOTION_TOKEN_ENV, "").strip()
-    target_page_id = env.get(CANARY_PAGE_ID_ENV, "").strip()
+    target_page_id = normalize_notion_page_id(env.get(CANARY_PAGE_ID_ENV, ""))
     query = env.get(CANARY_QUERY_ENV, DEFAULT_CANARY_QUERY).strip()
     if not token or not target_page_id or not query:
-        return _failed_report(None, "live canary requires token, page id, and query")
+        return _failed_report(
+            None,
+            message="live canary requires token, page id, and query",
+            failed_stage="configuration",
+            failure_reason="NOTION_AUTH_FAILED",
+            failure_code="NOTION_AUTH_FAILED",
+        )
 
     audit = NotionReadAudit()
     reader_client = NotionAPIReaderClient(
@@ -418,6 +545,9 @@ def render_report(
         return json.dumps(report.to_dict(), ensure_ascii=False, sort_keys=True)
     return (
         f"notion read/index/QA canary: {report.status} - {report.message}\n"
+        f"- failed stage: {report.failed_stage or '-'}\n"
+        f"- failure reason: {report.failure_reason or '-'}\n"
+        f"- failure code: {report.failure_code or '-'}\n"
         f"- indexed pages: {report.indexed_page_count}\n"
         f"- indexed blocks: {report.indexed_block_count}\n"
         f"- indexed chunks: {report.indexed_chunk_count}\n"

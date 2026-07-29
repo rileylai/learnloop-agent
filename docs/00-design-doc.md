@@ -380,7 +380,8 @@ Rules:
   the read canary does not require OpenAI credentials or spend provider quota.
 - The canary requires explicit opt-in and a dedicated synthetic workspace/page;
   its report contains counts and redacted operation classes, never page text,
-  credentials, page ids, or exception bodies.
+  credentials, page ids, or exception bodies. Failed reports also include a
+  fixed `failed_stage` and standard `failure_reason`.
 
 ### 11.8 Human Review
 ```text

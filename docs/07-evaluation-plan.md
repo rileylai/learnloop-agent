@@ -374,7 +374,11 @@ LEARNLOOP_RUN_NOTION_READ_CANARY=1 \
 
 The wrapper records only fixed operation classes and blocks all write-shaped
 requests before dispatch. A passing report requires a full index, an
-incremental page, a scoped citation, and zero Notion write attempts. It never
-prints page ids, titles, paths, source text, credentials, or exception bodies.
+incremental page, a scoped citation, and zero Notion write attempts. A failed
+report includes only the fixed `failed_stage` values `configuration`,
+`full_discovery`, `page_preparation`, `embedding`, `db_persistence`,
+`incremental_index`, `qa`, or `write_audit`, plus a standard `failure_reason`.
+It never prints page ids, titles, paths, source text, credentials, or exception
+bodies.
 This is read/index/QA evidence only; the human-approved append canary is Step
 83.

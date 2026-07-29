@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional
@@ -20,6 +21,7 @@ DEFAULT_NOTION_API_BASE_URL = "https://api.notion.com"
 DEFAULT_NOTION_VERSION = "2022-06-28"
 DEFAULT_NOTION_PAGE_PATH_PREFIX = "Knowledge"
 MAX_NOTION_PAGE_SIZE = 100
+_NOTION_UUID_HEX_PATTERN = re.compile(r"^[0-9a-fA-F]{32}$")
 
 
 @dataclass(frozen=True)
@@ -222,7 +224,7 @@ class NotionAPIReaderClient(NotionReaderClient):
         )
 
     def fetch_page_tree(self, page_id: str) -> Optional[NotionPageTree]:
-        normalized_page_id = page_id.strip()
+        normalized_page_id = normalize_notion_page_id(page_id)
         if not normalized_page_id:
             raise NotionAPIClientError(
                 code="INVALID_ARGUMENT",
@@ -296,7 +298,7 @@ class NotionAPIReaderClient(NotionReaderClient):
                         code="NOTION_BLOCK_FETCH_FAILED",
                         message="Notion discovery response is missing page id",
                     )
-                normalized_page_id = page_id.strip()
+                normalized_page_id = normalize_notion_page_id(page_id)
                 if normalized_page_id in seen_page_ids:
                     continue
                 seen_page_ids.add(normalized_page_id)
@@ -389,7 +391,12 @@ class NotionAPIReaderClient(NotionReaderClient):
             )
 
         raw_children: List[Dict[str, Any]] = []
-        if payload.get("has_children") is True:
+        # Page-reference blocks are indexed as their own pages. Following them
+        # here would add the same source block IDs to both page trees.
+        if (
+            payload.get("has_children") is True
+            and block_type.strip() not in {"child_page", "link_to_page"}
+        ):
             raw_children = self._fetch_children(block_id.strip())
         return BlockPathNode(
             block_id=block_id.strip(),
@@ -469,6 +476,23 @@ def _extract_page_title(page_payload: Mapping[str, Any]) -> str:
                 if title:
                     return title
     return "Untitled Notion Page"
+
+
+def normalize_notion_page_id(page_id: str) -> str:
+    """Use one stable UUID form for Notion page IDs from config and API results."""
+    normalized = page_id.strip()
+    compact = normalized.replace("-", "")
+    if _NOTION_UUID_HEX_PATTERN.fullmatch(compact):
+        return "-".join(
+            (
+                compact[0:8],
+                compact[8:12],
+                compact[12:16],
+                compact[16:20],
+                compact[20:32],
+            )
+        ).lower()
+    return normalized
 
 
 def _extract_block_text(payload: Mapping[str, Any], block_type: str) -> str:

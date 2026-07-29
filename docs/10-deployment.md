@@ -140,8 +140,10 @@ LEARNLOOP_RUN_NOTION_READ_CANARY=1 \
 
 The transport blocks non-reader operations before dispatch. Do not continue to
 Step 83 unless the report is `passed`, the target workspace is synthetic, and
-the report shows zero Notion write attempts. This canary does not authorize or
-perform an append.
+the report shows zero Notion write attempts. If it fails, use the redacted
+`failed_stage` and `failure_reason` fields to diagnose the local index/QA
+boundary; the report does not expose exception text. This canary does not
+authorize or perform an append.
 
 ## Local Secret Handling
 
