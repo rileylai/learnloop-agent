@@ -322,3 +322,31 @@ uv run python tests/evals/prompt_injection_eval.py
 The evaluation reports `prompt_injection: pass (5/5)` when all deterministic
 checks pass. It is not evidence of live model resistance; live provider tests
 remain opt-in and must never replace backend invariants.
+
+## Real-Library Adapter Smoke Matrix (Step 81)
+
+`tests/evals/adapter_smoke_matrix.py` runs a small redacted matrix against the
+real PDF, OCR, and URL parser libraries. PDF and URL use in-process fixtures
+and injected transports, so the default run does not use the network, a
+credential, or an external write. OCR passes when the local Tesseract runtime
+is available and otherwise skips unless `--require-ocr` is supplied.
+
+Run the default matrix:
+
+```bash
+uv run --no-env-file --frozen python tests/evals/adapter_smoke_matrix.py --json
+```
+
+The report contains only check id, dependency level, status, and fixed safe
+messages. It never includes API keys, URLs, exception bodies, or extracted
+source text. The default matrix is not evidence of live service connectivity.
+
+Opt-in live checks require `--live` or
+`LEARNLOOP_RUN_ADAPTER_SMOKE_LIVE=1`. The YouTube check requires
+`LEARNLOOP_SMOKE_YOUTUBE_URL`; the OpenAI check requires `OPENAI_API_KEY`; the
+PostgreSQL check requires `LEARNLOOP_SMOKE_DATABASE_URL`; and the Telegram
+send check requires `TELEGRAM_BOT_TOKEN`,
+`LEARNLOOP_SMOKE_TELEGRAM_CHAT_ID`, and
+`LEARNLOOP_SMOKE_ALLOW_TELEGRAM_SEND=1`. Telegram sends a synthetic smoke
+message and must use a dedicated test chat. Live checks may use network,
+database, or provider quota and are never part of the default pytest suite.

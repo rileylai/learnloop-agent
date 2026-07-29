@@ -120,6 +120,16 @@ mode-specific provider configuration is unavailable.
 - Tool and provider adapters should sanitize external exception strings before
   returning them to orchestrators or API routes.
 
+## Adapter Smoke Evidence
+
+The Step 81 adapter smoke matrix emits a redacted report with fixed fields:
+`check_id`, `dependency_level`, `status`, and a safe message. It must not log
+credentials, URLs, external exception bodies, or extracted source text. A
+`skipped` live check means its explicit opt-in or dependency configuration was
+absent; it is not equivalent to a passing live dependency check. Reports from
+`tests/evals/adapter_smoke_matrix.py` are release evidence only when the
+operator records which opt-in live checks were intentionally run.
+
 ## Failure Reason Taxonomy
 
 - Use one shared `failure_reason` taxonomy for workflow runs, API responses,

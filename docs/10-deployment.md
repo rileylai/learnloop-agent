@@ -103,6 +103,26 @@ the `Real-World Usability + Release Hardening` phase are complete.
   migration, vector, and external-service connectivity belong to the later
   readiness step.
 
+## Adapter Smoke Matrix
+
+Before a live canary, run the real-library adapter matrix with the locked
+environment:
+
+```bash
+uv run --no-env-file --frozen python tests/evals/adapter_smoke_matrix.py --json
+```
+
+The default run is local-only. It verifies PDF and URL extraction with
+controlled fixtures and verifies OCR only when the local Tesseract executable
+is available. Missing optional OCR runtime is reported as `skipped`; use
+`--require-ocr` when the deployment requires OCR.
+
+Use `--live` only with dedicated synthetic resources. Live checks are opt-in
+for YouTube transcript access, OpenAI embeddings, PostgreSQL connectivity, and
+an explicitly permitted Telegram synthetic send. The matrix does not call
+Notion and never performs a Notion write. Keep the JSON report as release
+evidence only after checking that it contains no secret or private content.
+
 ## Local Secret Handling
 
 - Keep runtime secrets in local shell environment or ignored `.env` files only.

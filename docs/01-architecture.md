@@ -143,6 +143,15 @@ These gaps are tracked in the `Real-World Usability + Release Hardening` phase
 of `dev_state/PROJECT_ROADMAP.md`. They must be closed through the existing
 provider, tool, queue, repository, and deterministic policy boundaries.
 
+## Real-Library Adapter Smoke Boundary
+
+The Step 81 smoke matrix lives under `tests/evals/` and is an evaluation
+entrypoint, not an API route or runtime orchestrator. It instantiates the
+existing provider and tool adapters directly, injects controlled HTTP
+transports for URL fixtures, and reports only fixed redacted statuses. It does
+not bypass route/orchestrator boundaries in production code, does not write to
+Notion, and keeps live dependency checks behind an explicit opt-in flag.
+
 ## Future MCP Server Boundary (Post-MVP)
 Tools that may be extracted into MCP servers later:
 
