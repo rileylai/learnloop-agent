@@ -761,6 +761,13 @@ Operator surfaces:
 - Optional `MAX_WORKFLOW_COST_USD` and `MAX_DAILY_COST_USD` settings produce
   deterministic cost-budget alerts. Unknown model pricing is reported as
   unknown and is never guessed.
+- Backup, restore, migration, and incident procedures are operator runbooks
+  under `docs/runbooks/`. The restore drill is explicit and disposable-only;
+  restored PostgreSQL state is rebuilt from Notion source of truth before
+  mutations resume.
+- Notion/DB divergence recovery is read-first and identity-aware. Durable
+  append identity is verified before page re-index or workflow reconciliation;
+  unresolved identity stops retries.
 
 Failure taxonomy:
 - `NOTION_AUTH_FAILED`

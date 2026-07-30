@@ -114,6 +114,24 @@ mode-specific provider configuration is unavailable.
 - Status metadata is recursively redacted for `raw_text`, `source_text`, API
   keys, tokens, authorization values, and webhook secrets.
 
+## Step 85 Recovery Evidence
+
+- Backup/restore evidence contains fixed check names, migration revision,
+  readiness status, re-index counts, and scoped citation counts only.
+- The restore drill never reports database URLs, passwords, driver exception
+  text, Notion page ids, or private source content.
+- Recovery pauses mutations while append identity, workflow outcome, or
+  database migration state is uncertain.
+- A restored PostgreSQL database is rebuilt from Notion source of truth before
+  production QA or accepted append mutations resume.
+- An uncertain append is resolved by read-only durable identity inspection:
+  identity present -> page re-index then workflow reconciliation; identity
+  absent -> unresolved change request and human accept flow; identity unknown
+  -> stop without retry.
+- The operator records `restore_drill_status`, `migration_revision`,
+  `readiness_status`, `reindex_status`, and `scoped_citation_count` as safe
+  evidence fields. These are operational evidence, not production RAG input.
+
 ## Vector Retrieval Metadata
 
 - Step 53 QA workflows record `retrieval_mode`:

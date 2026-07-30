@@ -203,3 +203,23 @@ authorize or perform an append.
   but keeps the answer provider deterministic and local because this step is
   verifying vector storage, DB-side retrieval, citation behavior, scoped-empty
   insufficient-info behavior, and duplicate-safe re-indexing.
+
+## Step 85 Recovery Readiness
+
+Backup, restore, migration, and incident procedures live under
+[`docs/runbooks/`](runbooks/). The PostgreSQL restore drill is dry-run by
+default and requires an explicit `--run`, `DISPOSABLE` confirmation, and an
+administrator URL for a disposable local server. It creates and removes only
+generated temporary database names; it never targets the configured application
+database.
+
+The Notion/DB recovery drill is read-only and emits a deterministic checklist.
+After a database restore, current Notion content is authoritative and the
+operator must run a full Notion index before resuming mutations. Known manual
+Notion edits use page-scoped incremental indexing. An uncertain append must be
+resolved through the durable `change-request-<id>` identity before any retry;
+identity uncertainty stops recovery.
+
+The release evidence for this step is the redacted drill result, migration
+revision, readiness result, re-index result, and scoped QA citation. Secrets,
+connection URLs, page ids, and private source content are not evidence fields.

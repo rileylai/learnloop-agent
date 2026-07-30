@@ -456,3 +456,36 @@ Rules:
   timestamp-less legacy readers do not erase an existing timestamp.
 - SQLite test backends skip the PostgreSQL-only advisory lock but exercise the
   same deterministic stale-snapshot comparison.
+
+## Step 85 Recovery Workflow
+
+Recovery is an operator workflow, not an automatic background repair:
+
+```text
+Pause mutations
+-> Inspect redacted workflow/readiness/migration evidence
+-> If PostgreSQL was restored: verify migration head
+-> Rebuild derived state from current Notion content
+   (full index after restore, page-level incremental sync for known edits)
+-> If an append is uncertain: read durable change-request identity
+-> Re-index before workflow reconciliation or any retry
+-> Run scoped QA and resume only after operator sign-off
+```
+
+Rules:
+
+- Notion remains the source of truth for page and block content.
+- A restored PostgreSQL database is treated as derived state and must not
+  authorize a direct Notion edit, delete, move, or manual append.
+- A visible `change-request-<id>` identity means the Notion append is
+  authoritative; verify it, page-re-index it, then reconcile the workflow.
+- An absent identity keeps the change request unresolved; retry only through
+  the existing human accept flow after target and approval checks.
+- An unverified identity stops recovery. The agent must not guess or duplicate
+  an append.
+- `pending` and `rejected` change requests remain excluded from production RAG.
+
+The read-only checklist generator is
+`scripts/notion_db_recovery_drill.py`; the database lifecycle drill is
+`scripts/postgres_restore_drill.py`. Detailed operator commands are in
+`docs/runbooks/`.
