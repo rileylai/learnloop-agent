@@ -43,3 +43,29 @@ class QueueClient(ABC):
     def is_available(self) -> bool:
         """Return whether the queue backend can accept work now."""
         raise NotImplementedError
+
+    def enqueue_in(
+        self,
+        *,
+        queue_name: str,
+        function: Callable[..., Any],
+        seconds: int,
+        args: Tuple[Any, ...] = (),
+        kwargs: Optional[Dict[str, Any]] = None,
+        description: Optional[str] = None,
+        retry_policy: Optional[QueueRetryPolicy] = None,
+    ) -> EnqueuedJob:
+        """Enqueue a delayed job through the queue adapter.
+
+        The default keeps simple queue fakes backwards compatible. Production
+        adapters override this method so media-group settling remains queued.
+        """
+        _ = seconds
+        return self.enqueue(
+            queue_name=queue_name,
+            function=function,
+            args=args,
+            kwargs=kwargs,
+            description=description,
+            retry_policy=retry_policy,
+        )

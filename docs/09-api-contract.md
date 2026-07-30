@@ -965,7 +965,7 @@ Success response `200`:
   "status": "succeeded",
   "handled": true,
   "command": "help",
-  "reply_text": "Available commands: /help, /health, /ingest, /ask, /accept, /reject",
+  "reply_text": "LearnLoop Agent commands: /start or /help, /pages, /ingest, /ask, /accept, /reject, /health",
   "telegram_message_id": 1,
   "skipped_reason": null,
   "source_document_id": null,
@@ -976,7 +976,8 @@ Success response `200`:
   "citations": [],
   "review_workflow_run_id": null,
   "review_action": null,
-  "change_request_status": null
+  "change_request_status": null,
+  "target_set": false
 }
 ```
 
@@ -995,6 +996,51 @@ Request example (`/pages`):
 
 The reply lists indexed external Notion page ids, titles, and paths, followed
 by `/ingest --page <page_id>` usage. `/pages` is read-only.
+
+Primary target-picker request (`/ingest` in a media caption):
+
+```json
+{
+  "update_id": 1003,
+  "message": {
+    "message_id": 13,
+    "chat": {"id": 555},
+    "from": {"id": 777},
+    "caption": "/ingest",
+    "document": {
+      "file_id": "pdf-file-1",
+      "file_name": "lesson.pdf",
+      "mime_type": "application/pdf"
+    }
+  }
+}
+```
+
+The primary upload response acknowledges the file and sends an inline page
+picker. Each parent and child page is a separate button labelled with its full
+hierarchy path. The response has `change_request_id: null` and
+`target_set: false` until the user selects a button. The button data is only
+`ll:<opaque_token>`; the Redis session mapping restores the canonical external
+page id after chat/user ownership checks.
+
+Callback request after page selection:
+
+```json
+{
+  "update_id": 1009,
+  "callback_query": {
+    "id": "callback-1",
+    "from": {"id": 777},
+    "data": "ll:<opaque_token>",
+    "message": {"message_id": 14, "chat": {"id": 555}}
+  }
+}
+```
+
+The callback creates one target-aware `pending` proposal, returns
+`target_set: true`, and sends a preview with inline Accept, Reject, and Change
+target buttons. Callback Accept is explicit and delegates to the same review
+orchestrator as `/accept`; it never appends automatically at proposal time.
 
 Request example (`/ingest` + PDF):
 
@@ -1036,7 +1082,8 @@ Success response `200` (`/ingest`):
   "citations": [],
   "review_workflow_run_id": null,
   "review_action": null,
-  "change_request_status": null
+  "change_request_status": null,
+  "target_set": true
 }
 ```
 
@@ -1207,6 +1254,9 @@ Notes:
 - Worker startup derives the repository root from its own file path and
   fail-fast resolves `src.worker.telegram.process_telegram_webhook_job` through
   RQ. The API and worker therefore use the same fresh-process import path.
+- RQ worker selection is explicit and platform-aware: default `auto` selects
+  `SpawnWorker` on Darwin/macOS and `Worker` on Linux. The macOS fork-based
+  worker is rejected; the webhook remains asynchronous through Redis/RQ.
 - Duplicate running updates return `202`; duplicate succeeded and failed
   updates replay the original result or error. Updates without `update_id` are
   accepted for backward compatibility without deduplication.
@@ -1224,11 +1274,16 @@ Notes:
 - `/reject <change_request_id> <reason>` delegates to the existing reject
   workflow and performs no Notion write or page re-index.
 - Telegram chat id becomes the deterministic reviewer identity.
-- Inline review buttons are deferred.
+- Inline review buttons use opaque Redis-backed callback tokens and are the
+  primary proposal review UX. Text commands remain supported as fallback.
 - Route and orchestrator do not call Telegram API directly.
 - Within one Telegram update, photo entries are resolution variants of one
-  image and the gateway selects the largest variant. The current gateway does
-  not aggregate multiple updates sharing `media_group_id`, so a real
-  multi-screenshot album is not yet one screenshot-batch source.
+  image and the gateway selects the largest variant. Multiple updates sharing
+  `media_group_id` are aggregated in a chat/user-scoped Redis session by the
+  queued settle job; the session TTL and atomic claims prevent cross-user
+  reuse and duplicate OCR/proposal/preview work.
+- Expired sessions, missing media, invalid callbacks, and unavailable queue
+  paths return explicit deterministic errors. A targetless proposal never
+  receives an Accept prompt.
 - `/ingest` creates `pending` change requests only; Notion append remains in accept workflow.
 - Telegram QA uses production Notion chunks only; pending and rejected proposals remain excluded.

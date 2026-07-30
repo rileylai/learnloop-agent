@@ -10,6 +10,10 @@ class TelegramChatPayload(BaseModel):
     id: int
 
 
+class TelegramUserPayload(BaseModel):
+    id: int
+
+
 class TelegramDocumentPayload(BaseModel):
     file_id: str
     file_name: Optional[str] = None
@@ -28,15 +32,25 @@ class TelegramPhotoPayload(BaseModel):
 class TelegramMessagePayload(BaseModel):
     message_id: int
     chat: TelegramChatPayload
+    from_user: Optional[TelegramUserPayload] = Field(default=None, alias="from")
     text: Optional[str] = None
     caption: Optional[str] = None
+    media_group_id: Optional[str] = None
     document: Optional[TelegramDocumentPayload] = None
     photo: List[TelegramPhotoPayload] = Field(default_factory=list)
+
+
+class TelegramCallbackQueryPayload(BaseModel):
+    id: str
+    from_user: TelegramUserPayload = Field(alias="from")
+    message: Optional[TelegramMessagePayload] = None
+    data: Optional[str] = None
 
 
 class TelegramWebhookRequest(BaseModel):
     update_id: Optional[int] = None
     message: Optional[TelegramMessagePayload] = None
+    callback_query: Optional[TelegramCallbackQueryPayload] = None
 
 
 class TelegramWebhookResponse(BaseModel):
@@ -57,3 +71,4 @@ class TelegramWebhookResponse(BaseModel):
     review_workflow_run_id: Optional[int] = None
     review_action: Optional[str] = None
     change_request_status: Optional[str] = None
+    target_set: bool = False

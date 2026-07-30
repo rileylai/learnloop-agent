@@ -34,6 +34,7 @@ class TelegramSentMessage:
     chat_id: str
     text: str
     message_id: int
+    reply_markup: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -44,15 +45,35 @@ class TelegramDownloadedFile:
 
 
 class TelegramBotClient:
-    def send_message(self, *, chat_id: str, text: str) -> TelegramSentMessage:
+    def send_message(
+        self,
+        *,
+        chat_id: str,
+        text: str,
+        reply_markup: Optional[Dict[str, Any]] = None,
+    ) -> TelegramSentMessage:
         raise NotImplementedError
 
     def download_file(self, *, file_id: str) -> TelegramDownloadedFile:
         raise NotImplementedError
 
+    def answer_callback_query(
+        self,
+        *,
+        callback_query_id: str,
+        text: Optional[str] = None,
+    ) -> None:
+        raise NotImplementedError
+
 
 class DisabledTelegramBotClient(TelegramBotClient):
-    def send_message(self, *, chat_id: str, text: str) -> TelegramSentMessage:
+    def send_message(
+        self,
+        *,
+        chat_id: str,
+        text: str,
+        reply_markup: Optional[Dict[str, Any]] = None,
+    ) -> TelegramSentMessage:
         _ = chat_id
         _ = text
         raise TelegramBotNotConfiguredError(
@@ -65,23 +86,51 @@ class DisabledTelegramBotClient(TelegramBotClient):
             "Telegram bot token is not configured. Set TELEGRAM_BOT_TOKEN."
         )
 
+    def answer_callback_query(self, *, callback_query_id: str, text: Optional[str] = None) -> None:
+        _ = callback_query_id
+        _ = text
+        raise TelegramBotNotConfiguredError(
+            "Telegram bot token is not configured. Set TELEGRAM_BOT_TOKEN."
+        )
+
 
 class InMemoryTelegramBotClient(TelegramBotClient):
     def __init__(self) -> None:
         self._sent_messages: List[TelegramSentMessage] = []
         self._files: Dict[str, TelegramDownloadedFile] = {}
+        self._callback_answers: List[Dict[str, Optional[str]]] = []
 
-    def send_message(self, *, chat_id: str, text: str) -> TelegramSentMessage:
+    def send_message(
+        self,
+        *,
+        chat_id: str,
+        text: str,
+        reply_markup: Optional[Dict[str, Any]] = None,
+    ) -> TelegramSentMessage:
         message = TelegramSentMessage(
             chat_id=chat_id,
             text=text,
             message_id=len(self._sent_messages) + 1,
+            reply_markup=reply_markup,
         )
         self._sent_messages.append(message)
         return message
 
     def list_sent_messages(self) -> List[TelegramSentMessage]:
         return list(self._sent_messages)
+
+    def list_callback_answers(self) -> List[Dict[str, Optional[str]]]:
+        return list(self._callback_answers)
+
+    def answer_callback_query(
+        self,
+        *,
+        callback_query_id: str,
+        text: Optional[str] = None,
+    ) -> None:
+        self._callback_answers.append(
+            {"callback_query_id": callback_query_id, "text": text}
+        )
 
     def add_file(
         self,
@@ -129,11 +178,19 @@ class TelegramHTTPBotClient(TelegramBotClient):
         self._bot_token = normalized_token
         self._timeout_seconds = timeout_seconds
 
-    def send_message(self, *, chat_id: str, text: str) -> TelegramSentMessage:
+    def send_message(
+        self,
+        *,
+        chat_id: str,
+        text: str,
+        reply_markup: Optional[Dict[str, Any]] = None,
+    ) -> TelegramSentMessage:
         payload = {
             "chat_id": chat_id,
             "text": text,
         }
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
         req = request.Request(
             url=f"https://api.telegram.org/bot{self._bot_token}/sendMessage",
             data=json.dumps(payload).encode("utf-8"),
@@ -179,7 +236,19 @@ class TelegramHTTPBotClient(TelegramBotClient):
             chat_id=chat_id,
             text=text,
             message_id=message_id,
+            reply_markup=reply_markup,
         )
+
+    def answer_callback_query(
+        self,
+        *,
+        callback_query_id: str,
+        text: Optional[str] = None,
+    ) -> None:
+        payload: Dict[str, Any] = {"callback_query_id": callback_query_id}
+        if text:
+            payload["text"] = text
+        self._post_json_method(method_name="answerCallbackQuery", payload=payload)
 
     def download_file(self, *, file_id: str) -> TelegramDownloadedFile:
         normalized_file_id = file_id.strip()
@@ -276,11 +345,17 @@ class TelegramBotTool(Tool):
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["send_message", "download_file"],
+                        "enum": [
+                            "send_message",
+                            "download_file",
+                            "answer_callback_query",
+                        ],
                     },
                     "chat_id": {"type": "string"},
                     "text": {"type": "string"},
                     "file_id": {"type": "string"},
+                    "reply_markup": {"type": "object"},
+                    "callback_query_id": {"type": "string"},
                 },
             },
             output_schema={"type": "object"},
@@ -296,6 +371,8 @@ class TelegramBotTool(Tool):
             return self._run_send_message(arguments)
         if action == "download_file":
             return self._run_download_file(arguments)
+        if action == "answer_callback_query":
+            return self._run_answer_callback_query(arguments)
         return ToolResult.failure(
             code="INVALID_ARGUMENT",
             message=f"Unsupported telegram_bot action: {action}",
@@ -304,6 +381,7 @@ class TelegramBotTool(Tool):
     def _run_send_message(self, arguments: Dict[str, Any]) -> ToolResult:
         chat_id = str(arguments.get("chat_id", "")).strip()
         text = str(arguments.get("text", "")).strip()
+        reply_markup = arguments.get("reply_markup")
         if not chat_id:
             return ToolResult.failure(
                 code="INVALID_ARGUMENT",
@@ -316,7 +394,14 @@ class TelegramBotTool(Tool):
             )
 
         try:
-            sent = self._telegram_client.send_message(chat_id=chat_id, text=text)
+            if isinstance(reply_markup, dict):
+                sent = self._telegram_client.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                )
+            else:
+                sent = self._telegram_client.send_message(chat_id=chat_id, text=text)
         except TelegramBotNotConfiguredError as exc:
             return ToolResult.failure(
                 code="TELEGRAM_NOT_CONFIGURED",
@@ -339,7 +424,41 @@ class TelegramBotTool(Tool):
                 "chat_id": sent.chat_id,
                 "text": sent.text,
                 "message_id": sent.message_id,
+                "reply_markup": sent.reply_markup,
             },
+        )
+
+    def _run_answer_callback_query(self, arguments: Dict[str, Any]) -> ToolResult:
+        callback_query_id = str(arguments.get("callback_query_id", "")).strip()
+        if not callback_query_id:
+            return ToolResult.failure(
+                code="INVALID_ARGUMENT",
+                message="callback_query_id is required",
+            )
+        text_value = str(arguments.get("text", "")).strip() or None
+        try:
+            self._telegram_client.answer_callback_query(
+                callback_query_id=callback_query_id,
+                text=text_value,
+            )
+        except TelegramBotNotConfiguredError as exc:
+            return ToolResult.failure(
+                code="TELEGRAM_NOT_CONFIGURED",
+                message=sanitize_sensitive_text(str(exc)),
+            )
+        except TelegramBotSendError as exc:
+            return ToolResult.failure(
+                code="TELEGRAM_SEND_FAILED",
+                message=sanitize_sensitive_text(str(exc)),
+            )
+        except TelegramBotClientError as exc:
+            return ToolResult.failure(
+                code="UNKNOWN_ERROR",
+                message=sanitize_sensitive_text(str(exc)),
+            )
+        return ToolResult.success(
+            content="answered telegram callback query",
+            structured_content={"callback_query_id": callback_query_id},
         )
 
     def _run_download_file(self, arguments: Dict[str, Any]) -> ToolResult:

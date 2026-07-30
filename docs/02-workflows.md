@@ -26,6 +26,10 @@ Worker import boundary (Step 88):
   import path does not depend on the launch cwd.
 - Worker startup calls RQ `import_attribute()` for that path before Redis queue
   consumption. An unresolved path fails fast and does not process jobs.
+- The worker-class policy selects RQ `SpawnWorker` on Darwin/macOS and the
+  standard RQ `Worker` on Linux. The macOS fork-based worker is rejected by
+  policy; this does not require `OBJC_DISABLE_INITIALIZE_FORK_SAFETY` and does
+  not change the asynchronous queue boundary.
 
 Prompt safety boundary (Step 80):
 - Query, retrieved context, and source text are rendered as explicitly
@@ -362,6 +366,49 @@ Rules:
 - `/ingest --page <external_page_id>` resolves the target against indexed
   Notion pages; the target is optional for backward compatibility, but accept
   still fails closed when no target is present.
+- In the primary target-picker flow, upload alone stores only a TTL session and
+  does not create a proposal. A legacy direct caller may still create a
+  targetless pending row, but it receives no Accept prompt and remains blocked
+  by the existing target guardrail.
+
+## Telegram Target-Picker Ingestion Workflow (Step 88 UX Redesign)
+
+```text
+Telegram message or caption with PDF/image
+-> webhook secret + allowed-chat checks
+-> update ledger claim
+-> API returns 202 when Redis/RQ is configured
+-> worker upserts a chat/user-scoped Redis upload session with TTL
+   - media_group_id groups multiple image messages
+   - attachment identity deduplicates Telegram retries
+-> media group schedules one idempotent settle job; single media sends one receipt
+-> settle job claims the picker and sends full hierarchy-path inline buttons
+-> callback_data contains only `ll:<opaque_token>`
+-> Redis resolves token by chat/user to the canonical external Notion page id/path
+-> atomic target claim starts existing PDF/OCR -> proposal orchestration
+-> pending proposal stores the target page foreign key
+-> preview claim sends one preview with Accept / Reject / Change target buttons
+-> explicit Accept callback or `/accept` reuses TelegramReviewOrchestrator
+```
+
+Rules:
+- Parent and child pages are separate button targets; hierarchy paths are UI
+  labels, while the external Notion page id remains the canonical backend
+  target.
+- Full external page ids never appear in inline `callback_data`; opaque tokens
+  are short-lived Redis mappings isolated by chat and user.
+- `/ingest` text/caption parsing remains a fallback. The primary flow is upload,
+  page button selection, target-aware pending proposal, then explicit review.
+- Media-group settle, target claim, and preview claim are atomic/idempotent;
+  retries cannot duplicate OCR, proposal creation, or preview delivery.
+- The settle job uses bounded queue retries for unexpected worker failures;
+  expected domain errors are terminal and remain explicit.
+- An expired session, missing media, invalid callback, or unavailable queue
+  returns an explicit deterministic error. The bot never guesses another
+  chat/user's upload or silently reports success.
+- No proposal without a target receives an Accept prompt. No callback or worker
+  path auto-accepts; appending and re-indexing remain behind the existing
+  human review guardrails.
 
 ## Telegram Page and Review Workflow (Step 73)
 
@@ -385,6 +432,9 @@ Rules:
 - Preview content is read from the stored pending proposal; preview does not
   accept, append, or expose pending content to production RAG.
 - Telegram chat id remains the deterministic reviewer identity.
+- Inline Accept is an explicit user callback and delegates to the same
+  `SupplementReviewOrchestrator` as `/accept`; it does not create a second
+  write path.
 
 ## Telegram QA Workflow (Step 34)
 

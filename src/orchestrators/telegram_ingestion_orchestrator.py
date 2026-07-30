@@ -26,7 +26,13 @@ from src.orchestrators.supplement_query_orchestrator import (
     SupplementQueryOrchestrator,
     SupplementReviewItemResult,
 )
-from src.services import STANDARD_FAILURE_REASONS
+from src.services import (
+    InMemoryTelegramSessionStore,
+    STANDARD_FAILURE_REASONS,
+    TelegramSessionStore,
+    TelegramUploadAttachment,
+    TelegramUploadSession,
+)
 from src.tools import ToolContext, ToolRegistry
 
 TELEGRAM_BOT_TOOL_NAME = "telegram_bot"
@@ -43,6 +49,7 @@ class TelegramDocumentAttachment:
     file_id: str
     file_name: Optional[str] = None
     mime_type: Optional[str] = None
+    file_size: Optional[int] = None
 
 
 @dataclass
@@ -59,6 +66,9 @@ class TelegramIngestionCommandResult:
     change_request_id: Optional[int]
     source_type: Optional[str]
     target_notion_page_id: Optional[str]
+    target_notion_path: Optional[str] = None
+    session_id: Optional[str] = None
+    already_processed: bool = False
 
 
 class TelegramIngestionError(Exception):
@@ -88,12 +98,286 @@ class TelegramIngestionOrchestrator:
         image_ocr_ingestion_orchestrator: ImageOCRIngestionOrchestrator,
         supplement_propose_orchestrator: SupplementProposeOrchestrator,
         supplement_query_orchestrator: Optional[SupplementQueryOrchestrator] = None,
+        session_store: Optional[TelegramSessionStore] = None,
     ) -> None:
         self._tool_registry = tool_registry
         self._document_ingestion_orchestrator = document_ingestion_orchestrator
         self._image_ocr_ingestion_orchestrator = image_ocr_ingestion_orchestrator
         self._supplement_propose_orchestrator = supplement_propose_orchestrator
         self._supplement_query_orchestrator = supplement_query_orchestrator
+        self._session_store = session_store or InMemoryTelegramSessionStore()
+
+    def store_upload(
+        self,
+        *,
+        session_id: str,
+        chat_id: str,
+        user_id: str,
+        media_group_id: Optional[str],
+        document: Optional[TelegramDocumentAttachment],
+        photos: List[TelegramPhotoAttachment],
+        command_text: Optional[str],
+    ) -> TelegramUploadSession:
+        attachments: List[TelegramUploadAttachment] = []
+        if document is not None:
+            attachments.append(
+                TelegramUploadAttachment(
+                    kind="pdf",
+                    file_id=document.file_id,
+                    file_name=document.file_name,
+                    mime_type=document.mime_type,
+                    file_size=document.file_size,
+                )
+            )
+        attachments.extend(
+            TelegramUploadAttachment(
+                kind="photo",
+                file_id=photo.file_id,
+                file_unique_id=photo.file_unique_id,
+                file_size=photo.file_size,
+            )
+            for photo in self._deduplicate_photos(photos)
+        )
+        if not attachments:
+            raise TelegramIngestionError(
+                error_code="UPLOAD_MEDIA_MISSING",
+                message="No PDF or image was found. Please upload the file again.",
+                http_status_code=HTTPStatus.BAD_REQUEST,
+                failure_reason="INVALID_ARGUMENT",
+            )
+        return self._session_store.upsert_upload(
+            session_id=session_id,
+            chat_id=chat_id,
+            user_id=user_id,
+            media_group_id=media_group_id,
+            attachments=attachments,
+            command_text=command_text,
+        )
+
+    def get_latest_upload(self, *, chat_id: str, user_id: str) -> Optional[TelegramUploadSession]:
+        return self._session_store.find_latest_upload(chat_id=chat_id, user_id=user_id)
+
+    def mark_upload_awaiting_target(
+        self,
+        *,
+        session_id: str,
+        chat_id: str,
+        user_id: str,
+    ) -> Optional[TelegramUploadSession]:
+        return self._session_store.mark_awaiting_target(
+            session_id=session_id,
+            chat_id=chat_id,
+            user_id=user_id,
+        )
+
+    def claim_upload_settle(self, *, session_id: str, chat_id: str, user_id: str) -> bool:
+        return self._session_store.claim_settle(
+            session_id=session_id,
+            chat_id=chat_id,
+            user_id=user_id,
+        )
+
+    def claim_upload_picker(self, *, session_id: str, chat_id: str, user_id: str) -> bool:
+        return self._session_store.claim_picker(
+            session_id=session_id,
+            chat_id=chat_id,
+            user_id=user_id,
+        )
+
+    def claim_upload_receipt(self, *, session_id: str, chat_id: str, user_id: str) -> bool:
+        return self._session_store.claim_receipt(
+            session_id=session_id,
+            chat_id=chat_id,
+            user_id=user_id,
+        )
+
+    def claim_upload_preview(self, *, session_id: str, chat_id: str, user_id: str) -> bool:
+        return self._session_store.claim_preview(
+            session_id=session_id,
+            chat_id=chat_id,
+            user_id=user_id,
+        )
+
+    def fail_upload(
+        self,
+        *,
+        session_id: str,
+        chat_id: str,
+        user_id: str,
+        failure_reason: str,
+    ) -> None:
+        self._session_store.fail_upload(
+            session_id=session_id,
+            chat_id=chat_id,
+            user_id=user_id,
+            failure_reason=failure_reason,
+        )
+
+    def get_upload(
+        self,
+        *,
+        session_id: str,
+        chat_id: str,
+        user_id: str,
+    ) -> Optional[TelegramUploadSession]:
+        return self._session_store.get_upload(
+            session_id=session_id,
+            chat_id=chat_id,
+            user_id=user_id,
+        )
+
+    def create_callback(
+        self,
+        *,
+        session_id: str,
+        chat_id: str,
+        user_id: str,
+        action: str,
+        change_request_id: Optional[int] = None,
+        target_notion_page_id: Optional[str] = None,
+        target_notion_path: Optional[str] = None,
+    ) -> str:
+        return self._session_store.create_callback(
+            session_id=session_id,
+            chat_id=chat_id,
+            user_id=user_id,
+            action=action,
+            change_request_id=change_request_id,
+            target_notion_page_id=target_notion_page_id,
+            target_notion_path=target_notion_path,
+        )
+
+    def resolve_callback(self, *, token: str, chat_id: str, user_id: str):
+        return self._session_store.resolve_callback(
+            token=token,
+            chat_id=chat_id,
+            user_id=user_id,
+        )
+
+    async def handle_target_selection(
+        self,
+        *,
+        session_id: str,
+        chat_id: str,
+        user_id: str,
+        target_notion_page_id: str,
+        target_notion_path: str,
+        request_workflow_id: str,
+    ) -> TelegramIngestionCommandResult:
+        claim_status, session = self._session_store.claim_target(
+            session_id=session_id,
+            chat_id=chat_id,
+            user_id=user_id,
+            target_notion_page_id=target_notion_page_id,
+            target_notion_path=target_notion_path,
+        )
+        if session is None:
+            raise TelegramIngestionError(
+                error_code="UPLOAD_SESSION_EXPIRED",
+                message="This upload session expired. Please upload the file again.",
+                http_status_code=HTTPStatus.GONE,
+                failure_reason="UPLOAD_SESSION_EXPIRED",
+            )
+        if claim_status == "in_progress":
+            return TelegramIngestionCommandResult(
+                reply_text="This upload is already being processed. Please wait for its preview.",
+                source_document_id=session.source_document_id,
+                change_request_id=session.change_request_id,
+                source_type=session.source_type,
+                target_notion_page_id=session.target_notion_page_id,
+                target_notion_path=session.target_notion_path,
+                session_id=session.session_id,
+                already_processed=True,
+            )
+        if claim_status == "already":
+            preview = self._build_proposal_preview(
+                change_request_id=int(session.change_request_id or 0),
+                target_notion_page_id=session.target_notion_page_id,
+                target_notion_path=session.target_notion_path,
+                source_type=session.source_type or "unknown",
+                source_document_id=int(session.source_document_id or 0),
+                source_count=len(session.attachments),
+            )
+            return TelegramIngestionCommandResult(
+                reply_text=preview or "Proposal is already ready for review.",
+                source_document_id=session.source_document_id,
+                change_request_id=session.change_request_id,
+                source_type=session.source_type,
+                target_notion_page_id=session.target_notion_page_id,
+                target_notion_path=session.target_notion_path,
+                session_id=session.session_id,
+                already_processed=True,
+            )
+        if claim_status != "new":
+            raise TelegramIngestionError(
+                error_code="UPLOAD_SESSION_INVALID",
+                message="This upload session is no longer selectable. Please upload the file again.",
+                http_status_code=HTTPStatus.CONFLICT,
+                failure_reason="UPLOAD_SESSION_INVALID",
+            )
+
+        document: Optional[TelegramDocumentAttachment] = None
+        photos: List[TelegramPhotoAttachment] = []
+        for attachment in session.attachments:
+            if attachment.kind == "pdf":
+                document = TelegramDocumentAttachment(
+                    file_id=attachment.file_id,
+                    file_name=attachment.file_name,
+                    mime_type=attachment.mime_type,
+                    file_size=attachment.file_size,
+                )
+            else:
+                photos.append(
+                    TelegramPhotoAttachment(
+                        file_id=attachment.file_id,
+                        file_unique_id=attachment.file_unique_id,
+                        file_size=attachment.file_size,
+                    )
+                )
+
+        try:
+            result = await self.handle_ingest_command(
+                chat_id=chat_id,
+                document=document,
+                photos=photos,
+                request_workflow_id=request_workflow_id,
+                target_notion_page_id=target_notion_page_id,
+            )
+        except TelegramIngestionError as exc:
+            self._session_store.fail_upload(
+                session_id=session_id,
+                chat_id=chat_id,
+                user_id=user_id,
+                failure_reason=exc.failure_reason,
+            )
+            raise
+        self._session_store.record_proposal(
+            session_id=session_id,
+            chat_id=chat_id,
+            user_id=user_id,
+            source_document_id=int(result.source_document_id or 0),
+            change_request_id=int(result.change_request_id or 0),
+            source_type=str(result.source_type or "unknown"),
+            target_notion_page_id=target_notion_page_id,
+            target_notion_path=target_notion_path,
+        )
+        preview = self._build_proposal_preview(
+            change_request_id=int(result.change_request_id or 0),
+            target_notion_page_id=target_notion_page_id,
+            target_notion_path=target_notion_path,
+            source_type=str(result.source_type or "unknown"),
+            source_document_id=int(result.source_document_id or 0),
+            source_count=len(session.attachments),
+        )
+        return TelegramIngestionCommandResult(
+            reply_text=preview or result.reply_text,
+            source_document_id=result.source_document_id,
+            change_request_id=result.change_request_id,
+            source_type=result.source_type,
+            target_notion_page_id=target_notion_page_id,
+            target_notion_path=target_notion_path,
+            session_id=session_id,
+        )
 
     async def handle_ingest_command(
         self,
@@ -141,6 +425,7 @@ class TelegramIngestionOrchestrator:
             proposal_preview = self._build_proposal_preview(
                 change_request_id=proposal_result.change_request_id,
                 target_notion_page_id=proposal_result.target_notion_page_id,
+                target_notion_path=None,
                 source_type=source_result.source_type,
                 source_document_id=source_result.source_document_id,
                 source_count=source_count,
@@ -179,6 +464,7 @@ class TelegramIngestionOrchestrator:
         *,
         change_request_id: int,
         target_notion_page_id: Optional[str],
+        target_notion_path: Optional[str],
         source_type: str,
         source_document_id: int,
         source_count: int,
@@ -191,6 +477,7 @@ class TelegramIngestionOrchestrator:
         return self._format_proposal_preview(
             item=item,
             target_notion_page_id=target_notion_page_id,
+            target_notion_path=target_notion_path,
             source_type=source_type,
             source_document_id=source_document_id,
             source_count=source_count,
@@ -201,11 +488,12 @@ class TelegramIngestionOrchestrator:
         *,
         item: SupplementReviewItemResult,
         target_notion_page_id: Optional[str],
+        target_notion_path: Optional[str],
         source_type: str,
         source_document_id: int,
         source_count: int,
     ) -> str:
-        target = target_notion_page_id or "not selected"
+        target = target_notion_path or target_notion_page_id or "not selected"
         if source_type == "screenshot":
             ingestion_summary = (
                 "Ingestion succeeded "
@@ -238,7 +526,16 @@ class TelegramIngestionOrchestrator:
                 or "unavailable"
             )
             lines.append(f"- {citation_value}")
-        lines.append(f"Review with /accept {item.change_request_id} or /reject {item.change_request_id} <reason>.")
+        if target_notion_page_id:
+            lines.append(
+                f"Review with /accept {item.change_request_id} or /reject "
+                f"{item.change_request_id} <reason>."
+            )
+        else:
+            lines.append(
+                "Target is not selected. Choose a Notion page before accepting "
+                "this proposal."
+            )
         return "\n".join(lines)
 
     async def _ingest_pdf_document(

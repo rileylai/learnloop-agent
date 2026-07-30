@@ -71,9 +71,24 @@ mode-specific provider configuration is unavailable.
   canonical path through RQ `import_attribute()` and compares it with the
   actual callable. Failure is fail-fast and safe to diagnose without running
   Telegram work.
+- RQ 2.8.0 supports `SpawnWorker`. The explicit worker-class policy selects
+  `SpawnWorker` on Darwin/macOS and the standard `Worker` on Linux by default;
+  selecting the fork-based worker on macOS fails closed. Startup logs emit
+  only the selected class name (`SpawnWorker` or `Worker`).
 - A previously claimed `running` update is not re-run by this fix. The ledger
   remains the source of truth; operators inspect the redacted ledger/job state
   and use an explicit recovery decision rather than raw SQL or replay.
+
+Telegram ingestion observability:
+- Workflow metadata records safe operation classes, counts, target-set state,
+  and callback/review action status only. It does not record callback tokens,
+  canonical page ids, upload bytes, captions, OCR text, or proposal source
+  content.
+- Redis upload sessions and callback mappings are TTL-bound and scoped by chat
+  and user. Their state is not emitted into user-facing logs.
+- Duplicate update, settle, target, and preview claims are observable through
+  terminal status/failure outcomes without exposing private media or Notion
+  content.
 
 ## Workflow Metadata Notes
 

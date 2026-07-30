@@ -1,0 +1,670 @@
+from __future__ import annotations
+
+import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
+
+from fastapi.testclient import TestClient
+import pytest
+import fakeredis
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from src.app.api.routes.telegram import get_telegram_session_store
+from src.app.dependencies import (
+    get_db_session_factory,
+    get_embedding_client,
+    get_provider_router,
+    get_tool_registry,
+)
+from src.app.main import app
+from src.db.base import Base
+from src.db.models import ChangeRequest, KnowledgeChunk, NotionBlock, NotionPage, SourceDocument, TelegramUpdateLedger, WorkflowRun
+from src.db.session import get_db_session, get_unit_of_work_factory
+from src.db.unit_of_work import SqlAlchemyUnitOfWork
+from src.providers import LLMProvider, LLMRequest, LLMResponse, ProviderRouter
+from src.services import (
+    InMemoryTelegramSessionStore,
+    RedisTelegramSessionStore,
+    TelegramUploadAttachment,
+)
+from src.tools import (
+    ImageOCRParserClient,
+    ImageOCRTool,
+    InMemoryTelegramBotClient,
+    NotionReaderTool,
+    NotionWriterTool,
+    OCRImageInput,
+    PDFParserClient,
+    PDFParserTool,
+    ParsedImageOCR,
+    TelegramBotTool,
+    ToolRegistry,
+)
+
+
+class _PDFParser(PDFParserClient):
+    def parse_document(self, *, file_name: str, file_bytes: bytes):
+        return SimpleNamespace(raw_text="PDF learning notes", page_count=1)
+
+
+class _OCRParser(ImageOCRParserClient):
+    def parse_images(self, *, images: list[OCRImageInput]) -> ParsedImageOCR:
+        return ParsedImageOCR(
+            raw_text="\n".join(image.file_name for image in images),
+            image_count=len(images),
+        )
+
+
+class _ProposalProvider(LLMProvider):
+    def __init__(self, *, source_type: str) -> None:
+        self._source_type = source_type
+
+    @property
+    def name(self) -> str:
+        return "openai"
+
+    async def generate(self, request: LLMRequest) -> LLMResponse:
+        _ = request
+        return LLMResponse(
+            provider="openai",
+            model="gpt-4o-mini",
+            output_text=json.dumps(
+                {
+                    "title": "Telegram target-aware supplement",
+                    "target_path": (
+                        "Knowledge/Parent/AI Supplement Zone/Telegram supplement"
+                        if self._source_type == "pdf"
+                        else "Knowledge/Parent/Child/AI Supplement Zone/Telegram supplement"
+                    ),
+                    "source": {
+                        "source_type": self._source_type,
+                        "source_display_name": (
+                            "lesson.pdf"
+                            if self._source_type == "pdf"
+                            else "Screenshot batch (1 images)"
+                        ),
+                    },
+                    "summary": "Proposal created after a page button selection.",
+                    "concepts": ["target selection"],
+                    "notes": ["Review before accepting."],
+                }
+            ),
+            token_input=10,
+            token_output=10,
+        )
+
+
+def _session_factory():
+    engine = create_engine(
+        "sqlite+pysqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(
+        engine,
+        tables=[
+            WorkflowRun.__table__,
+            SourceDocument.__table__,
+            ChangeRequest.__table__,
+            KnowledgeChunk.__table__,
+            NotionBlock.__table__,
+            NotionPage.__table__,
+            TelegramUpdateLedger.__table__,
+        ],
+    )
+    return sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+
+def _seed_pages(session_factory) -> None:
+    session = session_factory()
+    try:
+        session.add_all(
+            [
+                NotionPage(
+                    id=1,
+                    notion_page_id="notion-parent-canonical",
+                    title="Parent",
+                    notion_path="Knowledge/Parent",
+                ),
+                NotionPage(
+                    id=2,
+                    notion_page_id="notion-child-canonical",
+                    title="Child",
+                    notion_path="Knowledge/Parent/Child",
+                ),
+            ]
+        )
+        session.commit()
+    finally:
+        session.close()
+
+
+def _configure_app(
+    *,
+    session_factory,
+    telegram_client: InMemoryTelegramBotClient,
+    session_store: InMemoryTelegramSessionStore,
+    source_type: str,
+) -> None:
+    registry = ToolRegistry()
+    registry.register_tool(TelegramBotTool(telegram_client))
+    registry.register_tool(PDFParserTool(_PDFParser()))
+    registry.register_tool(ImageOCRTool(_OCRParser()))
+    router = ProviderRouter()
+    router.register_provider(_ProposalProvider(source_type=source_type))
+
+    def db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db_session] = db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
+    app.dependency_overrides[get_tool_registry] = lambda: registry
+    app.dependency_overrides[get_provider_router] = lambda: router
+    app.dependency_overrides[get_embedding_client] = lambda: None
+    app.dependency_overrides[get_telegram_session_store] = lambda: session_store
+
+
+def _page_callback_data(
+    telegram_client: InMemoryTelegramBotClient,
+    *,
+    button_index: int = 0,
+) -> str:
+    message = telegram_client.list_sent_messages()[0]
+    return message.reply_markup["inline_keyboard"][button_index][0]["callback_data"]
+
+
+@pytest.mark.parametrize(
+    ("source_type", "media_payload", "file_id", "button_index", "expected_page", "expected_path", "expected_db_id"),
+    [
+        (
+            "pdf",
+            {
+                "document": {
+                    "file_id": "ux-pdf",
+                    "file_name": "lesson.pdf",
+                    "mime_type": "application/pdf",
+                }
+            },
+            "ux-pdf",
+            0,
+            "notion-parent-canonical",
+            "Knowledge/Parent",
+            1,
+        ),
+        (
+            "screenshot",
+            {
+                "photo": [
+                    {
+                        "file_id": "ux-image",
+                        "file_unique_id": "ux-image-unique",
+                        "width": 1200,
+                        "height": 800,
+                        "file_size": 100,
+                    }
+                ]
+            },
+            "ux-image",
+            1,
+            "notion-child-canonical",
+            "Knowledge/Parent/Child",
+            2,
+        ),
+    ],
+)
+def test_upload_then_page_button_creates_target_aware_pending_proposal(
+    source_type: str,
+    media_payload: dict,
+    file_id: str,
+    button_index: int,
+    expected_page: str,
+    expected_path: str,
+    expected_db_id: int,
+) -> None:
+    session_factory = _session_factory()
+    _seed_pages(session_factory)
+    telegram_client = InMemoryTelegramBotClient()
+    telegram_client.add_file(
+        file_id=file_id,
+        file_bytes=b"telegram-file-bytes",
+        file_name="lesson.pdf" if source_type == "pdf" else "image.png",
+    )
+    session_store = InMemoryTelegramSessionStore()
+    _configure_app(
+        session_factory=session_factory,
+        telegram_client=telegram_client,
+        session_store=session_store,
+        source_type=source_type,
+    )
+    try:
+        client = TestClient(app)
+        upload_payload = {
+            "update_id": 9100 if source_type == "pdf" else 9101,
+            "message": {
+                "message_id": 1,
+                "chat": {"id": 555},
+                "from": {"id": 777},
+                "caption": "/ingest",
+                **media_payload,
+            },
+        }
+        upload_response = client.post("/api/telegram/webhook", json=upload_payload)
+        assert upload_response.status_code == 200
+        upload_result = upload_response.json()
+        assert upload_result["command"] == "ingest"
+        assert upload_result["change_request_id"] is None
+        assert len(telegram_client.list_sent_messages()) == 1
+        keyboard = telegram_client.list_sent_messages()[0].reply_markup
+        assert keyboard is not None
+        assert len(keyboard["inline_keyboard"]) == 2
+        callback_data = _page_callback_data(
+            telegram_client,
+            button_index=button_index,
+        )
+        assert "notion-parent-canonical" not in callback_data
+        assert callback_data.startswith("ll:")
+
+        callback_response = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 9200 if source_type == "pdf" else 9201,
+                "callback_query": {
+                    "id": "callback-1",
+                    "from": {"id": 777},
+                    "data": callback_data,
+                    "message": {"message_id": 2, "chat": {"id": 555}},
+                },
+            },
+        )
+        assert callback_response.status_code == 200
+        result = callback_response.json()
+        assert result["target_notion_page_id"] == expected_page
+        assert result["target_set"] is True
+        assert result["change_request_id"] is not None
+        assert expected_path in result["reply_text"]
+        review_buttons = [
+            button["text"]
+            for row in telegram_client.list_sent_messages()[-1].reply_markup["inline_keyboard"]
+            for button in row
+        ]
+        assert review_buttons == ["Accept", "Reject", "Change target"]
+        assert telegram_client.list_callback_answers() == [
+            {"callback_query_id": "callback-1", "text": None}
+        ]
+
+        duplicate_callback_response = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 9250 if source_type == "pdf" else 9251,
+                "callback_query": {
+                    "id": "callback-duplicate",
+                    "from": {"id": 777},
+                    "data": callback_data,
+                    "message": {"message_id": 3, "chat": {"id": 555}},
+                },
+            },
+        )
+        assert duplicate_callback_response.status_code == 200
+        assert duplicate_callback_response.json()["reply_text"] == (
+            "This proposal is already ready for review."
+        )
+        assert "Proposal ready for review" not in duplicate_callback_response.json()[
+            "reply_text"
+        ]
+
+        session = session_factory()
+        try:
+            proposals = session.query(ChangeRequest).all()
+            assert len(proposals) == 1
+            assert proposals[0].status == "pending"
+            assert proposals[0].target_notion_page_id == expected_db_id
+            assert session.query(SourceDocument).count() == 1
+        finally:
+            session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_caption_command_and_duplicate_update_id_do_not_duplicate_upload_or_preview() -> None:
+    session_factory = _session_factory()
+    _seed_pages(session_factory)
+    telegram_client = InMemoryTelegramBotClient()
+    telegram_client.add_file(file_id="caption-pdf", file_bytes=b"pdf", file_name="a.pdf")
+    store = InMemoryTelegramSessionStore()
+    _configure_app(
+        session_factory=session_factory,
+        telegram_client=telegram_client,
+        session_store=store,
+        source_type="pdf",
+    )
+    payload = {
+        "update_id": 9300,
+        "message": {
+            "message_id": 3,
+            "chat": {"id": 556},
+            "from": {"id": 778},
+            "caption": "/ingest",
+            "document": {
+                "file_id": "caption-pdf",
+                "file_name": "a.pdf",
+                "mime_type": "application/pdf",
+            },
+        },
+    }
+    try:
+        client = TestClient(app)
+        first = client.post("/api/telegram/webhook", json=payload)
+        duplicate = client.post("/api/telegram/webhook", json=payload)
+        assert first.status_code == duplicate.status_code == 200
+        assert first.json() == duplicate.json()
+        assert len(telegram_client.list_sent_messages()) == 1
+        assert store.find_latest_upload(chat_id="556", user_id="778") is not None
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_change_target_button_updates_pending_target_without_accepting() -> None:
+    session_factory = _session_factory()
+    _seed_pages(session_factory)
+    telegram_client = InMemoryTelegramBotClient()
+    telegram_client.add_file(
+        file_id="change-target-pdf",
+        file_bytes=b"pdf",
+        file_name="lesson.pdf",
+    )
+    store = InMemoryTelegramSessionStore()
+    _configure_app(
+        session_factory=session_factory,
+        telegram_client=telegram_client,
+        session_store=store,
+        source_type="pdf",
+    )
+    try:
+        client = TestClient(app)
+        upload = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 9320,
+                "message": {
+                    "message_id": 20,
+                    "chat": {"id": 558},
+                    "from": {"id": 780},
+                    "caption": "/ingest",
+                    "document": {
+                        "file_id": "change-target-pdf",
+                        "file_name": "lesson.pdf",
+                        "mime_type": "application/pdf",
+                    },
+                },
+            },
+        )
+        assert upload.status_code == 200
+        picker_token = telegram_client.list_sent_messages()[0].reply_markup[
+            "inline_keyboard"
+        ][0][0]["callback_data"]
+        selected = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 9321,
+                "callback_query": {
+                    "id": "select-parent",
+                    "from": {"id": 780},
+                    "data": picker_token,
+                    "message": {"message_id": 21, "chat": {"id": 558}},
+                },
+            },
+        )
+        assert selected.status_code == 200
+        review_markup = telegram_client.list_sent_messages()[-1].reply_markup
+        change_token = review_markup["inline_keyboard"][1][0]["callback_data"]
+        picker = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 9322,
+                "callback_query": {
+                    "id": "change-target",
+                    "from": {"id": 780},
+                    "data": change_token,
+                    "message": {"message_id": 22, "chat": {"id": 558}},
+                },
+            },
+        )
+        assert picker.status_code == 200
+        child_token = telegram_client.list_sent_messages()[-1].reply_markup[
+            "inline_keyboard"
+        ][1][0]["callback_data"]
+        changed = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 9323,
+                "callback_query": {
+                    "id": "select-child",
+                    "from": {"id": 780},
+                    "data": child_token,
+                    "message": {"message_id": 23, "chat": {"id": 558}},
+                },
+            },
+        )
+        assert changed.status_code == 200
+        assert changed.json()["target_notion_page_id"] == "notion-child-canonical"
+        assert changed.json()["target_set"] is True
+        session = session_factory()
+        try:
+            proposal = session.query(ChangeRequest).one()
+            assert proposal.status == "pending"
+            assert proposal.target_notion_page_id == 2
+            assert session.query(SourceDocument).count() == 1
+        finally:
+            session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_media_group_store_is_idempotent_and_concurrency_safe() -> None:
+    store = InMemoryTelegramSessionStore()
+    first = store.upsert_upload(
+        session_id="group-1",
+        chat_id="1",
+        user_id="2",
+        media_group_id="album-1",
+        attachments=[TelegramUploadAttachment(kind="photo", file_id="a")],
+        command_text="/ingest",
+    )
+    assert len(first.attachments) == 1
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        settle_claims = list(
+            executor.map(
+                lambda _: store.claim_settle(
+                    session_id="group-1",
+                    chat_id="1",
+                    user_id="2",
+                ),
+                range(4),
+            )
+        )
+    assert settle_claims.count(True) == 1
+    store.upsert_upload(
+        session_id="group-1",
+        chat_id="1",
+        user_id="2",
+        media_group_id="album-1",
+        attachments=[
+            TelegramUploadAttachment(kind="photo", file_id="a"),
+            TelegramUploadAttachment(kind="photo", file_id="b"),
+        ],
+        command_text=None,
+    )
+    assert store.claim_settle(session_id="group-1", chat_id="1", user_id="2") is False
+    assert store.claim_picker(session_id="group-1", chat_id="1", user_id="2") is True
+    assert store.claim_picker(session_id="group-1", chat_id="1", user_id="2") is False
+    session = store.get_upload(session_id="group-1", chat_id="1", user_id="2")
+    assert session is not None
+    assert {item.file_id for item in session.attachments} == {"a", "b"}
+    assert store.claim_target(
+        session_id="group-1",
+        chat_id="1",
+        user_id="2",
+        target_notion_page_id="canonical-page",
+        target_notion_path="Knowledge/Page",
+    )[0] == "new"
+    assert store.claim_target(
+        session_id="group-1",
+        chat_id="1",
+        user_id="2",
+        target_notion_page_id="canonical-page",
+        target_notion_path="Knowledge/Page",
+    )[0] == "in_progress"
+
+
+def test_expired_session_and_cross_user_lookup_fail_closed() -> None:
+    store = InMemoryTelegramSessionStore(ttl_seconds=1)
+    session = store.upsert_upload(
+        session_id="single-1",
+        chat_id="chat-a",
+        user_id="user-a",
+        media_group_id=None,
+        attachments=[TelegramUploadAttachment(kind="photo", file_id="a")],
+        command_text="/ingest",
+    )
+    session.updated_at -= 2
+    assert store.get_upload(session_id="single-1", chat_id="chat-a", user_id="user-a") is None
+    assert store.find_latest_upload(chat_id="chat-a", user_id="user-a") is None
+    assert store.get_upload(session_id="single-1", chat_id="chat-b", user_id="user-b") is None
+
+
+def test_expired_upload_command_returns_clear_error_and_requires_reupload() -> None:
+    session_factory = _session_factory()
+    _seed_pages(session_factory)
+    telegram_client = InMemoryTelegramBotClient()
+    store = InMemoryTelegramSessionStore(ttl_seconds=1)
+    session = store.upsert_upload(
+        session_id="expired-upload",
+        chat_id="557",
+        user_id="779",
+        media_group_id=None,
+        attachments=[TelegramUploadAttachment(kind="pdf", file_id="expired")],
+        command_text="/ingest",
+    )
+    session.updated_at -= 2
+    _configure_app(
+        session_factory=session_factory,
+        telegram_client=telegram_client,
+        session_store=store,
+        source_type="pdf",
+    )
+    try:
+        response = TestClient(app).post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 9350,
+                "message": {
+                    "message_id": 5,
+                    "chat": {"id": 557},
+                    "from": {"id": 779},
+                    "text": "/ingest",
+                },
+            },
+        )
+        assert response.status_code == 410
+        assert response.json()["detail"]["error_code"] == "UPLOAD_SESSION_EXPIRED"
+        assert telegram_client.list_sent_messages()[-1].text.endswith(
+            "Please upload a PDF or image first."
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_redis_session_and_callback_mapping_are_ttl_and_user_scoped() -> None:
+    class _FakeRedisWithLocalLock:
+        def __init__(self) -> None:
+            self._redis = fakeredis.FakeRedis()
+            self._lock = threading.RLock()
+
+        def lock(self, *_args, **_kwargs):
+            return self._lock
+
+        def __getattr__(self, name):
+            return getattr(self._redis, name)
+
+    redis_client = _FakeRedisWithLocalLock()
+    store = RedisTelegramSessionStore(redis_client=redis_client, ttl_seconds=60)
+    store.upsert_upload(
+        session_id="redis-session",
+        chat_id="chat-redis",
+        user_id="user-redis",
+        media_group_id=None,
+        attachments=[TelegramUploadAttachment(kind="pdf", file_id="pdf")],
+        command_text="/ingest",
+    )
+    token = store.create_callback(
+        session_id="redis-session",
+        chat_id="chat-redis",
+        user_id="user-redis",
+        action="select_target",
+        target_notion_page_id="canonical-external-page-id",
+        target_notion_path="Knowledge/Parent",
+    )
+    assert "canonical-external-page-id" not in token
+    assert store.resolve_callback(
+        token=token,
+        chat_id="chat-redis",
+        user_id="user-redis",
+    ).target_notion_page_id == "canonical-external-page-id"
+    assert store.resolve_callback(
+        token=token,
+        chat_id="other-chat",
+        user_id="other-user",
+    ) is None
+    assert redis_client.ttl("learnloop:telegram:upload:chat-redis:user-redis:redis-session") > 0
+
+
+def test_invalid_callback_is_rejected_without_creating_proposal() -> None:
+    session_factory = _session_factory()
+    _seed_pages(session_factory)
+    telegram_client = InMemoryTelegramBotClient()
+    store = InMemoryTelegramSessionStore()
+    _configure_app(
+        session_factory=session_factory,
+        telegram_client=telegram_client,
+        session_store=store,
+        source_type="pdf",
+    )
+    try:
+        response = TestClient(app).post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 9400,
+                "callback_query": {
+                    "id": "invalid-callback",
+                    "from": {"id": 1},
+                    "data": "ll:not-a-real-session-token",
+                    "message": {"message_id": 4, "chat": {"id": 2}},
+                },
+            },
+        )
+        assert response.status_code == 400
+        assert response.json()["detail"]["error_code"] == "INVALID_CALLBACK"
+        session = session_factory()
+        try:
+            assert session.query(ChangeRequest).count() == 0
+            assert telegram_client.list_sent_messages() == []
+            assert telegram_client.list_callback_answers() == [
+                {
+                    "callback_query_id": "invalid-callback",
+                    "text": "This button is invalid or expired. Please upload the file again.",
+                }
+            ]
+        finally:
+            session.close()
+    finally:
+        app.dependency_overrides.clear()

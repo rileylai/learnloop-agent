@@ -33,6 +33,7 @@ from src.services import (
     CostTracker,
     DuplicateKnowledgeChecker,
     PromptTemplateLoader,
+    TelegramSessionStore,
     TelegramUpdateIdempotencyService,
     TrustBoundaryService,
     WorkflowRunService,
@@ -51,6 +52,7 @@ def build_telegram_gateway_orchestrator(
     cost_tracker: CostTracker,
     prompt_template_loader: PromptTemplateLoader,
     trust_boundary: TrustBoundaryService,
+    telegram_session_store: Optional[TelegramSessionStore] = None,
     queue_client: Optional[QueueClient] = None,
 ) -> TelegramGatewayOrchestrator:
     workflow_run_service = WorkflowRunService(db_session_factory)
@@ -87,6 +89,7 @@ def build_telegram_gateway_orchestrator(
             change_request_repository=ChangeRequestRepository(db_session),
             notion_page_repository=NotionPageRepository(db_session),
         ),
+        session_store=telegram_session_store,
     )
     telegram_qa_orchestrator = TelegramQAOrchestrator(
         qa_orchestrator=QAOrchestrator(

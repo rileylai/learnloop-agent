@@ -35,3 +35,24 @@ class FakeQueueClient(QueueClient):
 
     def is_available(self) -> bool:
         return True
+
+    def enqueue_in(
+        self,
+        *,
+        queue_name: str,
+        function: Callable[..., Any],
+        seconds: int,
+        args: Tuple[Any, ...] = (),
+        kwargs: Optional[Dict[str, Any]] = None,
+        description: Optional[str] = None,
+        retry_policy: Optional[QueueRetryPolicy] = None,
+    ) -> EnqueuedJob:
+        _ = seconds
+        return self.enqueue(
+            queue_name=queue_name,
+            function=function,
+            args=args,
+            kwargs=kwargs,
+            description=description,
+            retry_policy=retry_policy,
+        )

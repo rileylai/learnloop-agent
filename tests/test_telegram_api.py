@@ -387,9 +387,10 @@ def test_telegram_webhook_help_command_sends_reply() -> None:
         assert payload["status"] == "succeeded"
         assert payload["handled"] is True
         assert payload["command"] == "help"
-        assert payload["reply_text"] == (
-            "Available commands: /help, /health, /ingest, /ask, /accept, /reject"
-        )
+        assert payload["reply_text"].startswith("LearnLoop Agent commands:")
+        assert "/pages" in payload["reply_text"]
+        assert "/ingest" in payload["reply_text"]
+        assert "do not need to type a Notion UUID" in payload["reply_text"]
         assert payload["telegram_message_id"] == 1
         assert payload["skipped_reason"] is None
         assert payload["source_document_id"] is None
@@ -413,9 +414,7 @@ def test_telegram_webhook_help_command_sends_reply() -> None:
         sent_messages = telegram_client.list_sent_messages()
         assert len(sent_messages) == 1
         assert sent_messages[0].chat_id == "555"
-        assert sent_messages[0].text == (
-            "Available commands: /help, /health, /ingest, /ask, /accept, /reject"
-        )
+        assert sent_messages[0].text == payload["reply_text"]
 
         verify_session: Session = session_factory()
         try:
@@ -1223,42 +1222,23 @@ def test_telegram_webhook_ingest_pdf_creates_pending_change_request() -> None:
             },
         )
 
-        assert response.status_code == 200
-        payload = response.json()
-        assert payload["status"] == "succeeded"
-        assert payload["handled"] is True
-        assert payload["command"] == "ingest"
-        assert payload["source_type"] == "pdf"
-        assert payload["source_document_id"] is not None
-        assert payload["change_request_id"] is not None
-        assert "status=pending" in (payload["reply_text"] or "")
-
-        sent_messages = telegram_client.list_sent_messages()
-        assert len(sent_messages) == 1
-        assert sent_messages[0].chat_id == "12345"
-        assert "change_request_id" in sent_messages[0].text
+        assert response.status_code == 409
+        detail = response.json()["detail"]
+        assert detail["error_code"] == "NOTION_PAGES_EMPTY"
+        assert detail["failure_reason"] == "NOTION_PAGE_NOT_FOUND"
 
         verify_session: Session = session_factory()
         try:
             source_documents = verify_session.query(SourceDocument).all()
-            assert len(source_documents) == 1
-            assert source_documents[0].source_type == "pdf"
-            assert source_documents[0].source_display_name == "lesson.pdf"
+            assert len(source_documents) == 0
 
             change_requests = verify_session.query(ChangeRequest).all()
-            assert len(change_requests) == 1
-            assert change_requests[0].status == "pending"
-            assert change_requests[0].source_document_id == source_documents[0].id
+            assert len(change_requests) == 0
 
             workflow_runs = verify_session.query(WorkflowRun).all()
             assert any(row.workflow_type == "telegram" for row in workflow_runs)
-            assert any(row.workflow_type == "ingestion" for row in workflow_runs)
-            supplement_run = next(
-                row for row in workflow_runs if row.workflow_type == "supplement"
-            )
-            supplement_metadata = json.loads(supplement_run.metadata_json or "{}")
-            assert supplement_metadata["prompt_id"] == "supplement_proposal"
-            assert supplement_metadata["estimated_cost"] == pytest.approx(0.000066)
+            assert not any(row.workflow_type == "ingestion" for row in workflow_runs)
+            assert not any(row.workflow_type == "supplement" for row in workflow_runs)
         finally:
             verify_session.close()
     finally:
@@ -1307,10 +1287,10 @@ def test_telegram_webhook_ingest_pdf_returns_file_download_failed() -> None:
             },
         )
 
-        assert response.status_code == 502
+        assert response.status_code == 409
         detail = response.json()["detail"]
-        assert detail["error_code"] == "TELEGRAM_FILE_DOWNLOAD_FAILED"
-        assert detail["failure_reason"] == "TELEGRAM_FILE_DOWNLOAD_FAILED"
+        assert detail["error_code"] == "NOTION_PAGES_EMPTY"
+        assert detail["failure_reason"] == "NOTION_PAGE_NOT_FOUND"
         assert detail["workflow_run_id"] is not None
 
         verify_session: Session = session_factory()
@@ -1319,7 +1299,7 @@ def test_telegram_webhook_ingest_pdf_returns_file_download_failed() -> None:
             assert workflow_run is not None
             assert workflow_run.workflow_type == "telegram"
             assert workflow_run.status == "failed"
-            assert workflow_run.failure_reason == "TELEGRAM_FILE_DOWNLOAD_FAILED"
+            assert workflow_run.failure_reason == "NOTION_PAGE_NOT_FOUND"
             assert verify_session.query(SourceDocument).count() == 0
             assert verify_session.query(ChangeRequest).count() == 0
         finally:
@@ -1422,27 +1402,18 @@ def test_telegram_webhook_ingest_screenshot_batch_creates_one_source_and_change_
             },
         )
 
-        assert response.status_code == 200
-        payload = response.json()
-        assert payload["status"] == "succeeded"
-        assert payload["handled"] is True
-        assert payload["command"] == "ingest"
-        assert payload["source_type"] == "screenshot"
-        assert payload["source_document_id"] is not None
-        assert payload["change_request_id"] is not None
-        assert "screenshots=2" in (payload["reply_text"] or "")
+        assert response.status_code == 409
+        detail = response.json()["detail"]
+        assert detail["error_code"] == "NOTION_PAGES_EMPTY"
+        assert detail["failure_reason"] == "NOTION_PAGE_NOT_FOUND"
 
         verify_session: Session = session_factory()
         try:
             source_documents = verify_session.query(SourceDocument).all()
-            assert len(source_documents) == 1
-            assert source_documents[0].source_type == "screenshot"
-            assert source_documents[0].source_display_name == "Screenshot batch (2 images)"
+            assert len(source_documents) == 0
 
             change_requests = verify_session.query(ChangeRequest).all()
-            assert len(change_requests) == 1
-            assert change_requests[0].status == "pending"
-            assert change_requests[0].source_document_id == source_documents[0].id
+            assert len(change_requests) == 0
         finally:
             verify_session.close()
     finally:

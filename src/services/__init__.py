@@ -61,6 +61,16 @@ from src.services.telegram_update_idempotency import (
     TelegramUpdateIdempotencyError,
     TelegramUpdateIdempotencyService,
 )
+from src.services.telegram_session_store import (
+    TELEGRAM_CALLBACK_TTL_SECONDS,
+    TELEGRAM_UPLOAD_SESSION_TTL_SECONDS,
+    InMemoryTelegramSessionStore,
+    RedisTelegramSessionStore,
+    TelegramCallbackAction,
+    TelegramSessionStore,
+    TelegramUploadAttachment,
+    TelegramUploadSession,
+)
 from src.services.api_idempotency import (
     API_IDEMPOTENCY_FAILED,
     API_IDEMPOTENCY_RUNNING,
@@ -142,6 +152,14 @@ __all__ = [
     "TelegramUpdateClaim",
     "TelegramUpdateIdempotencyError",
     "TelegramUpdateIdempotencyService",
+    "TELEGRAM_CALLBACK_TTL_SECONDS",
+    "TELEGRAM_UPLOAD_SESSION_TTL_SECONDS",
+    "InMemoryTelegramSessionStore",
+    "RedisTelegramSessionStore",
+    "TelegramCallbackAction",
+    "TelegramSessionStore",
+    "TelegramUploadAttachment",
+    "TelegramUploadSession",
     "API_IDEMPOTENCY_FAILED",
     "API_IDEMPOTENCY_RUNNING",
     "API_IDEMPOTENCY_SUCCEEDED",

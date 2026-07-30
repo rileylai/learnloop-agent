@@ -7,10 +7,13 @@ import sys
 import textwrap
 
 import fakeredis
-from rq import Queue
+from rq import Queue, SimpleWorker
 from rq.utils import import_attribute
+from rq.worker import SpawnWorker, Worker
 
+from src.orchestrators.telegram_gateway_orchestrator import TelegramGatewayResult
 from src.queue import RQQueueClient, get_callable_import_path
+import src.worker.telegram as telegram_worker
 from src.worker.telegram import (
     TELEGRAM_WEBHOOK_JOB_PATH,
     process_telegram_webhook_job,
@@ -19,6 +22,12 @@ from src.worker.telegram import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKER_SCRIPT = REPO_ROOT / "scripts" / "run_worker.py"
+
+
+def _worker_script_namespace() -> dict[str, object]:
+    import runpy
+
+    return runpy.run_path(str(WORKER_SCRIPT), run_name="worker_policy_test")
 
 
 def _subprocess_environment() -> dict[str, str]:
@@ -94,6 +103,31 @@ def test_worker_startup_validates_import_before_redis_requirement(
     assert "Invalid attribute name" not in result.stderr
 
 
+def test_darwin_uses_spawn_worker() -> None:
+    select_worker_class = _worker_script_namespace()["select_worker_class"]
+
+    assert select_worker_class(system_name="Darwin", requested="auto") is SpawnWorker
+    assert select_worker_class(system_name="Darwin", requested="spawn") is SpawnWorker
+
+
+def test_linux_uses_standard_worker() -> None:
+    select_worker_class = _worker_script_namespace()["select_worker_class"]
+
+    assert select_worker_class(system_name="Linux", requested="auto") is Worker
+    assert select_worker_class(system_name="Linux", requested="worker") is Worker
+
+
+def test_darwin_rejects_fork_worker_override() -> None:
+    select_worker_class = _worker_script_namespace()["select_worker_class"]
+
+    try:
+        select_worker_class(system_name="Darwin", requested="worker")
+    except ValueError as exc:
+        assert "disabled on macOS" in str(exc)
+    else:
+        raise AssertionError("Darwin must not select the fork-based Worker")
+
+
 def test_rq_import_attribute_resolves_canonical_worker_path() -> None:
     resolved = import_attribute(TELEGRAM_WEBHOOK_JOB_PATH)
 
@@ -116,3 +150,70 @@ def test_enqueue_path_matches_actual_worker_callable() -> None:
     assert job.func_name == TELEGRAM_WEBHOOK_JOB_PATH
     assert enqueued.function_name == TELEGRAM_WEBHOOK_JOB_PATH
     assert import_attribute(job.func_name) is process_telegram_webhook_job
+
+
+def test_rq_job_resolves_and_enters_gateway_stub(monkeypatch) -> None:
+    class StubSession:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class StubGateway:
+        def __init__(self) -> None:
+            self.received = None
+
+        async def handle_claimed_webhook(self, **kwargs):
+            self.received = kwargs
+            return TelegramGatewayResult(
+                workflow_run_id=None,
+                status="running",
+                handled=False,
+                command="/help",
+                reply_text=None,
+                telegram_message_id=None,
+                skipped_reason="STUB",
+                source_document_id=None,
+                change_request_id=None,
+                source_type=None,
+                target_notion_page_id=None,
+                qa_workflow_run_id=None,
+                insufficient_info=None,
+                citations=[],
+                review_workflow_run_id=None,
+                review_action=None,
+                change_request_status=None,
+            )
+
+    session = StubSession()
+    gateway = StubGateway()
+    monkeypatch.setattr(
+        telegram_worker,
+        "get_db_session_factory",
+        lambda: (lambda: session),
+    )
+    monkeypatch.setattr(
+        telegram_worker,
+        "build_telegram_gateway_orchestrator",
+        lambda **_: gateway,
+    )
+
+    connection = fakeredis.FakeRedis()
+    enqueued = RQQueueClient(connection=connection).enqueue(
+        queue_name="telegram",
+        function=process_telegram_webhook_job,
+        args=(8011, "555", "/help", None, None, [], "gateway-stub-test"),
+    )
+    SimpleWorker(
+        [Queue(name="telegram", connection=connection)],
+        connection=connection,
+    ).work(burst=True)
+
+    job = Queue(name="telegram", connection=connection).fetch_job(enqueued.job_id)
+    assert job is not None
+    assert job.is_finished
+    assert job.return_value()["status"] == "running"
+    assert gateway.received is not None
+    assert gateway.received["update_id"] == 8011
+    assert gateway.received["text"] == "/help"
+    assert session.closed is True

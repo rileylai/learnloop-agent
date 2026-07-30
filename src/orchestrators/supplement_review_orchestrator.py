@@ -101,6 +101,101 @@ class SupplementReviewOrchestrator:
             request_workflow_id=request_workflow_id,
         )
 
+    def change_target(
+        self,
+        *,
+        change_request_id: int,
+        target_notion_page_id: str,
+        reviewer: Optional[str],
+        request_workflow_id: str,
+    ) -> SupplementReviewResult:
+        if change_request_id <= 0 or not target_notion_page_id.strip():
+            raise SupplementReviewError(
+                error_code="INVALID_ARGUMENT",
+                message="change_request_id and target_notion_page_id are required",
+                http_status_code=HTTPStatus.BAD_REQUEST,
+            )
+        workflow_run = self._workflow_run_service.start_workflow(
+            workflow_type="supplement",
+            metadata_json=json.dumps(
+                {
+                    "operation": "change_pending_target",
+                    "change_request_id": change_request_id,
+                    "reviewer": reviewer,
+                    "request_workflow_id": request_workflow_id,
+                },
+                sort_keys=True,
+            ),
+        )
+        try:
+            page = self._notion_page_repository.get_by_notion_page_id(
+                target_notion_page_id.strip()
+            )
+            if page is None:
+                raise SupplementReviewError(
+                    error_code="NOTION_PAGE_NOT_FOUND",
+                    message="The selected Notion page is not indexed.",
+                    http_status_code=HTTPStatus.NOT_FOUND,
+                    failure_reason="NOTION_PAGE_NOT_FOUND",
+                )
+            with self._unit_of_work_factory() as unit_of_work:
+                updated = unit_of_work.change_requests.update_pending_target(
+                    change_request_id,
+                    target_notion_page_id=int(page.id),
+                )
+                if updated is None:
+                    raise SupplementReviewError(
+                        error_code="CHANGE_REQUEST_NOT_FOUND",
+                        message="Change request is not found.",
+                        http_status_code=HTTPStatus.NOT_FOUND,
+                        failure_reason="CHANGE_REQUEST_NOT_FOUND",
+                    )
+                if updated.status.strip().lower() != CHANGE_REQUEST_STATUS_PENDING:
+                    raise SupplementReviewError(
+                        error_code="INVALID_STATE_TRANSITION",
+                        message="Only pending proposals can change target.",
+                        http_status_code=HTTPStatus.CONFLICT,
+                        failure_reason="INVALID_STATE_TRANSITION",
+                    )
+                result_id = int(updated.id)
+                result_status = updated.status
+            self._workflow_run_service.mark_workflow_succeeded(
+                workflow_run.id,
+                metadata_json=json.dumps(
+                    {
+                        "operation": "change_pending_target",
+                        "change_request_id": result_id,
+                        "change_request_status": result_status,
+                    },
+                    sort_keys=True,
+                ),
+            )
+            return SupplementReviewResult(
+                workflow_run_id=workflow_run.id,
+                status="succeeded",
+                change_request_id=result_id,
+                change_request_status=result_status,
+                review_action="change_target",
+                reviewer=reviewer,
+                reason=None,
+            )
+        except WorkflowRunAuditUpdateError:
+            raise
+        except SupplementReviewError as exc:
+            self._mark_failed_workflow(
+                workflow_run_id=workflow_run.id,
+                failure_reason=exc.failure_reason,
+                error_code=exc.error_code,
+                review_action="change_target",
+            )
+            raise SupplementReviewError(
+                error_code=exc.error_code,
+                message=exc.message,
+                http_status_code=exc.http_status_code,
+                failure_reason=exc.failure_reason,
+                workflow_run_id=workflow_run.id,
+            ) from exc
+
     async def reject_change_request(
         self,
         *,

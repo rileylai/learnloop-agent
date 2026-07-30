@@ -88,6 +88,29 @@ Telegram review policy:
 - Telegram `/accept` remains the human acceptance event and may append only
   after the existing target and pending-state checks pass.
 
+Telegram ingestion session policy:
+- The primary upload flow never asks the user to type a Notion UUID. It stores
+  a short-lived upload session in Redis, keyed with both Telegram chat id and
+  user id, and requires a fresh upload after TTL expiry.
+- A media group is aggregated by `media_group_id` and deduplicated by Telegram
+  file identity. Settle, target selection, and preview delivery use atomic
+  claims so retries cannot repeat OCR, proposal creation, or preview messages.
+- Inline callback data contains only an opaque short-lived action token. The
+  Redis mapping restores the canonical external Notion page id and hierarchy
+  path after re-checking chat/user ownership; canonical ids never move into
+  the UI short-number mapping or replace backend target identity.
+- Parent and child pages are independent selectable targets. A target-aware
+  pending proposal is created only after one page is selected.
+- An unexpired session with no media, an expired session, a cross-user lookup,
+  or an invalid callback fails closed with a clear error. No stale upload is
+  guessed or borrowed from another chat/user.
+- Inline Accept is only a deliberate user callback. It delegates to the
+  existing `SupplementReviewOrchestrator`, allowed-chat checks, pending/target
+  checks, append-only `AI Supplement Zone` policy, and immediate re-index
+  guardrails. No worker, callback resolver, or preview path auto-accepts.
+- A proposal without a target must not display an Accept prompt and remains
+  rejected by the existing accept guardrail until a valid target is set.
+
 ## Manual Notion Edits
 Users may manually edit Notion because Notion is the source of truth.
 Valid user actions include:

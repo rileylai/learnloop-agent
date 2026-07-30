@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from rq import Queue, Retry
@@ -52,3 +53,43 @@ class RQQueueClient(QueueClient):
             return bool(self._connection.ping())
         except Exception:
             return False
+
+    def enqueue_in(
+        self,
+        *,
+        queue_name: str,
+        function: Callable[..., Any],
+        seconds: int,
+        args: Tuple[Any, ...] = (),
+        kwargs: Optional[Dict[str, Any]] = None,
+        description: Optional[str] = None,
+        retry_policy: Optional[QueueRetryPolicy] = None,
+    ) -> EnqueuedJob:
+        if seconds < 0:
+            raise ValueError("seconds must be non-negative")
+        queue = Queue(name=queue_name, connection=self._connection)
+        function_path = get_callable_import_path(function)
+        enqueue_kwargs: Dict[str, Any] = {
+            "description": description,
+            "scheduled_time": datetime.now(timezone.utc) + timedelta(seconds=seconds),
+        }
+        if retry_policy is not None and retry_policy.max_retries:
+            enqueue_kwargs["retry"] = Retry(
+                max=retry_policy.max_retries,
+                interval=list(retry_policy.retry_intervals),
+            )
+        job = queue.enqueue_at(
+            enqueue_kwargs.pop("scheduled_time"),
+            function,
+            *args,
+            **enqueue_kwargs,
+            **(kwargs or {}),
+        )
+        return EnqueuedJob(
+            job_id=job.id,
+            queue_name=queue_name,
+            function_name=job.func_name or function_path,
+            args=args,
+            kwargs=kwargs or {},
+            retry_policy=retry_policy,
+        )

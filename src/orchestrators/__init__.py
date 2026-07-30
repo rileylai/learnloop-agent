@@ -74,6 +74,7 @@ from src.orchestrators.supplement_query_orchestrator import (
     SupplementTargetResult,
 )
 from src.orchestrators.telegram_gateway_orchestrator import (
+    TelegramCallbackAttachment,
     TelegramGatewayError,
     TelegramGatewayOrchestrator,
     TelegramGatewayResult,
@@ -167,6 +168,7 @@ __all__ = [
     "SupplementReviewItemResult",
     "SupplementTargetResult",
     "TelegramGatewayError",
+    "TelegramCallbackAttachment",
     "TelegramGatewayOrchestrator",
     "TelegramGatewayResult",
     "TelegramDocumentAttachment",

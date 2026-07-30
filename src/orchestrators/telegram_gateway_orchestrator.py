@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import shlex
+import uuid
 from dataclasses import asdict, dataclass
 from http import HTTPStatus
-from typing import Optional
+from typing import Any, Optional
 
 from src.observability.redaction import sanitize_sensitive_text
 from src.queue import QueueClient, QueueRetryPolicy, get_callable_import_path
@@ -57,6 +59,13 @@ class TelegramGatewayResult:
     review_workflow_run_id: Optional[int]
     review_action: Optional[str]
     change_request_status: Optional[str]
+    target_set: bool = False
+
+
+@dataclass
+class TelegramCallbackAttachment:
+    callback_query_id: str
+    callback_data: str
 
 
 class TelegramGatewayError(Exception):
@@ -111,6 +120,10 @@ class TelegramGatewayOrchestrator:
         document: Optional[TelegramDocumentAttachment],
         photos: list[TelegramPhotoAttachment],
         request_workflow_id: str,
+        user_id: Optional[str] = None,
+        message_id: Optional[int] = None,
+        media_group_id: Optional[str] = None,
+        callback: Optional[TelegramCallbackAttachment] = None,
     ) -> TelegramGatewayResult:
         self._require_allowed_chat(chat_id)
         claim = self._claim_update(update_id)
@@ -124,6 +137,10 @@ class TelegramGatewayOrchestrator:
             caption=caption,
             document=document,
             photos=photos,
+            user_id=user_id,
+            message_id=message_id,
+            media_group_id=media_group_id,
+            callback=callback,
             request_workflow_id=request_workflow_id,
         )
 
@@ -137,6 +154,10 @@ class TelegramGatewayOrchestrator:
         document: Optional[TelegramDocumentAttachment],
         photos: list[TelegramPhotoAttachment],
         request_workflow_id: str,
+        user_id: Optional[str] = None,
+        message_id: Optional[int] = None,
+        media_group_id: Optional[str] = None,
+        callback: Optional[TelegramCallbackAttachment] = None,
     ) -> TelegramGatewayResult:
         """Process work after the API route has claimed the update ledger."""
 
@@ -148,6 +169,10 @@ class TelegramGatewayOrchestrator:
             caption=caption,
             document=document,
             photos=photos,
+            user_id=user_id,
+            message_id=message_id,
+            media_group_id=media_group_id,
+            callback=callback,
             request_workflow_id=request_workflow_id,
         )
 
@@ -161,6 +186,10 @@ class TelegramGatewayOrchestrator:
         document: Optional[TelegramDocumentAttachment],
         photos: list[TelegramPhotoAttachment],
         request_workflow_id: str,
+        user_id: Optional[str] = None,
+        message_id: Optional[int] = None,
+        media_group_id: Optional[str] = None,
+        callback: Optional[TelegramCallbackAttachment] = None,
     ) -> TelegramGatewayResult:
         """Claim and enqueue a Telegram update, returning without long work."""
 
@@ -177,6 +206,10 @@ class TelegramGatewayOrchestrator:
                 caption=caption,
                 document=document,
                 photos=photos,
+                user_id=user_id,
+                message_id=message_id,
+                media_group_id=media_group_id,
+                callback=callback,
                 request_workflow_id=request_workflow_id,
             )
 
@@ -204,6 +237,10 @@ class TelegramGatewayOrchestrator:
                     asdict(document) if document is not None else None,
                     [asdict(photo) for photo in photos],
                     request_workflow_id,
+                    user_id,
+                    message_id,
+                    media_group_id,
+                    asdict(callback) if callback is not None else None,
                 ),
                 description="Process one Telegram webhook update",
                 retry_policy=retry_policy,
@@ -247,6 +284,10 @@ class TelegramGatewayOrchestrator:
         caption: Optional[str],
         document: Optional[TelegramDocumentAttachment],
         photos: list[TelegramPhotoAttachment],
+        user_id: Optional[str],
+        message_id: Optional[int],
+        media_group_id: Optional[str],
+        callback: Optional[TelegramCallbackAttachment],
         request_workflow_id: str,
     ) -> TelegramGatewayResult:
 
@@ -258,9 +299,19 @@ class TelegramGatewayOrchestrator:
                 caption=caption,
                 document=document,
                 photos=photos,
+                user_id=user_id,
+                message_id=message_id,
+                media_group_id=media_group_id,
+                callback=callback,
                 request_workflow_id=request_workflow_id,
             )
         except TelegramGatewayError as exc:
+            await self._notify_user_of_gateway_error(
+                error=exc,
+                chat_id=chat_id,
+                callback=callback,
+                request_workflow_id=request_workflow_id,
+            )
             self._mark_update_failed(update_id, exc)
             raise
         except WorkflowRunAuditUpdateError as exc:
@@ -304,6 +355,53 @@ class TelegramGatewayOrchestrator:
                 ) from exc
         return result
 
+    async def _notify_user_of_gateway_error(
+        self,
+        *,
+        error: TelegramGatewayError,
+        chat_id: Optional[str],
+        callback: Optional[TelegramCallbackAttachment],
+        request_workflow_id: str,
+    ) -> None:
+        if error.error_code not in {
+            "UPLOAD_SESSION_EXPIRED",
+            "UPLOAD_SESSION_INVALID",
+            "INVALID_CALLBACK",
+            "TELEGRAM_QUEUE_UNAVAILABLE",
+            "EMPTY_UPLOAD",
+        }:
+            return
+        safe_message = sanitize_sensitive_text(error.message)[:190]
+        try:
+            if callback is not None:
+                await self._tool_registry.call_tool(
+                    TELEGRAM_BOT_TOOL_NAME,
+                    context=ToolContext(
+                        workflow_id=request_workflow_id,
+                        metadata={"operation": "telegram_callback_error"},
+                    ),
+                    arguments={
+                        "action": "answer_callback_query",
+                        "callback_query_id": callback.callback_query_id,
+                        "text": safe_message,
+                    },
+                )
+            elif chat_id:
+                await self._tool_registry.call_tool(
+                    TELEGRAM_BOT_TOOL_NAME,
+                    context=ToolContext(
+                        workflow_id=request_workflow_id,
+                        metadata={
+                            "operation": "telegram_error_reply",
+                            "chat_id": chat_id,
+                        },
+                    ),
+                    arguments={"chat_id": chat_id, "text": safe_message},
+                )
+        except Exception:
+            # The original deterministic gateway error remains authoritative.
+            return
+
     async def _handle_new_webhook(
         self,
         *,
@@ -313,6 +411,10 @@ class TelegramGatewayOrchestrator:
         caption: Optional[str],
         document: Optional[TelegramDocumentAttachment],
         photos: list[TelegramPhotoAttachment],
+        user_id: Optional[str],
+        message_id: Optional[int],
+        media_group_id: Optional[str],
+        callback: Optional[TelegramCallbackAttachment],
         request_workflow_id: str,
     ) -> TelegramGatewayResult:
         workflow_run = self._workflow_run_service.start_workflow(
@@ -333,11 +435,17 @@ class TelegramGatewayOrchestrator:
         try:
             normalized_text = (text or "").strip()
             normalized_caption = (caption or "").strip()
-            normalized_input_text = normalized_text or normalized_caption
+            normalized_input_text = self._select_command_text(
+                text=normalized_text,
+                caption=normalized_caption,
+            )
             normalized_chat_id = (chat_id or "").strip()
+            normalized_user_id = (user_id or normalized_chat_id).strip()
             has_media = (document is not None) or bool(photos)
 
-            if not normalized_chat_id or (not normalized_input_text and not has_media):
+            if not normalized_chat_id or (
+                not normalized_input_text and not has_media and callback is None
+            ):
                 skipped_reason = "NO_TEXT_MESSAGE"
                 self._workflow_run_service.mark_workflow_succeeded(
                     workflow_run.id,
@@ -371,17 +479,163 @@ class TelegramGatewayOrchestrator:
                 )
 
             command = self._parse_command(normalized_input_text)
+            if command == "start":
+                command = "help"
             source_document_id: Optional[int] = None
             change_request_id: Optional[int] = None
             source_type: Optional[str] = None
             target_notion_page_id: Optional[str] = None
+            target_notion_path: Optional[str] = None
+            target_set = False
             qa_workflow_run_id: Optional[int] = None
             insufficient_info: Optional[bool] = None
             citations: list[str] = []
             review_workflow_run_id: Optional[int] = None
             review_action: Optional[str] = None
             change_request_status: Optional[str] = None
-            if command == "health":
+            reply_markup: Optional[dict[str, Any]] = None
+            callback_query_id: Optional[str] = None
+            ingestion_result = None
+            reply_text = ""
+            if callback is not None:
+                command = "callback"
+                callback_query_id = callback.callback_query_id
+                callback_action = self._resolve_callback_action(
+                    callback=callback,
+                    chat_id=normalized_chat_id,
+                    user_id=normalized_user_id,
+                )
+                if callback_action.action == "select_target":
+                    if self._telegram_ingestion_orchestrator is None:
+                        raise TelegramGatewayError(
+                            error_code="TELEGRAM_INGESTION_NOT_CONFIGURED",
+                            message="Telegram ingestion orchestrator is not configured",
+                            http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                            failure_reason="UNKNOWN_ERROR",
+                        )
+                    target_notion_page_id = callback_action.target_notion_page_id
+                    target_notion_path = callback_action.target_notion_path
+                    if not target_notion_page_id or not target_notion_path:
+                        raise TelegramGatewayError(
+                            error_code="INVALID_CALLBACK",
+                            message="This page selection is invalid. Please upload again.",
+                            http_status_code=HTTPStatus.BAD_REQUEST,
+                            failure_reason="INVALID_ARGUMENT",
+                        )
+                    ingestion_result = await self._telegram_ingestion_orchestrator.handle_target_selection(
+                        session_id=callback_action.session_id,
+                        chat_id=normalized_chat_id,
+                        user_id=normalized_user_id,
+                        target_notion_page_id=target_notion_page_id,
+                        target_notion_path=target_notion_path,
+                        request_workflow_id=request_workflow_id,
+                    )
+                    source_document_id = ingestion_result.source_document_id
+                    change_request_id = ingestion_result.change_request_id
+                    source_type = ingestion_result.source_type
+                    target_set = bool(ingestion_result.target_notion_page_id)
+                    reply_text = ingestion_result.reply_text
+                    if change_request_id is not None:
+                        if ingestion_result.session_id and self._telegram_ingestion_orchestrator.claim_upload_preview(
+                            session_id=ingestion_result.session_id,
+                            chat_id=normalized_chat_id,
+                            user_id=normalized_user_id,
+                        ):
+                            reply_markup = self._build_review_markup(
+                                ingestion_result=ingestion_result,
+                                chat_id=normalized_chat_id,
+                                user_id=normalized_user_id,
+                            )
+                        else:
+                            reply_text = "This proposal is already ready for review."
+                elif callback_action.action in {"accept", "reject"}:
+                    if self._telegram_review_orchestrator is None:
+                        raise TelegramGatewayError(
+                            error_code="TELEGRAM_REVIEW_NOT_CONFIGURED",
+                            message="Telegram review orchestrator is not configured",
+                            http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                            failure_reason="UNKNOWN_ERROR",
+                        )
+                    if callback_action.change_request_id is None:
+                        raise TelegramGatewayError(
+                            error_code="INVALID_CALLBACK",
+                            message="This review action is invalid.",
+                            http_status_code=HTTPStatus.BAD_REQUEST,
+                            failure_reason="INVALID_ARGUMENT",
+                        )
+                    review_command = f"/{callback_action.action} {callback_action.change_request_id}"
+                    review_result = await self._telegram_review_orchestrator.handle_review_command(
+                        command=callback_action.action,
+                        command_text=review_command,
+                        chat_id=normalized_chat_id,
+                        request_workflow_id=request_workflow_id,
+                    )
+                    reply_text = review_result.reply_text
+                    review_workflow_run_id = review_result.review_workflow_run_id
+                    change_request_id = review_result.change_request_id
+                    change_request_status = review_result.change_request_status
+                    review_action = review_result.review_action
+                elif callback_action.action == "change_target":
+                    if self._telegram_page_orchestrator is None:
+                        raise TelegramGatewayError(
+                            error_code="TELEGRAM_PAGES_NOT_CONFIGURED",
+                            message="Telegram page orchestrator is not configured",
+                            http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                            failure_reason="UNKNOWN_ERROR",
+                        )
+                    if callback_action.change_request_id is None:
+                        raise TelegramGatewayError(
+                            error_code="INVALID_CALLBACK",
+                            message="This target action is invalid.",
+                            http_status_code=HTTPStatus.BAD_REQUEST,
+                            failure_reason="INVALID_ARGUMENT",
+                        )
+                    reply_text, reply_markup = self._build_review_target_picker(
+                        change_request_id=callback_action.change_request_id,
+                        chat_id=normalized_chat_id,
+                        user_id=normalized_user_id,
+                    )
+                    change_request_id = callback_action.change_request_id
+                elif callback_action.action == "change_target_select":
+                    if (
+                        self._telegram_review_orchestrator is None
+                        or callback_action.change_request_id is None
+                        or not callback_action.target_notion_page_id
+                    ):
+                        raise TelegramGatewayError(
+                            error_code="INVALID_CALLBACK",
+                            message="This target selection is invalid.",
+                            http_status_code=HTTPStatus.BAD_REQUEST,
+                            failure_reason="INVALID_ARGUMENT",
+                        )
+                    review_result = await self._telegram_review_orchestrator.handle_change_target(
+                        change_request_id=callback_action.change_request_id,
+                        target_notion_page_id=callback_action.target_notion_page_id,
+                        chat_id=normalized_chat_id,
+                        request_workflow_id=request_workflow_id,
+                    )
+                    reply_text = review_result.reply_text
+                    review_workflow_run_id = review_result.review_workflow_run_id
+                    change_request_id = review_result.change_request_id
+                    change_request_status = review_result.change_request_status
+                    review_action = review_result.review_action
+                    target_notion_page_id = callback_action.target_notion_page_id
+                    target_notion_path = callback_action.target_notion_path
+                    target_set = bool(target_notion_page_id)
+                    reply_markup = self._build_review_markup_for_change_request(
+                        change_request_id=int(change_request_id),
+                        session_id=callback_action.session_id,
+                        chat_id=normalized_chat_id,
+                        user_id=normalized_user_id,
+                    )
+                else:
+                    raise TelegramGatewayError(
+                        error_code="INVALID_CALLBACK",
+                        message="This button is no longer valid. Please upload again.",
+                        http_status_code=HTTPStatus.BAD_REQUEST,
+                        failure_reason="INVALID_ARGUMENT",
+                    )
+            elif command == "health":
                 reply_text = self._build_reply_for_command(command)
             elif command == "help":
                 reply_text = self._build_reply_for_command(command)
@@ -439,57 +693,198 @@ class TelegramGatewayOrchestrator:
                         failure_reason="UNKNOWN_ERROR",
                     )
                 command = "ingest"
-                target_notion_page_id = self._parse_ingest_target(
-                    normalized_input_text
-                )
-                ingestion_result = await self._telegram_ingestion_orchestrator.handle_ingest_command(
-                    chat_id=normalized_chat_id,
-                    document=document,
-                    photos=photos,
-                    request_workflow_id=request_workflow_id,
-                    target_notion_page_id=target_notion_page_id,
-                )
-                reply_text = ingestion_result.reply_text
-                source_document_id = ingestion_result.source_document_id
-                change_request_id = ingestion_result.change_request_id
-                source_type = ingestion_result.source_type
-                target_notion_page_id = ingestion_result.target_notion_page_id
+                target_notion_page_id = self._parse_ingest_target(normalized_input_text)
+                if target_notion_page_id is not None and not has_media:
+                    session = self._telegram_ingestion_orchestrator.get_latest_upload(
+                        chat_id=normalized_chat_id,
+                        user_id=normalized_user_id,
+                    )
+                    if session is None:
+                        raise TelegramGatewayError(
+                            error_code="UPLOAD_SESSION_EXPIRED",
+                            message="No unexpired upload session was found. Please upload the file again.",
+                            http_status_code=HTTPStatus.GONE,
+                            failure_reason="UPLOAD_SESSION_EXPIRED",
+                        )
+                    target_page = self._find_page(target_notion_page_id)
+                    if target_page is None:
+                        raise TelegramGatewayError(
+                            error_code="NOTION_PAGE_NOT_FOUND",
+                            message="The selected Notion page is no longer indexed. Use /pages and choose again.",
+                            http_status_code=HTTPStatus.NOT_FOUND,
+                            failure_reason="NOTION_PAGE_NOT_FOUND",
+                        )
+                    ingestion_result = await self._telegram_ingestion_orchestrator.handle_target_selection(
+                        session_id=session.session_id,
+                        chat_id=normalized_chat_id,
+                        user_id=normalized_user_id,
+                        target_notion_page_id=target_page.page_id,
+                        target_notion_path=target_page.notion_path,
+                        request_workflow_id=request_workflow_id,
+                    )
+                elif target_notion_page_id is None and not has_media:
+                    session = self._telegram_ingestion_orchestrator.get_latest_upload(
+                        chat_id=normalized_chat_id,
+                        user_id=normalized_user_id,
+                    )
+                    if session is None:
+                        raise TelegramGatewayError(
+                            error_code="UPLOAD_SESSION_EXPIRED",
+                            message="No unexpired upload session was found. Please upload a PDF or image first.",
+                            http_status_code=HTTPStatus.GONE,
+                            failure_reason="UPLOAD_SESSION_EXPIRED",
+                        )
+                    reply_text, reply_markup = self._build_page_picker(
+                        session_id=session.session_id,
+                        chat_id=normalized_chat_id,
+                        user_id=normalized_user_id,
+                    )
+                    target_notion_page_id = session.target_notion_page_id
+                elif target_notion_page_id is not None:
+                    ingestion_result = await self._telegram_ingestion_orchestrator.handle_ingest_command(
+                        chat_id=normalized_chat_id,
+                        document=document,
+                        photos=photos,
+                        request_workflow_id=request_workflow_id,
+                        target_notion_page_id=target_notion_page_id,
+                    )
+                    target_set = True
+                else:
+                    session_id = self._build_upload_session_id(
+                        update_id=update_id,
+                        message_id=message_id,
+                        media_group_id=media_group_id,
+                    )
+                    session = self._telegram_ingestion_orchestrator.store_upload(
+                        session_id=session_id,
+                        chat_id=normalized_chat_id,
+                        user_id=normalized_user_id,
+                        media_group_id=media_group_id,
+                        document=document,
+                        photos=photos,
+                        command_text=normalized_input_text or None,
+                    )
+                    if media_group_id:
+                        if self._queue_client is None:
+                            raise TelegramGatewayError(
+                                error_code="TELEGRAM_QUEUE_UNAVAILABLE",
+                                message=(
+                                    "Media groups require the Redis/RQ queue; "
+                                    "please try a single PDF or image instead."
+                                ),
+                                http_status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                                failure_reason="TELEGRAM_QUEUE_UNAVAILABLE",
+                            )
+                        if self._telegram_ingestion_orchestrator.claim_upload_settle(
+                            session_id=session.session_id,
+                            chat_id=normalized_chat_id,
+                            user_id=normalized_user_id,
+                        ):
+                            self._schedule_upload_settle(
+                                session_id=session.session_id,
+                                chat_id=normalized_chat_id,
+                                user_id=normalized_user_id,
+                                request_workflow_id=request_workflow_id,
+                            )
+                        if not self._telegram_ingestion_orchestrator.claim_upload_receipt(
+                            session_id=session.session_id,
+                            chat_id=normalized_chat_id,
+                            user_id=normalized_user_id,
+                        ):
+                            reply_text = ""
+                        else:
+                            reply_text = (
+                                f"Received media group ({len(session.attachments)} file(s)). "
+                                "I will group the files, then show target pages."
+                            )
+                    else:
+                        reply_text, reply_markup = self._build_page_picker(
+                            session_id=session.session_id,
+                            chat_id=normalized_chat_id,
+                            user_id=normalized_user_id,
+                        )
+                    target_notion_page_id = session.target_notion_page_id
+                if ingestion_result is not None:
+                    source_document_id = ingestion_result.source_document_id
+                    change_request_id = ingestion_result.change_request_id
+                    source_type = ingestion_result.source_type
+                    target_notion_page_id = ingestion_result.target_notion_page_id
+                    target_notion_path = ingestion_result.target_notion_path
+                    target_set = bool(target_notion_page_id)
+                    if not reply_text:
+                        reply_text = ingestion_result.reply_text
+                    if (
+                        change_request_id is not None
+                        and target_set
+                        and reply_markup is None
+                    ):
+                        reply_markup = self._build_review_markup(
+                            ingestion_result=ingestion_result,
+                            chat_id=normalized_chat_id,
+                            user_id=normalized_user_id,
+                        )
             else:
                 reply_text = self._build_reply_for_command(command)
 
-            tool_result = await self._tool_registry.call_tool(
-                TELEGRAM_BOT_TOOL_NAME,
-                context=ToolContext(
-                    workflow_id=request_workflow_id,
-                    metadata={
-                        "operation": "telegram_reply",
-                        "command": command,
-                        "chat_id": normalized_chat_id,
-                    },
-                ),
-                arguments={
-                    "chat_id": normalized_chat_id,
-                    "text": reply_text,
-                },
-            )
-            if tool_result.is_error:
-                error_code = "UNKNOWN_ERROR"
-                error_message = "Telegram reply failed"
-                if tool_result.error is not None:
-                    error_code = tool_result.error.code
-                    error_message = tool_result.error.message
-                raise TelegramGatewayError(
-                    error_code=error_code,
-                    message=error_message,
-                    http_status_code=self._http_status_for_tool_error(error_code),
-                    failure_reason=self._normalize_failure_reason(error_code),
-                )
-
-            structured_content = tool_result.structured_content or {}
-            raw_message_id = structured_content.get("message_id")
             telegram_message_id: Optional[int] = None
-            if isinstance(raw_message_id, int):
-                telegram_message_id = raw_message_id
+            if callback_query_id is not None:
+                callback_result = await self._tool_registry.call_tool(
+                    TELEGRAM_BOT_TOOL_NAME,
+                    context=ToolContext(
+                        workflow_id=request_workflow_id,
+                        metadata={
+                            "operation": "telegram_callback_answer",
+                            "chat_id": normalized_chat_id,
+                        },
+                    ),
+                    arguments={
+                        "action": "answer_callback_query",
+                        "callback_query_id": callback_query_id,
+                    },
+                )
+                if callback_result.is_error:
+                    error_code = callback_result.error.code if callback_result.error else "UNKNOWN_ERROR"
+                    raise TelegramGatewayError(
+                        error_code=error_code,
+                        message="Telegram callback acknowledgement failed",
+                        http_status_code=self._http_status_for_tool_error(error_code),
+                        failure_reason=self._normalize_failure_reason(error_code),
+                    )
+
+            if reply_text:
+                tool_result = await self._tool_registry.call_tool(
+                    TELEGRAM_BOT_TOOL_NAME,
+                    context=ToolContext(
+                        workflow_id=request_workflow_id,
+                        metadata={
+                            "operation": "telegram_reply",
+                            "command": command,
+                            "chat_id": normalized_chat_id,
+                        },
+                    ),
+                    arguments={
+                        "chat_id": normalized_chat_id,
+                        "text": reply_text,
+                        **({"reply_markup": reply_markup} if reply_markup else {}),
+                    },
+                )
+                if tool_result.is_error:
+                    error_code = "UNKNOWN_ERROR"
+                    error_message = "Telegram reply failed"
+                    if tool_result.error is not None:
+                        error_code = tool_result.error.code
+                        error_message = tool_result.error.message
+                    raise TelegramGatewayError(
+                        error_code=error_code,
+                        message=error_message,
+                        http_status_code=self._http_status_for_tool_error(error_code),
+                        failure_reason=self._normalize_failure_reason(error_code),
+                    )
+
+                structured_content = tool_result.structured_content or {}
+                raw_message_id = structured_content.get("message_id")
+                if isinstance(raw_message_id, int):
+                    telegram_message_id = raw_message_id
 
             self._workflow_run_service.mark_workflow_succeeded(
                 workflow_run.id,
@@ -503,7 +898,7 @@ class TelegramGatewayOrchestrator:
                         "source_document_id": source_document_id,
                         "change_request_id": change_request_id,
                         "source_type": source_type,
-                        "target_notion_page_id": target_notion_page_id,
+                        "target_set": target_set,
                         "qa_workflow_run_id": qa_workflow_run_id,
                         "insufficient_info": insufficient_info,
                         "citation_count": len(citations),
@@ -533,6 +928,7 @@ class TelegramGatewayOrchestrator:
                 review_workflow_run_id=review_workflow_run_id,
                 review_action=review_action,
                 change_request_status=change_request_status,
+                target_set=target_set,
             )
         except WorkflowRunAuditUpdateError:
             raise
@@ -709,7 +1105,86 @@ class TelegramGatewayOrchestrator:
             },
         )
 
+    async def settle_upload_session(
+        self,
+        *,
+        session_id: str,
+        chat_id: str,
+        user_id: str,
+        request_workflow_id: str,
+    ) -> None:
+        if self._telegram_ingestion_orchestrator is None:
+            raise TelegramGatewayError(
+                error_code="TELEGRAM_INGESTION_NOT_CONFIGURED",
+                message="Telegram ingestion orchestrator is not configured",
+                http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                failure_reason="UNKNOWN_ERROR",
+            )
+        session = self._telegram_ingestion_orchestrator.get_upload(
+            session_id=session_id,
+            chat_id=chat_id,
+            user_id=user_id,
+        )
+        if session is None:
+            raise TelegramGatewayError(
+                error_code="UPLOAD_SESSION_EXPIRED",
+                message="This media group session expired before it could be settled.",
+                http_status_code=HTTPStatus.GONE,
+                failure_reason="UPLOAD_SESSION_EXPIRED",
+            )
+        if not session.attachments:
+            self._telegram_ingestion_orchestrator.fail_upload(
+                session_id=session_id,
+                chat_id=chat_id,
+                user_id=user_id,
+                failure_reason="EMPTY_UPLOAD",
+            )
+            raise TelegramGatewayError(
+                error_code="EMPTY_UPLOAD",
+                message="No media was found in this upload session. Please upload the file again.",
+                http_status_code=HTTPStatus.BAD_REQUEST,
+                failure_reason="EMPTY_UPLOAD",
+            )
+        if not self._telegram_ingestion_orchestrator.claim_upload_picker(
+            session_id=session_id,
+            chat_id=chat_id,
+            user_id=user_id,
+        ):
+            return
+        reply_text, reply_markup = self._build_page_picker(
+            session_id=session_id,
+            chat_id=chat_id,
+            user_id=user_id,
+            claim_picker=False,
+        )
+        tool_result = await self._tool_registry.call_tool(
+            TELEGRAM_BOT_TOOL_NAME,
+            context=ToolContext(
+                workflow_id=request_workflow_id,
+                metadata={
+                    "operation": "telegram_media_group_picker",
+                    "chat_id": chat_id,
+                    "session_id": session_id,
+                },
+            ),
+            arguments={
+                "chat_id": chat_id,
+                "text": reply_text,
+                "reply_markup": reply_markup,
+            },
+        )
+        if tool_result.is_error:
+            error_code = tool_result.error.code if tool_result.error else "TELEGRAM_SEND_FAILED"
+            raise TelegramGatewayError(
+                error_code=error_code,
+                message="Telegram page picker could not be sent.",
+                http_status_code=self._http_status_for_tool_error(error_code),
+                failure_reason=self._normalize_failure_reason(error_code),
+            )
+
     def _parse_command(self, text: str) -> str:
+        if not text.strip():
+            return "unknown"
         command_text = text.split(maxsplit=1)[0].strip().lower()
         if command_text.startswith("/"):
             command_text = command_text[1:]
@@ -717,11 +1192,261 @@ class TelegramGatewayOrchestrator:
             return "unknown"
         return command_text
 
+    def _select_command_text(self, *, text: str, caption: str) -> str:
+        for candidate in (text, caption):
+            if candidate.startswith("/"):
+                return candidate
+        return text or caption
+
+    def _build_upload_session_id(
+        self,
+        *,
+        update_id: Optional[int],
+        message_id: Optional[int],
+        media_group_id: Optional[str],
+    ) -> str:
+        if media_group_id:
+            digest = hashlib.sha256(media_group_id.encode("utf-8")).hexdigest()[:24]
+            return f"group-{digest}"
+        if update_id is not None:
+            return f"single-update-{update_id}"
+        if message_id is not None:
+            return f"single-message-{message_id}"
+        return f"single-{uuid.uuid4().hex}"
+
+    def _find_page(self, page_id: str):
+        if self._telegram_page_orchestrator is None:
+            return None
+        pages = self._telegram_page_orchestrator.list_pages().pages
+        return next((page for page in pages if page.page_id == page_id), None)
+
+    def _resolve_callback_action(
+        self,
+        *,
+        callback: TelegramCallbackAttachment,
+        chat_id: str,
+        user_id: str,
+    ):
+        raw_data = callback.callback_data.strip()
+        if not raw_data.startswith("ll:"):
+            raise TelegramGatewayError(
+                error_code="INVALID_CALLBACK",
+                message="This button is invalid or expired. Please upload the file again.",
+                http_status_code=HTTPStatus.BAD_REQUEST,
+                failure_reason="INVALID_ARGUMENT",
+            )
+        token = raw_data[3:].strip()
+        if not token or self._telegram_ingestion_orchestrator is None:
+            raise TelegramGatewayError(
+                error_code="INVALID_CALLBACK",
+                message="This button is invalid or expired. Please upload the file again.",
+                http_status_code=HTTPStatus.BAD_REQUEST,
+                failure_reason="INVALID_ARGUMENT",
+            )
+        action = self._telegram_ingestion_orchestrator.resolve_callback(
+            token=token,
+            chat_id=chat_id,
+            user_id=user_id,
+        )
+        if action is None:
+            raise TelegramGatewayError(
+                error_code="INVALID_CALLBACK",
+                message="This button is invalid or expired. Please upload the file again.",
+                http_status_code=HTTPStatus.BAD_REQUEST,
+                failure_reason="INVALID_ARGUMENT",
+            )
+        return action
+
+    def _build_page_picker(
+        self,
+        *,
+        session_id: str,
+        chat_id: str,
+        user_id: str,
+        claim_picker: bool = True,
+    ) -> tuple[str, dict[str, Any]]:
+        if self._telegram_page_orchestrator is None or self._telegram_ingestion_orchestrator is None:
+            raise TelegramGatewayError(
+                error_code="TELEGRAM_PAGES_NOT_CONFIGURED",
+                message="Telegram page picker is not configured",
+                http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                failure_reason="UNKNOWN_ERROR",
+            )
+        pages = self._telegram_page_orchestrator.list_pages().pages
+        if not pages:
+            raise TelegramGatewayError(
+                error_code="NOTION_PAGES_EMPTY",
+                message="No indexed Notion pages are available. Index Notion pages, then upload again.",
+                http_status_code=HTTPStatus.CONFLICT,
+                failure_reason="NOTION_PAGE_NOT_FOUND",
+            )
+        buttons = []
+        for index, page in enumerate(pages, start=1):
+            token = self._telegram_ingestion_orchestrator.create_callback(
+                session_id=session_id,
+                chat_id=chat_id,
+                user_id=user_id,
+                action="select_target",
+                target_notion_page_id=page.page_id,
+                target_notion_path=page.notion_path,
+            )
+            buttons.append(
+                {
+                    "text": f"{index}. {page.title} · {page.notion_path}",
+                    "callback_data": f"ll:{token}",
+                }
+            )
+        if claim_picker:
+            self._telegram_ingestion_orchestrator.claim_upload_picker(
+                session_id=session_id,
+                chat_id=chat_id,
+                user_id=user_id,
+            )
+        return (
+            "File received. Choose the Notion target page. Parent and child pages are separate targets.",
+            {"inline_keyboard": [[button] for button in buttons]},
+        )
+
+    def _build_review_markup(
+        self,
+        *,
+        ingestion_result,
+        chat_id: str,
+        user_id: str,
+    ) -> dict[str, Any]:
+        if self._telegram_ingestion_orchestrator is None or ingestion_result.change_request_id is None:
+            return {}
+        return self._build_review_markup_for_change_request(
+            change_request_id=int(ingestion_result.change_request_id),
+            session_id=ingestion_result.session_id,
+            chat_id=chat_id,
+            user_id=user_id,
+        )
+
+    def _build_review_markup_for_change_request(
+        self,
+        *,
+        change_request_id: int,
+        session_id: Optional[str],
+        chat_id: str,
+        user_id: str,
+    ) -> dict[str, Any]:
+        if self._telegram_ingestion_orchestrator is None:
+            return {}
+        accept_token = self._telegram_ingestion_orchestrator.create_callback(
+            session_id=session_id or f"proposal-{change_request_id}",
+            chat_id=chat_id,
+            user_id=user_id,
+            action="accept",
+            change_request_id=change_request_id,
+        )
+        reject_token = self._telegram_ingestion_orchestrator.create_callback(
+            session_id=session_id or f"proposal-{change_request_id}",
+            chat_id=chat_id,
+            user_id=user_id,
+            action="reject",
+            change_request_id=change_request_id,
+        )
+        change_target_token = self._telegram_ingestion_orchestrator.create_callback(
+            session_id=session_id or f"proposal-{change_request_id}",
+            chat_id=chat_id,
+            user_id=user_id,
+            action="change_target",
+            change_request_id=change_request_id,
+        )
+        return {
+            "inline_keyboard": [
+                [
+                    {"text": "Accept", "callback_data": f"ll:{accept_token}"},
+                    {"text": "Reject", "callback_data": f"ll:{reject_token}"},
+                ],
+                [{"text": "Change target", "callback_data": f"ll:{change_target_token}"}],
+            ]
+        }
+
+    def _build_review_target_picker(
+        self,
+        *,
+        change_request_id: int,
+        chat_id: str,
+        user_id: str,
+    ) -> tuple[str, dict[str, Any]]:
+        pages = self._telegram_page_orchestrator.list_pages().pages if self._telegram_page_orchestrator else []
+        if not pages or self._telegram_ingestion_orchestrator is None:
+            raise TelegramGatewayError(
+                error_code="NOTION_PAGES_EMPTY",
+                message="No indexed Notion pages are available.",
+                http_status_code=HTTPStatus.CONFLICT,
+                failure_reason="NOTION_PAGE_NOT_FOUND",
+            )
+        buttons = []
+        session_id = f"proposal-{change_request_id}"
+        for index, page in enumerate(pages, start=1):
+            token = self._telegram_ingestion_orchestrator.create_callback(
+                session_id=session_id,
+                chat_id=chat_id,
+                user_id=user_id,
+                action="change_target_select",
+                change_request_id=change_request_id,
+                target_notion_page_id=page.page_id,
+                target_notion_path=page.notion_path,
+            )
+            buttons.append(
+                {
+                    "text": f"{index}. {page.title} · {page.notion_path}",
+                    "callback_data": f"ll:{token}",
+                }
+            )
+        return (
+            "Choose a new target page. The pending proposal remains review-only.",
+            {"inline_keyboard": [[button] for button in buttons]},
+        )
+
+    def _schedule_upload_settle(
+        self,
+        *,
+        session_id: str,
+        chat_id: str,
+        user_id: str,
+        request_workflow_id: str,
+    ) -> None:
+        if self._queue_client is None:
+            raise TelegramGatewayError(
+                error_code="TELEGRAM_QUEUE_UNAVAILABLE",
+                message="Media-group settling requires the Redis/RQ queue.",
+                http_status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                failure_reason="TELEGRAM_QUEUE_UNAVAILABLE",
+            )
+        from src.worker.telegram import process_telegram_upload_settle_job
+
+        self._queue_client.enqueue_in(
+            queue_name="telegram",
+            function=process_telegram_upload_settle_job,
+            seconds=1,
+            args=(session_id, chat_id, user_id, request_workflow_id),
+            description="Settle one Telegram media group upload session",
+            retry_policy=QueueRetryPolicy(max_retries=2, retry_intervals=(1, 3)),
+        )
+
     def _build_reply_for_command(self, command: str) -> str:
         if command == "health":
             return "LearnLoop Agent status: ok"
         if command == "help":
-            return "Available commands: /help, /health, /ingest, /ask, /accept, /reject"
+            return (
+                "LearnLoop Agent commands:\n"
+                "/start or /help — show this guide\n"
+                "/pages — list indexed Notion pages with full hierarchy paths\n"
+                "/ingest — upload a PDF or image, then choose a target page button\n"
+                "/ingest --page <external_page_id> — text fallback for automation\n"
+                "/ask <question> — ask about indexed notes; optional --page/--section scopes\n"
+                "/accept <proposal_id> — explicitly accept one pending proposal\n"
+                "/reject <proposal_id> <reason> — reject without a Notion write\n"
+                "/health — check bot status\n\n"
+                "You do not need to type a Notion UUID for ingestion. "
+                "After upload, choose the parent or child page from the buttons. "
+                "Accept is always an explicit human action; proposals without a "
+                "target cannot be accepted."
+            )
         return "Unsupported command. Use /help."
 
     def _parse_ingest_target(self, command_text: str) -> Optional[str]:

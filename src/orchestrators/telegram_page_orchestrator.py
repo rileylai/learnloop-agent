@@ -32,6 +32,7 @@ class TelegramPageOrchestrator:
             )
             for page in self._notion_page_repository.list_pages(limit=limit)
         ]
+        pages.sort(key=lambda item: (item.notion_path, item.title, item.page_id))
         if not pages:
             return TelegramPagesResult(
                 reply_text=(
@@ -46,5 +47,8 @@ class TelegramPageOrchestrator:
             f"- {page.page_id} | {page.title} | {page.notion_path}"
             for page in pages
         )
-        lines.append("Use /ingest --page <page_id> with a PDF or screenshot.")
+        lines.append(
+            "For ingestion, upload a PDF or image and choose a page button; "
+            "parent and child pages are independent targets."
+        )
         return TelegramPagesResult(reply_text="\n".join(lines), pages=pages)

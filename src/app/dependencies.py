@@ -34,6 +34,9 @@ from src.services import (
     ReadinessService,
     TrustBoundaryError,
     TrustBoundaryService,
+    InMemoryTelegramSessionStore,
+    RedisTelegramSessionStore,
+    TelegramSessionStore,
     WorkflowObservabilityService,
 )
 from src.tools import (
@@ -99,6 +102,18 @@ def get_trust_boundary() -> TrustBoundaryService:
         telegram_webhook_secret=settings.telegram_webhook_secret,
         telegram_allowed_chat_ids=settings.telegram_allowed_chat_ids,
     )
+
+
+@lru_cache(maxsize=1)
+def get_telegram_session_store() -> TelegramSessionStore:
+    settings = get_settings()
+    if settings.redis_url:
+        from redis import Redis
+
+        return RedisTelegramSessionStore(
+            redis_client=Redis.from_url(settings.redis_url)
+        )
+    return InMemoryTelegramSessionStore()
 
 
 def get_cost_budget_service() -> CostBudgetService:

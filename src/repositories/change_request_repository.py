@@ -93,3 +93,19 @@ class ChangeRequestRepository:
         self._session.flush()
         self._session.refresh(change_request)
         return change_request
+
+    def update_pending_target(
+        self,
+        change_request_id: int,
+        *,
+        target_notion_page_id: int,
+    ) -> Optional[ChangeRequest]:
+        change_request = self.get_change_request_by_id_for_update(change_request_id)
+        if change_request is None:
+            return None
+        if change_request.status.strip().lower() != "pending":
+            return change_request
+        change_request.target_notion_page_id = target_notion_page_id
+        self._session.flush()
+        self._session.refresh(change_request)
+        return change_request

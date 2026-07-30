@@ -52,7 +52,10 @@ The repository is demo-ready, not local-user-ready or release-ready.
   scripts/run_worker.py` in a separate process to consume them. The worker
   derives the repository root from its own file path and fail-fast validates
   RQ resolution of `src.worker.telegram.process_telegram_webhook_job` before
-  consuming jobs. Jobs use two bounded retries after the initial attempt;
+  consuming jobs. RQ 2.8.0's platform policy selects `SpawnWorker` on
+  Darwin/macOS and the standard `Worker` on Linux; selecting the fork-based
+  worker on macOS is rejected. Jobs use two bounded retries after the initial
+  attempt;
   expected Telegram/domain failures are persisted as terminal ledger outcomes.
 - Tesseract is required for OCR. Useful non-English OCR also requires matching
   language data installed on the host.
@@ -88,7 +91,10 @@ the `Real-World Usability + Release Hardening` phase are complete.
   the queue when `REDIS_URL` is configured. Test/demo/mock modes may skip it.
 - Worker startup is cwd-independent: it adds the repository root derived from
   `scripts/run_worker.py` to `sys.path`. Do not replace this with a hardcoded
-  local path or a synchronous fallback.
+  local path or a synchronous fallback. Use `--worker-class auto` for the
+  platform policy, or explicitly pass `--worker-class spawn` / `worker` when
+  the selected policy is appropriate. `--burst` is reserved for an empty,
+  disposable smoke queue; do not point it at a queue containing live work.
 
 ## Portable Preflight Contract
 

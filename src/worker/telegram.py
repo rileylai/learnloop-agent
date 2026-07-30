@@ -12,12 +12,15 @@ from src.app.dependencies import (
     get_provider_router,
     get_tool_registry,
     get_trust_boundary,
+    get_queue_client,
+    get_telegram_session_store,
 )
 from src.db.session import (
     get_db_session_factory,
     get_unit_of_work_factory,
 )
 from src.orchestrators import (
+    TelegramCallbackAttachment,
     TelegramDocumentAttachment,
     TelegramGatewayError,
     TelegramPhotoAttachment,
@@ -34,6 +37,10 @@ def process_telegram_webhook_job(
     document: Optional[Dict[str, Any]],
     photos: List[Dict[str, Any]],
     request_workflow_id: str,
+    user_id: Optional[str] = None,
+    message_id: Optional[int] = None,
+    media_group_id: Optional[str] = None,
+    callback: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Run one claimed Telegram update inside an RQ worker process.
 
@@ -56,6 +63,8 @@ def process_telegram_webhook_job(
             cost_tracker=get_cost_tracker(),
             prompt_template_loader=get_prompt_template_loader(),
             trust_boundary=get_trust_boundary(),
+            telegram_session_store=get_telegram_session_store(),
+            queue_client=get_queue_client(),
         )
         result = asyncio.run(
             gateway.handle_claimed_webhook(
@@ -70,6 +79,14 @@ def process_telegram_webhook_job(
                 ),
                 photos=[TelegramPhotoAttachment(**photo) for photo in photos],
                 request_workflow_id=request_workflow_id,
+                user_id=user_id,
+                message_id=message_id,
+                media_group_id=media_group_id,
+                callback=(
+                    TelegramCallbackAttachment(**callback)
+                    if callback is not None
+                    else None
+                ),
             )
         )
         return asdict(result)
@@ -79,6 +96,49 @@ def process_telegram_webhook_job(
             "error_code": exc.error_code,
             "failure_reason": exc.failure_reason,
             "workflow_run_id": exc.workflow_run_id,
+        }
+    finally:
+        db_session.close()
+
+
+def process_telegram_upload_settle_job(
+    session_id: str,
+    chat_id: str,
+    user_id: str,
+    request_workflow_id: str,
+) -> Dict[str, Any]:
+    """Settle a media group once; Redis state prevents duplicate pickers."""
+
+    db_session_factory = get_db_session_factory()
+    db_session = db_session_factory()
+    try:
+        gateway = build_telegram_gateway_orchestrator(
+            db_session=db_session,
+            db_session_factory=db_session_factory,
+            unit_of_work_factory=get_unit_of_work_factory(),
+            tool_registry=get_tool_registry(),
+            provider_router=get_provider_router(),
+            embedding_client=get_embedding_client(),
+            cost_tracker=get_cost_tracker(),
+            prompt_template_loader=get_prompt_template_loader(),
+            trust_boundary=get_trust_boundary(),
+            telegram_session_store=get_telegram_session_store(),
+            queue_client=get_queue_client(),
+        )
+        asyncio.run(
+            gateway.settle_upload_session(
+                session_id=session_id,
+                chat_id=chat_id,
+                user_id=user_id,
+                request_workflow_id=request_workflow_id,
+            )
+        )
+        return {"status": "succeeded", "session_id": session_id}
+    except TelegramGatewayError as exc:
+        return {
+            "status": "failed",
+            "error_code": exc.error_code,
+            "failure_reason": exc.failure_reason,
         }
     finally:
         db_session.close()

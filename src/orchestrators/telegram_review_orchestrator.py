@@ -112,6 +112,41 @@ class TelegramReviewOrchestrator:
             review_action=result.review_action,
         )
 
+    async def handle_change_target(
+        self,
+        *,
+        change_request_id: int,
+        target_notion_page_id: str,
+        chat_id: str,
+        request_workflow_id: str,
+    ) -> TelegramReviewCommandResult:
+        reviewer = f"telegram-chat:{chat_id.strip()}"
+        try:
+            result = self._supplement_review_orchestrator.change_target(
+                change_request_id=change_request_id,
+                target_notion_page_id=target_notion_page_id,
+                reviewer=reviewer,
+                request_workflow_id=request_workflow_id,
+            )
+        except SupplementReviewError as exc:
+            raise TelegramReviewError(
+                error_code=exc.error_code,
+                message=exc.message,
+                http_status_code=exc.http_status_code,
+                failure_reason=exc.failure_reason,
+                workflow_run_id=exc.workflow_run_id,
+            ) from exc
+        return TelegramReviewCommandResult(
+            reply_text=(
+                f"Target changed for pending proposal {result.change_request_id}. "
+                "Review it again before explicitly accepting."
+            ),
+            review_workflow_run_id=result.workflow_run_id,
+            change_request_id=result.change_request_id,
+            change_request_status=result.change_request_status,
+            review_action=result.review_action,
+        )
+
     def _parse_arguments(self, command_text: str) -> list[str]:
         try:
             tokens = shlex.split(command_text)

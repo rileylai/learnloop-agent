@@ -253,6 +253,9 @@ Telegram queue behavior:
   - The worker derives the repository root from its own file path, then
     fail-fast validates that RQ resolves the canonical module-level callable
     `src.worker.telegram.process_telegram_webhook_job` before consuming jobs.
+  - The worker-class policy selects RQ `SpawnWorker` on Darwin/macOS and the
+    standard RQ `Worker` on Linux by default. An explicit `--worker-class`
+    override is supported, but the fork-based `Worker` is rejected on macOS.
   - Telegram jobs use bounded retries; expected domain failures are terminal
     ledger outcomes and unexpected worker crashes can retry while an update is
     still `running`.
@@ -639,6 +642,22 @@ Metadata note:
 | Method | Endpoint | Description |
 |---|---|---|
 | POST | `/api/telegram/webhook` | Handle Telegram webhook update for `/help`, `/health`, `/pages`, target-aware `/ingest`, scoped `/ask` QA, and command-based accept/reject review. |
+
+Telegram ingestion UX contract:
+- Uploads are acknowledged first, then a page picker shows each indexed parent
+  and child page with its full hierarchy path. The user never needs to type a
+  Notion UUID in the primary flow.
+- The Redis upload session is TTL-bound and isolated by chat/user. A media
+  group is aggregated by `media_group_id` through the queued settle job.
+- Inline callback data is only an opaque action token. Redis maps it back to
+  the canonical external Notion page id and path after chat/user ownership
+  checks; UI short numbers are never canonical identifiers.
+- Target selection atomically gates PDF/OCR and proposal creation. The pending
+  proposal stores the resolved target foreign key and receives one preview with
+  explicit Accept, Reject, and Change target actions.
+- Callback Accept and text `/accept` use the same review orchestrator and all
+  existing allowed-chat, pending, target, append-only, and re-index guardrails.
+  No automatic accept is permitted.
 
 Trust boundary rules:
 - API routes under `/api` use `Authorization: Bearer <API_BEARER_TOKEN>` when
