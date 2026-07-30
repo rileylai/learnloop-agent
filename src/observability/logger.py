@@ -27,6 +27,11 @@ class JsonFormatter(logging.Formatter):
             "duration_ms",
             "audit_action",
             "audit_status",
+            "update_id",
+            "failure_reason",
+            "business_status",
+            "callback_ack_status",
+            "preview_delivery_status",
         ):
             value = getattr(record, key, None)
             if value is not None:

@@ -9,6 +9,7 @@ from http import HTTPStatus
 from typing import Any, Optional
 
 from src.observability.redaction import sanitize_sensitive_text
+from src.observability.logger import get_logger
 from src.queue import QueueClient, QueueRetryPolicy, get_callable_import_path
 from src.orchestrators.telegram_ingestion_orchestrator import (
     TelegramDocumentAttachment,
@@ -60,6 +61,9 @@ class TelegramGatewayResult:
     review_action: Optional[str]
     change_request_status: Optional[str]
     target_set: bool = False
+    business_status: str = "not_started"
+    callback_ack_status: Optional[str] = None
+    preview_delivery_status: Optional[str] = None
 
 
 @dataclass
@@ -77,6 +81,7 @@ class TelegramGatewayError(Exception):
         http_status_code: int,
         failure_reason: str = "UNKNOWN_ERROR",
         workflow_run_id: Optional[int] = None,
+        metadata: Optional[dict[str, Any]] = None,
     ) -> None:
         super().__init__(message)
         self.error_code = error_code
@@ -84,6 +89,7 @@ class TelegramGatewayError(Exception):
         self.http_status_code = http_status_code
         self.failure_reason = failure_reason
         self.workflow_run_id = workflow_run_id
+        self.metadata = metadata or {}
 
 
 class TelegramGatewayOrchestrator:
@@ -109,6 +115,7 @@ class TelegramGatewayOrchestrator:
         self._trust_boundary = trust_boundary
         self._update_idempotency_service = update_idempotency_service
         self._queue_client = queue_client
+        self._logger = get_logger("learnloop.telegram.gateway")
 
     async def handle_webhook(
         self,
@@ -370,33 +377,46 @@ class TelegramGatewayOrchestrator:
             "INVALID_CALLBACK",
             "TELEGRAM_QUEUE_UNAVAILABLE",
             "EMPTY_UPLOAD",
+            "TELEGRAM_PREVIEW_DELIVERY_FAILED",
         }:
             return
         user_messages = {
             "LLM_OUTPUT_INVALID": (
                 "Proposal validation failed. Please upload the file again."
             ),
+            "TELEGRAM_PREVIEW_DELIVERY_FAILED": (
+                "Proposal was created, but preview delivery failed. "
+                "Please wait for recovery; do not upload again."
+            ),
         }
         safe_message = user_messages.get(
             error.error_code,
             sanitize_sensitive_text(error.message)[:190],
         )
+        callback_acknowledged = False
+        callback_ack_already_attempted = error.metadata.get("callback_ack_status") in {
+            "succeeded",
+            "failed",
+        }
         try:
-            if callback is not None:
-                await self._tool_registry.call_tool(
-                    TELEGRAM_BOT_TOOL_NAME,
-                    context=ToolContext(
-                        workflow_id=request_workflow_id,
-                        metadata={"operation": "telegram_callback_error"},
-                    ),
-                    arguments={
-                        "action": "answer_callback_query",
-                        "callback_query_id": callback.callback_query_id,
-                        "text": safe_message,
-                    },
+            if (
+                callback is not None
+                and not callback_ack_already_attempted
+                and error.error_code != "TELEGRAM_PREVIEW_DELIVERY_FAILED"
+            ):
+                callback_acknowledged, _ = await self._answer_callback_query(
+                    callback=callback,
+                    request_workflow_id=request_workflow_id,
+                    text=safe_message,
+                    operation="telegram_callback_error",
                 )
-            elif chat_id:
-                await self._tool_registry.call_tool(
+            if chat_id and (
+                callback is None
+                or callback_ack_already_attempted
+                or not callback_acknowledged
+                or error.error_code == "TELEGRAM_PREVIEW_DELIVERY_FAILED"
+            ):
+                result = await self._tool_registry.call_tool(
                     TELEGRAM_BOT_TOOL_NAME,
                     context=ToolContext(
                         workflow_id=request_workflow_id,
@@ -407,9 +427,60 @@ class TelegramGatewayOrchestrator:
                     ),
                     arguments={"chat_id": chat_id, "text": safe_message},
                 )
+                if result.is_error:
+                    self._logger.warning(
+                        "telegram_recovery_message_failed",
+                        extra={"workflow_id": request_workflow_id},
+                    )
         except Exception:
             # The original deterministic gateway error remains authoritative.
-            return
+            self._logger.warning(
+                "telegram_recovery_message_failed",
+                extra={
+                    "workflow_id": request_workflow_id,
+                    "failure_reason": "TELEGRAM_SEND_FAILED",
+                },
+            )
+
+    async def _answer_callback_query(
+        self,
+        *,
+        callback: TelegramCallbackAttachment,
+        request_workflow_id: str,
+        text: Optional[str] = None,
+        operation: str,
+    ) -> tuple[bool, Optional[str]]:
+        """Acknowledge Telegram UX state without owning business success."""
+
+        try:
+            result = await self._tool_registry.call_tool(
+                TELEGRAM_BOT_TOOL_NAME,
+                context=ToolContext(
+                    workflow_id=request_workflow_id,
+                    metadata={
+                        "operation": operation,
+                    },
+                ),
+                arguments={
+                    "action": "answer_callback_query",
+                    "callback_query_id": callback.callback_query_id,
+                    **({"text": text} if text else {}),
+                },
+            )
+        except Exception:
+            result = None
+
+        if result is None or result.is_error:
+            self._logger.warning(
+                "telegram_callback_ack_failed",
+                extra={
+                    "workflow_id": request_workflow_id,
+                    "failure_reason": "TELEGRAM_CALLBACK_ACK_FAILED",
+                    "callback_ack_status": "failed",
+                },
+            )
+            return False, "TELEGRAM_CALLBACK_ACK_FAILED"
+        return True, None
 
     async def _handle_new_webhook(
         self,
@@ -440,6 +511,13 @@ class TelegramGatewayOrchestrator:
                 sort_keys=True,
             ),
         )
+
+        callback_ack_status = "not_applicable"
+        callback_ack_failure_reason: Optional[str] = None
+        business_status = "not_started"
+        preview_delivery_status = "not_applicable"
+        preview_session_id: Optional[str] = None
+        preview_delivery_required = False
 
         try:
             normalized_text = (text or "").strip()
@@ -514,6 +592,23 @@ class TelegramGatewayOrchestrator:
                     chat_id=normalized_chat_id,
                     user_id=normalized_user_id,
                 )
+                self._validate_callback_action(
+                    callback_action=callback_action,
+                    chat_id=normalized_chat_id,
+                    user_id=normalized_user_id,
+                )
+                callback_ack_status, callback_ack_failure_reason = (
+                    "succeeded",
+                    None,
+                )
+                ack_ok, ack_failure_reason = await self._answer_callback_query(
+                    callback=callback,
+                    request_workflow_id=request_workflow_id,
+                    operation="telegram_callback_ack",
+                )
+                if not ack_ok:
+                    callback_ack_status = "failed"
+                    callback_ack_failure_reason = ack_failure_reason
                 if callback_action.action == "select_target":
                     if self._telegram_ingestion_orchestrator is None:
                         raise TelegramGatewayError(
@@ -539,6 +634,7 @@ class TelegramGatewayOrchestrator:
                         target_notion_path=target_notion_path,
                         request_workflow_id=request_workflow_id,
                     )
+                    business_status = "succeeded"
                     source_document_id = ingestion_result.source_document_id
                     change_request_id = ingestion_result.change_request_id
                     source_type = ingestion_result.source_type
@@ -555,6 +651,9 @@ class TelegramGatewayOrchestrator:
                                 chat_id=normalized_chat_id,
                                 user_id=normalized_user_id,
                             )
+                            preview_session_id = ingestion_result.session_id
+                            preview_delivery_required = True
+                            preview_delivery_status = "pending"
                         else:
                             reply_text = "This proposal is already ready for review."
                 elif callback_action.action in {"accept", "reject"}:
@@ -579,6 +678,7 @@ class TelegramGatewayOrchestrator:
                         chat_id=normalized_chat_id,
                         request_workflow_id=request_workflow_id,
                     )
+                    business_status = "succeeded"
                     reply_text = review_result.reply_text
                     review_workflow_run_id = review_result.review_workflow_run_id
                     change_request_id = review_result.change_request_id
@@ -604,6 +704,7 @@ class TelegramGatewayOrchestrator:
                         chat_id=normalized_chat_id,
                         user_id=normalized_user_id,
                     )
+                    business_status = "succeeded"
                     change_request_id = callback_action.change_request_id
                 elif callback_action.action == "change_target_select":
                     if (
@@ -623,6 +724,7 @@ class TelegramGatewayOrchestrator:
                         chat_id=normalized_chat_id,
                         request_workflow_id=request_workflow_id,
                     )
+                    business_status = "succeeded"
                     reply_text = review_result.reply_text
                     review_workflow_run_id = review_result.review_workflow_run_id
                     change_request_id = review_result.change_request_id
@@ -731,6 +833,8 @@ class TelegramGatewayOrchestrator:
                         target_notion_path=target_page.notion_path,
                         request_workflow_id=request_workflow_id,
                     )
+                    business_status = "succeeded"
+                    preview_session_id = session.session_id
                 elif target_notion_page_id is None and not has_media:
                     session = self._telegram_ingestion_orchestrator.get_latest_upload(
                         chat_id=normalized_chat_id,
@@ -750,14 +854,51 @@ class TelegramGatewayOrchestrator:
                     )
                     target_notion_page_id = session.target_notion_page_id
                 elif target_notion_page_id is not None:
-                    ingestion_result = await self._telegram_ingestion_orchestrator.handle_ingest_command(
+                    target_page = self._find_page(target_notion_page_id)
+                    if target_page is None:
+                        raise TelegramGatewayError(
+                            error_code="NOTION_PAGE_NOT_FOUND",
+                            message="The selected Notion page is no longer indexed. Use /pages and choose again.",
+                            http_status_code=HTTPStatus.NOT_FOUND,
+                            failure_reason="NOTION_PAGE_NOT_FOUND",
+                        )
+                    direct_session_id = self._build_upload_session_id(
+                        update_id=update_id,
+                        message_id=message_id,
+                        media_group_id=media_group_id,
+                    )
+                    direct_session = self._telegram_ingestion_orchestrator.store_upload(
+                        session_id=direct_session_id,
                         chat_id=normalized_chat_id,
+                        user_id=normalized_user_id,
+                        media_group_id=media_group_id,
                         document=document,
                         photos=photos,
-                        request_workflow_id=request_workflow_id,
-                        target_notion_page_id=target_notion_page_id,
+                        command_text=normalized_input_text or None,
                     )
-                    target_set = True
+                    self._telegram_ingestion_orchestrator.mark_upload_awaiting_target(
+                        session_id=direct_session.session_id,
+                        chat_id=normalized_chat_id,
+                        user_id=normalized_user_id,
+                    )
+                    ingestion_result = await self._telegram_ingestion_orchestrator.handle_target_selection(
+                        session_id=direct_session.session_id,
+                        chat_id=normalized_chat_id,
+                        user_id=normalized_user_id,
+                        target_notion_page_id=target_page.page_id,
+                        target_notion_path=target_page.notion_path,
+                        request_workflow_id=request_workflow_id,
+                    )
+                    business_status = "succeeded"
+                    preview_session_id = direct_session.session_id
+                    # Keep the text-command fallback compatible with the old
+                    # user-facing page-id display; persisted proposal targets
+                    # remain resolved canonical page rows.
+                    ingestion_result.target_notion_path = target_page.page_id
+                    ingestion_result.reply_text = ingestion_result.reply_text.replace(
+                        f"Target Notion page: {target_page.notion_path}",
+                        f"Target Notion page: {target_page.page_id}",
+                    )
                 else:
                     session_id = self._build_upload_session_id(
                         update_id=update_id,
@@ -827,38 +968,29 @@ class TelegramGatewayOrchestrator:
                         and target_set
                         and reply_markup is None
                     ):
-                        reply_markup = self._build_review_markup(
-                            ingestion_result=ingestion_result,
-                            chat_id=normalized_chat_id,
-                            user_id=normalized_user_id,
-                        )
+                        if (
+                            ingestion_result.session_id
+                            and self._telegram_ingestion_orchestrator.claim_upload_preview(
+                                session_id=ingestion_result.session_id,
+                                chat_id=normalized_chat_id,
+                                user_id=normalized_user_id,
+                            )
+                        ):
+                            reply_markup = self._build_review_markup(
+                                ingestion_result=ingestion_result,
+                                chat_id=normalized_chat_id,
+                                user_id=normalized_user_id,
+                            )
+                            preview_session_id = ingestion_result.session_id
+                            preview_delivery_required = True
+                            preview_delivery_status = "pending"
             else:
                 reply_text = self._build_reply_for_command(command)
 
+            if business_status == "not_started":
+                business_status = "succeeded"
+
             telegram_message_id: Optional[int] = None
-            if callback_query_id is not None:
-                callback_result = await self._tool_registry.call_tool(
-                    TELEGRAM_BOT_TOOL_NAME,
-                    context=ToolContext(
-                        workflow_id=request_workflow_id,
-                        metadata={
-                            "operation": "telegram_callback_answer",
-                            "chat_id": normalized_chat_id,
-                        },
-                    ),
-                    arguments={
-                        "action": "answer_callback_query",
-                        "callback_query_id": callback_query_id,
-                    },
-                )
-                if callback_result.is_error:
-                    error_code = callback_result.error.code if callback_result.error else "UNKNOWN_ERROR"
-                    raise TelegramGatewayError(
-                        error_code=error_code,
-                        message="Telegram callback acknowledgement failed",
-                        http_status_code=self._http_status_for_tool_error(error_code),
-                        failure_reason=self._normalize_failure_reason(error_code),
-                    )
 
             if reply_text:
                 tool_result = await self._tool_registry.call_tool(
@@ -883,6 +1015,33 @@ class TelegramGatewayOrchestrator:
                     if tool_result.error is not None:
                         error_code = tool_result.error.code
                         error_message = tool_result.error.message
+                    if preview_delivery_required:
+                        preview_delivery_status = "failed"
+                        if preview_session_id is not None:
+                            self._telegram_ingestion_orchestrator.complete_upload_preview(
+                                session_id=preview_session_id,
+                                chat_id=normalized_chat_id,
+                                user_id=normalized_user_id,
+                                success=False,
+                                failure_reason="TELEGRAM_PREVIEW_DELIVERY_FAILED",
+                            )
+                        raise TelegramGatewayError(
+                            error_code="TELEGRAM_PREVIEW_DELIVERY_FAILED",
+                            message="Telegram proposal preview could not be delivered",
+                            http_status_code=HTTPStatus.BAD_GATEWAY,
+                            failure_reason="TELEGRAM_PREVIEW_DELIVERY_FAILED",
+                            workflow_run_id=workflow_run.id,
+                            metadata={
+                                "business_status": "succeeded",
+                                "callback_ack_status": callback_ack_status,
+                                "preview_delivery_status": "failed",
+                                "preview_delivery_failure_reason": (
+                                    "TELEGRAM_PREVIEW_DELIVERY_FAILED"
+                                ),
+                                "source_document_id": source_document_id,
+                                "change_request_id": change_request_id,
+                            },
+                        )
                     raise TelegramGatewayError(
                         error_code=error_code,
                         message=error_message,
@@ -894,6 +1053,15 @@ class TelegramGatewayOrchestrator:
                 raw_message_id = structured_content.get("message_id")
                 if isinstance(raw_message_id, int):
                     telegram_message_id = raw_message_id
+                if preview_delivery_required:
+                    preview_delivery_status = "succeeded"
+                    if preview_session_id is not None:
+                        self._telegram_ingestion_orchestrator.complete_upload_preview(
+                            session_id=preview_session_id,
+                            chat_id=normalized_chat_id,
+                            user_id=normalized_user_id,
+                            success=True,
+                        )
 
             self._workflow_run_service.mark_workflow_succeeded(
                 workflow_run.id,
@@ -914,6 +1082,10 @@ class TelegramGatewayOrchestrator:
                         "review_workflow_run_id": review_workflow_run_id,
                         "review_action": review_action,
                         "change_request_status": change_request_status,
+                        "business_status": business_status,
+                        "callback_ack_status": callback_ack_status,
+                        "callback_ack_failure_reason": callback_ack_failure_reason,
+                        "preview_delivery_status": preview_delivery_status,
                     },
                     sort_keys=True,
                 ),
@@ -938,6 +1110,9 @@ class TelegramGatewayOrchestrator:
                 review_action=review_action,
                 change_request_status=change_request_status,
                 target_set=target_set,
+                business_status=business_status,
+                callback_ack_status=callback_ack_status,
+                preview_delivery_status=preview_delivery_status,
             )
         except WorkflowRunAuditUpdateError:
             raise
@@ -946,6 +1121,11 @@ class TelegramGatewayOrchestrator:
                 workflow_run_id=workflow_run.id,
                 failure_reason=exc.failure_reason,
                 error_code=exc.error_code,
+                metadata={
+                    "business_status": "failed",
+                    "callback_ack_status": callback_ack_status,
+                    "preview_delivery_status": preview_delivery_status,
+                },
             )
             raise TelegramGatewayError(
                 error_code=exc.error_code,
@@ -953,6 +1133,11 @@ class TelegramGatewayOrchestrator:
                 http_status_code=exc.http_status_code,
                 failure_reason=self._normalize_failure_reason(exc.failure_reason),
                 workflow_run_id=workflow_run.id,
+                metadata={
+                    "business_status": "failed",
+                    "callback_ack_status": callback_ack_status,
+                    "preview_delivery_status": preview_delivery_status,
+                },
             ) from exc
 
         except TelegramQAError as exc:
@@ -960,6 +1145,11 @@ class TelegramGatewayOrchestrator:
                 workflow_run_id=workflow_run.id,
                 failure_reason=exc.failure_reason,
                 error_code=exc.error_code,
+                metadata={
+                    "business_status": "failed",
+                    "callback_ack_status": callback_ack_status,
+                    "preview_delivery_status": preview_delivery_status,
+                },
             )
             raise TelegramGatewayError(
                 error_code=exc.error_code,
@@ -967,12 +1157,22 @@ class TelegramGatewayOrchestrator:
                 http_status_code=exc.http_status_code,
                 failure_reason=self._normalize_failure_reason(exc.failure_reason),
                 workflow_run_id=workflow_run.id,
+                metadata={
+                    "business_status": "failed",
+                    "callback_ack_status": callback_ack_status,
+                    "preview_delivery_status": preview_delivery_status,
+                },
             ) from exc
         except TelegramReviewError as exc:
             self._mark_failed_workflow(
                 workflow_run_id=workflow_run.id,
                 failure_reason=exc.failure_reason,
                 error_code=exc.error_code,
+                metadata={
+                    "business_status": "failed",
+                    "callback_ack_status": callback_ack_status,
+                    "preview_delivery_status": preview_delivery_status,
+                },
             )
             raise TelegramGatewayError(
                 error_code=exc.error_code,
@@ -980,12 +1180,38 @@ class TelegramGatewayOrchestrator:
                 http_status_code=exc.http_status_code,
                 failure_reason=self._normalize_failure_reason(exc.failure_reason),
                 workflow_run_id=workflow_run.id,
+                metadata={
+                    "business_status": "failed",
+                    "callback_ack_status": callback_ack_status,
+                    "preview_delivery_status": preview_delivery_status,
+                },
             ) from exc
         except TelegramGatewayError as exc:
             self._mark_failed_workflow(
                 workflow_run_id=workflow_run.id,
                 failure_reason=exc.failure_reason,
                 error_code=exc.error_code,
+                metadata={
+                    "business_status": exc.metadata.get(
+                        "business_status", business_status
+                    ),
+                    "callback_ack_status": exc.metadata.get(
+                        "callback_ack_status", callback_ack_status
+                    ),
+                    "preview_delivery_status": exc.metadata.get(
+                        "preview_delivery_status", preview_delivery_status
+                    ),
+                    **{
+                        key: value
+                        for key, value in exc.metadata.items()
+                        if key
+                        not in {
+                            "business_status",
+                            "callback_ack_status",
+                            "preview_delivery_status",
+                        }
+                    },
+                },
             )
             raise TelegramGatewayError(
                 error_code=exc.error_code,
@@ -993,12 +1219,18 @@ class TelegramGatewayOrchestrator:
                 http_status_code=exc.http_status_code,
                 failure_reason=exc.failure_reason,
                 workflow_run_id=workflow_run.id,
+                metadata=exc.metadata,
             ) from exc
         except Exception as exc:
             self._mark_failed_workflow(
                 workflow_run_id=workflow_run.id,
                 failure_reason="UNKNOWN_ERROR",
                 error_code="TELEGRAM_GATEWAY_FAILED",
+                metadata={
+                    "business_status": "failed",
+                    "callback_ack_status": callback_ack_status,
+                    "preview_delivery_status": preview_delivery_status,
+                },
             )
             raise TelegramGatewayError(
                 error_code="TELEGRAM_GATEWAY_FAILED",
@@ -1266,6 +1498,83 @@ class TelegramGatewayOrchestrator:
             )
         return action
 
+    def _validate_callback_action(
+        self,
+        *,
+        callback_action,
+        chat_id: str,
+        user_id: str,
+    ) -> None:
+        """Validate callback ownership/state before acknowledging or doing work."""
+
+        if callback_action.action == "select_target":
+            if (
+                self._telegram_ingestion_orchestrator is None
+                or not callback_action.target_notion_page_id
+                or not callback_action.target_notion_path
+            ):
+                raise TelegramGatewayError(
+                    error_code="INVALID_CALLBACK",
+                    message="This page selection is invalid. Please upload again.",
+                    http_status_code=HTTPStatus.BAD_REQUEST,
+                    failure_reason="INVALID_CALLBACK",
+                )
+            selected_page = self._find_page(callback_action.target_notion_page_id)
+            if (
+                selected_page is None
+                or selected_page.notion_path != callback_action.target_notion_path
+            ):
+                raise TelegramGatewayError(
+                    error_code="NOTION_PAGE_NOT_FOUND",
+                    message="The selected Notion page is no longer indexed. Use /pages and choose again.",
+                    http_status_code=HTTPStatus.NOT_FOUND,
+                    failure_reason="NOTION_PAGE_NOT_FOUND",
+                )
+            session = self._telegram_ingestion_orchestrator.get_upload(
+                session_id=callback_action.session_id,
+                chat_id=chat_id,
+                user_id=user_id,
+            )
+            if session is None:
+                raise TelegramGatewayError(
+                    error_code="UPLOAD_SESSION_EXPIRED",
+                    message="This upload session expired. Please upload the file again.",
+                    http_status_code=HTTPStatus.GONE,
+                    failure_reason="UPLOAD_SESSION_EXPIRED",
+                )
+            if session.state not in {"awaiting_target", "processing", "proposal_created"}:
+                raise TelegramGatewayError(
+                    error_code="UPLOAD_SESSION_INVALID",
+                    message="This upload session is no longer selectable. Please upload again.",
+                    http_status_code=HTTPStatus.CONFLICT,
+                    failure_reason="UPLOAD_SESSION_INVALID",
+                )
+            return
+
+        if callback_action.action in {"accept", "reject", "change_target", "change_target_select"}:
+            if callback_action.change_request_id is None or callback_action.change_request_id <= 0:
+                raise TelegramGatewayError(
+                    error_code="INVALID_CALLBACK",
+                    message="This review action is invalid.",
+                    http_status_code=HTTPStatus.BAD_REQUEST,
+                    failure_reason="INVALID_CALLBACK",
+                )
+            if callback_action.action == "change_target_select" and not callback_action.target_notion_page_id:
+                raise TelegramGatewayError(
+                    error_code="INVALID_CALLBACK",
+                    message="This target selection is invalid.",
+                    http_status_code=HTTPStatus.BAD_REQUEST,
+                    failure_reason="INVALID_CALLBACK",
+                )
+            return
+
+        raise TelegramGatewayError(
+            error_code="INVALID_CALLBACK",
+            message="This button is no longer valid. Please upload again.",
+            http_status_code=HTTPStatus.BAD_REQUEST,
+            failure_reason="INVALID_CALLBACK",
+        )
+
     def _build_page_picker(
         self,
         *,
@@ -1515,7 +1824,11 @@ class TelegramGatewayOrchestrator:
             return HTTPStatus.BAD_REQUEST
         if normalized == "TELEGRAM_NOT_CONFIGURED":
             return HTTPStatus.SERVICE_UNAVAILABLE
-        if normalized == "TELEGRAM_SEND_FAILED":
+        if normalized in {
+            "TELEGRAM_SEND_FAILED",
+            "TELEGRAM_CALLBACK_ACK_FAILED",
+            "TELEGRAM_PREVIEW_DELIVERY_FAILED",
+        }:
             return HTTPStatus.BAD_GATEWAY
         return HTTPStatus.INTERNAL_SERVER_ERROR
 
@@ -1525,7 +1838,9 @@ class TelegramGatewayOrchestrator:
         workflow_run_id: int,
         failure_reason: str,
         error_code: str,
+        metadata: Optional[dict[str, Any]] = None,
     ) -> None:
+        safe_metadata = metadata or {}
         self._workflow_run_service.mark_workflow_failed(
             workflow_run_id,
             failure_reason=self._normalize_failure_reason(failure_reason),
@@ -1533,6 +1848,7 @@ class TelegramGatewayOrchestrator:
                 {
                     "operation": "telegram_webhook",
                     "error_code": error_code,
+                    **safe_metadata,
                 },
                 sort_keys=True,
             ),

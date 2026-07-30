@@ -25,6 +25,13 @@ class _FailingTelegramClient(TelegramBotClient):
             "source_text='private source note'"
         )
 
+    def answer_callback_query(self, *, callback_query_id: str, text=None) -> None:
+        _ = callback_query_id
+        _ = text
+        raise TelegramBotSendError(
+            "Telegram answerCallbackQuery failed: https://api.telegram.org/bot123456:ABC"
+        )
+
 
 def test_telegram_bot_tool_redacts_sensitive_send_error_message() -> None:
     tool = TelegramBotTool(_FailingTelegramClient())
@@ -70,3 +77,22 @@ def test_telegram_bot_tool_redacts_sensitive_download_error_message() -> None:
         "https://api.telegram.org/file/bot[REDACTED]/document/file.pdf "
         "source_text=[REDACTED_PRIVATE_TEXT]"
     )
+
+
+def test_telegram_bot_tool_classifies_callback_ack_failure_separately() -> None:
+    tool = TelegramBotTool(_FailingTelegramClient())
+
+    result = asyncio.run(
+        tool.run(
+            context=ToolContext(workflow_id="wf-callback-ack"),
+            arguments={
+                "action": "answer_callback_query",
+                "callback_query_id": "callback-1",
+            },
+        )
+    )
+
+    assert result.is_error is True
+    assert result.error is not None
+    assert result.error.code == "TELEGRAM_CALLBACK_ACK_FAILED"
+    assert "bot[REDACTED]" in result.error.message

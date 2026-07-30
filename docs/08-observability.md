@@ -81,9 +81,19 @@ mode-specific provider configuration is unavailable.
 
 Telegram ingestion observability:
 - Workflow metadata records safe operation classes, counts, target-set state,
-  and callback/review action status only. It does not record callback tokens,
+  and callback/review action status only. For target-picker callbacks it also
+  records `business_status`, `callback_ack_status`, and
+  `preview_delivery_status`. It does not record callback tokens,
   canonical page ids, upload bytes, captions, OCR text, or proposal source
   content.
+- A valid callback acknowledgement emits a structured warning with
+  `failure_reason=TELEGRAM_CALLBACK_ACK_FAILED` when `answerCallbackQuery`
+  fails. This warning is independent from the workflow terminal status; a
+  business-successful callback may finish with `workflow_runs.status=succeeded`.
+- A post-commit preview send failure is terminal only for delivery and uses
+  `failure_reason=TELEGRAM_PREVIEW_DELIVERY_FAILED`. Metadata retains
+  `business_status=succeeded` and `preview_delivery_status=failed`, while the
+  pending change request remains recoverable.
 - Redis upload sessions and callback mappings are TTL-bound and scoped by chat
   and user. Their state is not emitted into user-facing logs.
 - Duplicate update, settle, target, and preview claims are observable through
@@ -130,6 +140,19 @@ Telegram ingestion observability:
 - `WORKFLOW_AUDIT_UPDATE_FAILED` is returned as a distinct service/API error.
   Operators reconcile the stale running workflow only after confirming the
   business outcome.
+
+## Step 88 Telegram Outcome Recovery
+
+- For a committed Telegram callback outcome, first run a dry-run inspection:
+  `uv run python scripts/reconcile_telegram_outcome.py --update-id <id>
+  --workflow-id <id> --source-document-id <id> --change-request-id <id>
+  --action resend-preview --json`.
+- The inspector verifies the workflow/ledger, source row, pending change
+  request, source link, and target page. Apply mode only resends the existing
+  preview or reconciles an already-delivered result; it never invokes OCR, an
+  LLM, or proposal creation.
+- Recovery results store safe status/identifier fields only. They do not store
+  Telegram payloads, raw image text, proposal source content, or secrets.
 
 ## Step 84 Operator Contract
 
@@ -236,12 +259,15 @@ append evidence.
   `IDEMPOTENCY_STORE_FAILED`,
   `VECTOR_DIMENSION_MISMATCH`, `VECTOR_QUERY_FAILED`,
   `VECTOR_UPSERT_FAILED`, `TELEGRAM_NOT_CONFIGURED`,
-  `TELEGRAM_SEND_FAILED`, `TELEGRAM_FILE_DOWNLOAD_FAILED`, and
+  `TELEGRAM_SEND_FAILED`, `TELEGRAM_CALLBACK_ACK_FAILED`,
+  `TELEGRAM_PREVIEW_DELIVERY_FAILED`, `TELEGRAM_FILE_DOWNLOAD_FAILED`, and
   `WORKFLOW_AUDIT_UPDATE_FAILED`.
 - Telegram callback/session validation uses `INVALID_ARGUMENT`,
   `INVALID_CALLBACK`, `UPLOAD_MEDIA_MISSING`, `UPLOAD_SESSION_EXPIRED`, and
   `UPLOAD_SESSION_INVALID` when applicable; these reasons must not be collapsed
   into `UNKNOWN_ERROR`.
+- `TELEGRAM_CALLBACK_ACK_FAILED` is a UX-side-effect warning when business can
+  safely continue; it does not imply `workflow_runs.status=failed`.
 - Upload/resource reasons include `INVALID_UPLOAD_TYPE`,
   `INVALID_UPLOAD_MIME`, `EMPTY_UPLOAD`, `UPLOAD_LIMIT_EXCEEDED`,
   `UPLOAD_TOO_LARGE`, `PDF_PAGE_LIMIT_EXCEEDED`,

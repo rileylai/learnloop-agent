@@ -977,7 +977,10 @@ Success response `200`:
   "review_workflow_run_id": null,
   "review_action": null,
   "change_request_status": null,
-  "target_set": false
+  "target_set": false,
+  "business_status": "succeeded",
+  "callback_ack_status": "not_applicable",
+  "preview_delivery_status": "not_applicable"
 }
 ```
 
@@ -1041,6 +1044,17 @@ The callback creates one target-aware `pending` proposal, returns
 `target_set: true`, and sends a preview with inline Accept, Reject, and Change
 target buttons. Callback Accept is explicit and delegates to the same review
 orchestrator as `/accept`; it never appends automatically at proposal time.
+
+For a valid page-picker callback, the backend first validates callback token
+ownership, session state, and selected page, then calls Telegram
+`answerCallbackQuery` before OCR, provider, or proposal work. The response and
+workflow metadata expose `business_status`, `callback_ack_status`, and
+`preview_delivery_status`. A transient acknowledgement failure is classified
+as `TELEGRAM_CALLBACK_ACK_FAILED` and does not fail a business workflow that
+successfully commits its source document and pending change request. A preview
+`send_message` failure is classified as
+`TELEGRAM_PREVIEW_DELIVERY_FAILED`; the pending change request remains and the
+user receives a short recovery message.
 
 Request example (`/ingest` + PDF):
 
@@ -1293,6 +1307,10 @@ Notes:
 - Invalid callback/session failures expose only redacted messages and specific
   `failure_reason` values such as `INVALID_CALLBACK`,
   `UPLOAD_SESSION_EXPIRED`, or `UPLOAD_SESSION_INVALID`.
+- A duplicate `update_id` replays the terminal ledger result/failure and does
+  not repeat OCR, LLM proposal generation, source-document creation, or
+  change-request creation. Preview recovery is an explicit operation on the
+  existing pending proposal.
 - `LLM_OUTPUT_INVALID` Telegram callbacks receive the fixed short message
   `Proposal validation failed. Please upload the file again.`; model output
   and canonical paths are not sent to the user.

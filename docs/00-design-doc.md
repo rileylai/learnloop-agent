@@ -561,6 +561,14 @@ Idempotency rules:
 - A duplicate `succeeded` or `failed` update replays the persisted outcome.
 - Updates without `update_id` remain backward-compatible but are not deduped.
 
+Step 88 callback outcome state is tracked in workflow metadata rather than a
+schema migration: `business_status`, `callback_ack_status`, and
+`preview_delivery_status`. Callback acknowledgement is a Telegram UX side
+effect after basic validation and before OCR/LLM work; it is not part of the
+source-document/change-request transaction. Preview delivery is post-commit.
+If it fails, the pending change request is retained and an explicit dry-run
+recovery command may resend only the stored proposal preview.
+
 ### 12.9 api_idempotency_records
 | Column | Type | Description |
 |---|---|---|
@@ -659,6 +667,13 @@ Telegram ingestion UX contract:
 - Callback Accept and text `/accept` use the same review orchestrator and all
   existing allowed-chat, pending, target, append-only, and re-index guardrails.
   No automatic accept is permitted.
+- Page-picker callback order is: resolve and validate the opaque session/page
+  selection, answer `answerCallbackQuery`, run target-claimed OCR/proposal
+  business work once, commit the source document and pending change request,
+  send the preview, then finalize workflow and update-ledger status. Ack
+  failure is classified as `TELEGRAM_CALLBACK_ACK_FAILED` and does not turn a
+  successful business outcome into a failed workflow. Preview send failure is
+  `TELEGRAM_PREVIEW_DELIVERY_FAILED`; it does not recreate business rows.
 
 Trust boundary rules:
 - API routes under `/api` use `Authorization: Bearer <API_BEARER_TOKEN>` when

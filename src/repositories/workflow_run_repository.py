@@ -104,6 +104,7 @@ class WorkflowRunRepository:
         failure_reason: Optional[str] = None,
         metadata_json: Optional[str] = None,
         finished_at: Optional[datetime] = None,
+        commit: bool = True,
     ) -> Optional[WorkflowRun]:
         workflow_run = self.get_workflow_run_by_id(workflow_run_id)
         if workflow_run is None:
@@ -113,6 +114,9 @@ class WorkflowRunRepository:
         workflow_run.failure_reason = failure_reason
         workflow_run.metadata_json = metadata_json
         workflow_run.finished_at = finished_at
-        self._session.commit()
-        self._session.refresh(workflow_run)
+        if commit:
+            self._session.commit()
+            self._session.refresh(workflow_run)
+        else:
+            self._session.flush()
         return workflow_run

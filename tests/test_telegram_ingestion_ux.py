@@ -49,6 +49,7 @@ from src.tools import (
     PDFParserTool,
     ParsedImageOCR,
     TelegramBotTool,
+    TelegramBotSendError,
     ToolRegistry,
 )
 
@@ -130,6 +131,39 @@ class _InvalidTargetProposalProvider(LLMProvider):
             ),
             token_input=10,
             token_output=10,
+        )
+
+
+class _CallbackAckTimeoutTelegramClient(InMemoryTelegramBotClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.callback_ack_attempts = 0
+
+    def answer_callback_query(self, *, callback_query_id: str, text=None) -> None:
+        _ = callback_query_id
+        _ = text
+        self.callback_ack_attempts += 1
+        raise TelegramBotSendError("Telegram callback acknowledgement timed out")
+
+
+class _PreviewFailureTelegramClient(InMemoryTelegramBotClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.preview_failure_attempts = 0
+
+    def send_message(self, *, chat_id: str, text: str, reply_markup=None):
+        is_review_preview = bool(reply_markup) and any(
+            button.get("text") == "Accept"
+            for row in reply_markup.get("inline_keyboard", [])
+            for button in row
+        )
+        if is_review_preview:
+            self.preview_failure_attempts += 1
+            raise TelegramBotSendError("Telegram sendMessage timed out")
+        return super().send_message(
+            chat_id=chat_id,
+            text=text,
+            reply_markup=reply_markup,
         )
 
 
@@ -367,6 +401,271 @@ def test_upload_then_page_button_creates_target_aware_pending_proposal(
             proposal_payload = json.loads(proposals[0].proposal_json)
             assert proposal_payload["target_path"] == f"{expected_path}/AI Supplement Zone"
             assert session.query(SourceDocument).count() == 1
+            workflow = session.get(WorkflowRun, result["workflow_run_id"])
+            assert workflow is not None
+            assert workflow.status == "succeeded"
+            assert workflow.failure_reason is None
+            workflow_metadata = json.loads(workflow.metadata_json or "{}")
+            assert workflow_metadata["business_status"] == "succeeded"
+            assert workflow_metadata["callback_ack_status"] == "succeeded"
+            assert workflow_metadata["preview_delivery_status"] == "succeeded"
+            ledger = (
+                session.query(TelegramUpdateLedger)
+                .filter(TelegramUpdateLedger.update_id == (9200 if source_type == "pdf" else 9201))
+                .one()
+            )
+            assert ledger.status == "succeeded"
+        finally:
+            session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_callback_ack_timeout_does_not_fail_committed_business_work() -> None:
+    session_factory = _session_factory()
+    _seed_pages(session_factory)
+    telegram_client = _CallbackAckTimeoutTelegramClient()
+    telegram_client.add_file(
+        file_id="ack-timeout-pdf",
+        file_bytes=b"telegram-file-bytes",
+        file_name="lesson.pdf",
+    )
+    store = InMemoryTelegramSessionStore()
+    _configure_app(
+        session_factory=session_factory,
+        telegram_client=telegram_client,
+        session_store=store,
+        source_type="pdf",
+    )
+    try:
+        client = TestClient(app)
+        upload = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 9700,
+                "message": {
+                    "message_id": 70,
+                    "chat": {"id": 567},
+                    "from": {"id": 787},
+                    "caption": "/ingest",
+                    "document": {
+                        "file_id": "ack-timeout-pdf",
+                        "file_name": "lesson.pdf",
+                        "mime_type": "application/pdf",
+                    },
+                },
+            },
+        )
+        callback_data = _page_callback_data(telegram_client)
+        callback = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 9701,
+                "callback_query": {
+                    "id": "ack-timeout",
+                    "from": {"id": 787},
+                    "data": callback_data,
+                    "message": {"message_id": 71, "chat": {"id": 567}},
+                },
+            },
+        )
+        assert upload.status_code == 200
+        assert callback.status_code == 200
+        result = callback.json()
+        assert result["business_status"] == "succeeded"
+        assert result["callback_ack_status"] == "failed"
+        assert result["preview_delivery_status"] == "succeeded"
+        assert telegram_client.callback_ack_attempts == 1
+
+        session = session_factory()
+        try:
+            assert session.query(SourceDocument).count() == 1
+            proposal = session.query(ChangeRequest).one()
+            assert proposal.status == "pending"
+            workflow = session.get(WorkflowRun, result["workflow_run_id"])
+            assert workflow is not None
+            assert workflow.status == "succeeded"
+            assert workflow.failure_reason is None
+            metadata = json.loads(workflow.metadata_json or "{}")
+            assert metadata["callback_ack_failure_reason"] == (
+                "TELEGRAM_CALLBACK_ACK_FAILED"
+            )
+            ledger = (
+                session.query(TelegramUpdateLedger)
+                .filter(TelegramUpdateLedger.update_id == 9701)
+                .one()
+            )
+            assert ledger.status == "succeeded"
+        finally:
+            session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_preview_delivery_failure_preserves_pending_proposal_and_replays_safely() -> None:
+    session_factory = _session_factory()
+    _seed_pages(session_factory)
+    telegram_client = _PreviewFailureTelegramClient()
+    telegram_client.add_file(
+        file_id="preview-failure-pdf",
+        file_bytes=b"telegram-file-bytes",
+        file_name="lesson.pdf",
+    )
+    store = InMemoryTelegramSessionStore()
+    _configure_app(
+        session_factory=session_factory,
+        telegram_client=telegram_client,
+        session_store=store,
+        source_type="pdf",
+    )
+    try:
+        client = TestClient(app)
+        client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 9710,
+                "message": {
+                    "message_id": 72,
+                    "chat": {"id": 568},
+                    "from": {"id": 788},
+                    "caption": "/ingest",
+                    "document": {
+                        "file_id": "preview-failure-pdf",
+                        "file_name": "lesson.pdf",
+                        "mime_type": "application/pdf",
+                    },
+                },
+            },
+        )
+        callback_data = _page_callback_data(telegram_client)
+        callback_payload = {
+            "update_id": 9711,
+            "callback_query": {
+                "id": "preview-failure",
+                "from": {"id": 788},
+                "data": callback_data,
+                "message": {"message_id": 73, "chat": {"id": 568}},
+            },
+        }
+        first = client.post("/api/telegram/webhook", json=callback_payload)
+        assert first.status_code == 502
+        detail = first.json()["detail"]
+        assert detail["error_code"] == "TELEGRAM_PREVIEW_DELIVERY_FAILED"
+        assert detail["failure_reason"] == "TELEGRAM_PREVIEW_DELIVERY_FAILED"
+        assert detail["business_status"] == "succeeded"
+        assert detail["preview_delivery_status"] == "failed"
+        assert telegram_client.preview_failure_attempts == 1
+        assert any(
+            message.text
+            == "Proposal was created, but preview delivery failed. Please wait for recovery; do not upload again."
+            for message in telegram_client.list_sent_messages()
+        )
+
+        session = session_factory()
+        try:
+            assert session.query(SourceDocument).count() == 1
+            proposal = session.query(ChangeRequest).one()
+            assert proposal.status == "pending"
+            workflow = session.get(WorkflowRun, detail["workflow_run_id"])
+            assert workflow is not None
+            assert workflow.status == "failed"
+            assert workflow.failure_reason == "TELEGRAM_PREVIEW_DELIVERY_FAILED"
+            metadata = json.loads(workflow.metadata_json or "{}")
+            assert metadata["business_status"] == "succeeded"
+            assert metadata["preview_delivery_status"] == "failed"
+            ledger = (
+                session.query(TelegramUpdateLedger)
+                .filter(TelegramUpdateLedger.update_id == 9711)
+                .one()
+            )
+            assert ledger.status == "failed"
+            failure = json.loads(ledger.failure_json or "{}")
+            assert failure["failure_reason"] == "TELEGRAM_PREVIEW_DELIVERY_FAILED"
+        finally:
+            session.close()
+
+        replay = client.post("/api/telegram/webhook", json=callback_payload)
+        assert replay.status_code == 502
+        assert replay.json()["detail"]["failure_reason"] == (
+            "TELEGRAM_PREVIEW_DELIVERY_FAILED"
+        )
+        assert telegram_client.preview_failure_attempts == 1
+        session = session_factory()
+        try:
+            assert session.query(SourceDocument).count() == 1
+            assert session.query(ChangeRequest).count() == 1
+        finally:
+            session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_expired_picker_callback_fails_closed_without_business_rows() -> None:
+    session_factory = _session_factory()
+    _seed_pages(session_factory)
+    telegram_client = InMemoryTelegramBotClient()
+    telegram_client.add_file(
+        file_id="expired-picker-pdf",
+        file_bytes=b"telegram-file-bytes",
+        file_name="lesson.pdf",
+    )
+    store = InMemoryTelegramSessionStore(ttl_seconds=1)
+    _configure_app(
+        session_factory=session_factory,
+        telegram_client=telegram_client,
+        session_store=store,
+        source_type="pdf",
+    )
+    try:
+        client = TestClient(app)
+        upload = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 9720,
+                "message": {
+                    "message_id": 74,
+                    "chat": {"id": 569},
+                    "from": {"id": 789},
+                    "caption": "/ingest",
+                    "document": {
+                        "file_id": "expired-picker-pdf",
+                        "file_name": "lesson.pdf",
+                        "mime_type": "application/pdf",
+                    },
+                },
+            },
+        )
+        callback_data = _page_callback_data(telegram_client)
+        stored = store.find_latest_upload(chat_id="569", user_id="789")
+        assert stored is not None
+        stored.updated_at -= 2
+        response = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 9721,
+                "callback_query": {
+                    "id": "expired-picker",
+                    "from": {"id": 789},
+                    "data": callback_data,
+                    "message": {"message_id": 75, "chat": {"id": 569}},
+                },
+            },
+        )
+        assert upload.status_code == 200
+        assert response.status_code == 410
+        assert response.json()["detail"]["failure_reason"] == (
+            "UPLOAD_SESSION_EXPIRED"
+        )
+        assert telegram_client.list_callback_answers() == [
+            {
+                "callback_query_id": "expired-picker",
+                "text": "This upload session expired. Please upload the file again.",
+            }
+        ]
+        session = session_factory()
+        try:
+            assert session.query(SourceDocument).count() == 0
+            assert session.query(ChangeRequest).count() == 0
         finally:
             session.close()
     finally:
@@ -599,11 +898,12 @@ def test_invalid_target_callback_reports_redacted_failure_without_retry_duplicat
         assert detail["failure_reason"] == "LLM_OUTPUT_INVALID"
         assert "Knowledge/Other Page" not in detail["message"]
         assert telegram_client.list_callback_answers() == [
-            {
-                "callback_query_id": "invalid-target-callback",
-                "text": "Proposal validation failed. Please upload the file again.",
-            }
+            {"callback_query_id": "invalid-target-callback", "text": None}
         ]
+        assert any(
+            message.text == "Proposal validation failed. Please upload the file again."
+            for message in telegram_client.list_sent_messages()
+        )
 
         session = session_factory()
         try:

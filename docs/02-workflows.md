@@ -390,9 +390,13 @@ Telegram message or caption with PDF/image
 -> settle job claims the picker and sends full hierarchy-path inline buttons
 -> callback_data contains only `ll:<opaque_token>`
 -> Redis resolves token by chat/user to the canonical external Notion page id/path
+-> callback validates token ownership, session state, and selected page
+-> answerCallbackQuery immediately; record callback_ack_status separately
 -> atomic target claim starts existing PDF/OCR -> proposal orchestration
--> pending proposal stores the target page foreign key
--> preview claim sends one preview with Accept / Reject / Change target buttons
+-> commit source document and pending change request
+-> atomically claim preview delivery and send one preview with
+   Accept / Reject / Change target buttons
+-> finalize workflow run and update ledger
 -> explicit Accept callback or `/accept` reuses TelegramReviewOrchestrator
 ```
 
@@ -404,8 +408,22 @@ Rules:
   are short-lived Redis mappings isolated by chat and user.
 - `/ingest` text/caption parsing remains a fallback. The primary flow is upload,
   page button selection, target-aware pending proposal, then explicit review.
-- Media-group settle, target claim, and preview claim are atomic/idempotent;
-  retries cannot duplicate OCR, proposal creation, or preview delivery.
+- `answerCallbackQuery` is a Telegram UX side effect. After basic callback and
+  session validation, its failure is recorded as
+  `TELEGRAM_CALLBACK_ACK_FAILED` and does not own or rollback business work.
+- Target claim, source/proposal commits, and preview delivery claims are
+  separate boundaries. A valid callback runs business work at most once for
+  the claimed session; an acknowledged callback may therefore have
+  `callback_ack_status=failed` while the workflow still succeeds.
+- Media-group settle and target claims are atomic/idempotent. A successful
+  business commit creates exactly one source document and pending change
+  request for the update/session. An unexpected RQ retry reuses the ledger or
+  session claim and must not rerun OCR, proposal generation, or change-request
+  creation.
+- Preview delivery is post-commit. A failed `send_message` records
+  `TELEGRAM_PREVIEW_DELIVERY_FAILED`, preserves the pending change request, and
+  emits a short recovery message. Recovery may resend the existing preview but
+  never reruns ingestion or proposal generation.
 - The settle job uses bounded queue retries for unexpected worker failures;
   expected domain errors are terminal and remain explicit.
 - An expired session, missing media, invalid callback, or unavailable queue
@@ -414,9 +432,20 @@ Rules:
 - Invalid callback data is recorded as `INVALID_CALLBACK`; an expired or
   unusable upload session is recorded as `UPLOAD_SESSION_EXPIRED` or
   `UPLOAD_SESSION_INVALID`, never as `UNKNOWN_ERROR`.
+- Invalid/expired callback state fails closed before callback acknowledgement
+  and before any source or change-request row is created.
 - No proposal without a target receives an Accept prompt. No callback or worker
   path auto-accepts; appending and re-indexing remain behind the existing
   human review guardrails.
+
+Outcome metadata uses only safe state fields: `business_status`,
+`callback_ack_status`, `callback_ack_failure_reason`, and
+`preview_delivery_status`. It never stores callback payloads, upload bytes,
+OCR text, proposal source text, or secrets. A committed but undelivered outcome
+is inspected and reconciled with
+`scripts/reconcile_telegram_outcome.py`, which is dry-run by default and uses
+repositories plus one explicit preview resend/reconcile transaction; it does
+not use ad-hoc SQL.
 
 ## Telegram Page and Review Workflow (Step 73)
 

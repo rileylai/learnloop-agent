@@ -38,6 +38,7 @@ class TelegramUploadSession:
     change_request_id: Optional[int] = None
     source_type: Optional[str] = None
     preview_sent: bool = False
+    preview_delivery_status: str = "not_started"
     receipt_sent: bool = False
     picker_sent: bool = False
     failure_reason: Optional[str] = None
@@ -163,6 +164,18 @@ class TelegramSessionStore(ABC):
         chat_id: str,
         user_id: str,
     ) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def complete_preview(
+        self,
+        *,
+        session_id: str,
+        chat_id: str,
+        user_id: str,
+        success: bool,
+        failure_reason: Optional[str] = None,
+    ) -> Optional[TelegramUploadSession]:
         raise NotImplementedError
 
     @abstractmethod
@@ -375,9 +388,27 @@ class InMemoryTelegramSessionStore(TelegramSessionStore):
             session = self._get_unlocked(**kwargs)
             if session is None or session.preview_sent:
                 return False
-            session.preview_sent = True
+            if session.preview_delivery_status in {"sending", "succeeded"}:
+                return False
+            session.preview_delivery_status = "sending"
             session.updated_at = time.time()
             return True
+
+    def complete_preview(self, **kwargs):
+        with self._lock:
+            session = self._get_unlocked(
+                session_id=kwargs["session_id"],
+                chat_id=kwargs["chat_id"],
+                user_id=kwargs["user_id"],
+            )
+            if session is None:
+                return None
+            session.preview_delivery_status = "succeeded" if kwargs["success"] else "failed"
+            session.preview_sent = bool(kwargs["success"])
+            if not kwargs["success"]:
+                session.failure_reason = kwargs.get("failure_reason")
+            session.updated_at = time.time()
+            return session
 
     def fail_upload(self, **kwargs) -> None:
         with self._lock:
@@ -609,10 +640,30 @@ class RedisTelegramSessionStore(TelegramSessionStore):
             )
             if session is None or session.preview_sent:
                 return False
-            session.preview_sent = True
+            if session.preview_delivery_status in {"sending", "succeeded"}:
+                return False
+            session.preview_delivery_status = "sending"
             session.updated_at = time.time()
             self._redis.setex(key, self._ttl_seconds, _session_to_json(session))
             return True
+
+    def complete_preview(self, **kwargs):
+        key = _session_key(kwargs["chat_id"], kwargs["user_id"], kwargs["session_id"])
+        with self._locked(key):
+            session = self._get(
+                session_id=kwargs["session_id"],
+                chat_id=kwargs["chat_id"],
+                user_id=kwargs["user_id"],
+            )
+            if session is None:
+                return None
+            session.preview_delivery_status = "succeeded" if kwargs["success"] else "failed"
+            session.preview_sent = bool(kwargs["success"])
+            if not kwargs["success"]:
+                session.failure_reason = kwargs.get("failure_reason")
+            session.updated_at = time.time()
+            self._redis.setex(key, self._ttl_seconds, _session_to_json(session))
+            return session
 
     def fail_upload(self, **kwargs) -> None:
         key = _session_key(kwargs["chat_id"], kwargs["user_id"], kwargs["session_id"])

@@ -72,3 +72,6 @@ class TelegramWebhookResponse(BaseModel):
     review_action: Optional[str] = None
     change_request_status: Optional[str] = None
     target_set: bool = False
+    business_status: str = "not_started"
+    callback_ack_status: Optional[str] = None
+    preview_delivery_status: Optional[str] = None

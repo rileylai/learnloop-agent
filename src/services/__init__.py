@@ -74,6 +74,12 @@ from src.services.telegram_session_store import (
     TelegramUploadAttachment,
     TelegramUploadSession,
 )
+from src.services.telegram_recovery import (
+    RECOVERABLE_TELEGRAM_FAILURES,
+    TelegramRecoveryError,
+    TelegramRecoveryInspection,
+    TelegramRecoveryService,
+)
 from src.services.api_idempotency import (
     API_IDEMPOTENCY_FAILED,
     API_IDEMPOTENCY_RUNNING,
@@ -166,6 +172,10 @@ __all__ = [
     "TelegramSessionStore",
     "TelegramUploadAttachment",
     "TelegramUploadSession",
+    "RECOVERABLE_TELEGRAM_FAILURES",
+    "TelegramRecoveryError",
+    "TelegramRecoveryInspection",
+    "TelegramRecoveryService",
     "API_IDEMPOTENCY_FAILED",
     "API_IDEMPOTENCY_RUNNING",
     "API_IDEMPOTENCY_SUCCEEDED",

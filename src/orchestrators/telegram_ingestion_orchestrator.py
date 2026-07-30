@@ -198,6 +198,23 @@ class TelegramIngestionOrchestrator:
             user_id=user_id,
         )
 
+    def complete_upload_preview(
+        self,
+        *,
+        session_id: str,
+        chat_id: str,
+        user_id: str,
+        success: bool,
+        failure_reason: Optional[str] = None,
+    ) -> Optional[TelegramUploadSession]:
+        return self._session_store.complete_preview(
+            session_id=session_id,
+            chat_id=chat_id,
+            user_id=user_id,
+            success=success,
+            failure_reason=failure_reason,
+        )
+
     def fail_upload(
         self,
         *,

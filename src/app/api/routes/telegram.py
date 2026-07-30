@@ -155,14 +155,22 @@ async def handle_telegram_webhook(
             request_workflow_id=request_workflow_id,
         )
     except TelegramGatewayError as exc:
+        detail = {
+            "error_code": exc.error_code,
+            "message": exc.message,
+            "failure_reason": exc.failure_reason,
+            "workflow_run_id": exc.workflow_run_id,
+        }
+        for key in (
+            "business_status",
+            "callback_ack_status",
+            "preview_delivery_status",
+        ):
+            if key in exc.metadata:
+                detail[key] = exc.metadata[key]
         raise HTTPException(
             status_code=exc.http_status_code,
-            detail={
-                "error_code": exc.error_code,
-                "message": exc.message,
-                "failure_reason": exc.failure_reason,
-                "workflow_run_id": exc.workflow_run_id,
-            },
+            detail=detail,
         ) from exc
 
     response = TelegramWebhookResponse(
@@ -184,6 +192,9 @@ async def handle_telegram_webhook(
         review_action=result.review_action,
         change_request_status=result.change_request_status,
         target_set=result.target_set,
+        business_status=result.business_status,
+        callback_ack_status=result.callback_ack_status,
+        preview_delivery_status=result.preview_delivery_status,
     )
     if result.status == "running":
         content = (

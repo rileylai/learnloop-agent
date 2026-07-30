@@ -443,17 +443,17 @@ class TelegramBotTool(Tool):
             )
         except TelegramBotNotConfiguredError as exc:
             return ToolResult.failure(
-                code="TELEGRAM_NOT_CONFIGURED",
+                code="TELEGRAM_CALLBACK_ACK_FAILED",
                 message=sanitize_sensitive_text(str(exc)),
             )
         except TelegramBotSendError as exc:
             return ToolResult.failure(
-                code="TELEGRAM_SEND_FAILED",
+                code="TELEGRAM_CALLBACK_ACK_FAILED",
                 message=sanitize_sensitive_text(str(exc)),
             )
         except TelegramBotClientError as exc:
             return ToolResult.failure(
-                code="UNKNOWN_ERROR",
+                code="TELEGRAM_CALLBACK_ACK_FAILED",
                 message=sanitize_sensitive_text(str(exc)),
             )
         return ToolResult.success(
