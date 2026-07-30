@@ -20,10 +20,12 @@ Notion clients, the read-only live reader adapter's fake-transport tests, and
 the append-only live writer adapter's HTTP contract tests. Runtime dependency
 wiring defaults to mock clients and selects live clients only when
 `NOTION_BACKEND=live` has a configured `NOTION_TOKEN`; it fails closed instead
-of falling back when live configuration is incomplete. No real Notion
-workspace access or append has been verified. The live writer exposes
-append-only operations and must not add update, delete, move, or original-note
-write capabilities.
+of falling back when live configuration is incomplete. Step 83 additionally
+verified one human-approved append against a dedicated synthetic sandbox page
+through the live reader/writer path, including durable identity and re-index.
+That is bounded sandbox evidence, not arbitrary production-workspace or full
+Telegram `live_e2e` evidence. The live writer exposes append-only operations
+and must not add update, delete, move, or original-note write capabilities.
 
 Step 82 adds a separate guarded read/index/QA canary. Its recording transport
 allows only page discovery and page/block reads, blocks all write-shaped

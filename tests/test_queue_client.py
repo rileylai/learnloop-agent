@@ -1,7 +1,12 @@
 import fakeredis
 from rq import Queue, SimpleWorker
 
-from src.queue import FakeQueueClient, QueueRetryPolicy, RQQueueClient
+from src.queue import (
+    FakeQueueClient,
+    QueueRetryPolicy,
+    RQQueueClient,
+    get_callable_import_path,
+)
 
 
 def sample_task(text: str) -> str:
@@ -29,7 +34,7 @@ def test_fake_queue_client_enqueue() -> None:
     )
 
     assert enqueued.queue_name == "default"
-    assert enqueued.function_name == "sample_task"
+    assert enqueued.function_name == get_callable_import_path(sample_task)
     assert enqueued.args == ("hello",)
     assert enqueued.kwargs == {}
     assert len(client.enqueued_jobs) == 1
@@ -51,7 +56,8 @@ def test_rq_queue_client_enqueue_with_local_connection() -> None:
 
     assert fetched_job is not None
     assert fetched_job.description == "test job"
-    assert fetched_job.func_name.endswith("sample_task")
+    assert fetched_job.func_name == get_callable_import_path(sample_task)
+    assert enqueued.function_name == fetched_job.func_name
     assert fetched_job.args == ("hello",)
 
 

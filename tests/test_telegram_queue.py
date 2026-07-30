@@ -22,6 +22,7 @@ from src.orchestrators import TelegramGatewayOrchestrator
 from src.queue import FakeQueueClient
 from src.services import TelegramUpdateIdempotencyService, WorkflowRunService
 from src.tools import InMemoryTelegramBotClient, TelegramBotTool, ToolRegistry
+from src.worker.telegram import TELEGRAM_WEBHOOK_JOB_PATH
 
 
 def _build_session_factory():
@@ -79,6 +80,7 @@ def test_gateway_claims_once_and_enqueues_once() -> None:
     assert second.status == "running"
     assert second.skipped_reason == "DUPLICATE_UPDATE_IN_PROGRESS"
     assert len(queue_client.enqueued_jobs) == 1
+    assert queue_client.enqueued_jobs[0].function_name == TELEGRAM_WEBHOOK_JOB_PATH
 
     session = session_factory()
     try:

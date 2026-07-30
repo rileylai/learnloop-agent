@@ -19,6 +19,14 @@ worker execution remain opt-in.
 The deterministic write policy, state-transition, transaction, RAG-exclusion,
 and retry rules remain mandatory when live adapters are added.
 
+Worker import boundary (Step 88):
+- API enqueue and the worker share the canonical module-level callable
+  `src.worker.telegram.process_telegram_webhook_job`.
+- `scripts/run_worker.py` derives the repository root from `__file__`, so its
+  import path does not depend on the launch cwd.
+- Worker startup calls RQ `import_attribute()` for that path before Redis queue
+  consumption. An unresolved path fails fast and does not process jobs.
+
 Prompt safety boundary (Step 80):
 - Query, retrieved context, and source text are rendered as explicitly
   delimited untrusted data before entering an LLM request.
@@ -299,6 +307,9 @@ Rules:
   `TELEGRAM_QUEUE_UNAVAILABLE` so the failure is explicit and replayable.
 - If `REDIS_URL` is absent, local/test compatibility uses the existing
   synchronous gateway path. Release readiness still requires Redis.
+- A worker cannot silently fall back to synchronous handling after a queued
+  request. Import-resolution failure is a startup blocker; the webhook/ledger
+  queue contract remains unchanged.
 
 ## API Mutation Idempotency Workflow (Step 76)
 

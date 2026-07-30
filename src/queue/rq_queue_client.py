@@ -4,7 +4,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 from rq import Queue, Retry
 
-from src.queue.base import QueueClient
+from src.queue.base import QueueClient, get_callable_import_path
 from src.queue.models import EnqueuedJob, QueueRetryPolicy
 
 
@@ -23,6 +23,7 @@ class RQQueueClient(QueueClient):
         retry_policy: Optional[QueueRetryPolicy] = None,
     ) -> EnqueuedJob:
         queue = Queue(name=queue_name, connection=self._connection)
+        function_path = get_callable_import_path(function)
         enqueue_kwargs: Dict[str, Any] = {
             "description": description,
         }
@@ -40,7 +41,7 @@ class RQQueueClient(QueueClient):
         return EnqueuedJob(
             job_id=job.id,
             queue_name=queue_name,
-            function_name=function.__name__,
+            function_name=job.func_name or function_path,
             args=args,
             kwargs=kwargs or {},
             retry_policy=retry_policy,

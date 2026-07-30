@@ -52,6 +52,11 @@ Current contract gaps:
   `error_code=IDEMPOTENCY_IN_PROGRESS`. Requests without the header keep the
   existing behavior.
 
+The queued Telegram job uses the canonical module-level callable
+`src.worker.telegram.process_telegram_webhook_job`. The worker validates that
+RQ can import this path before consuming the queue; a worker import failure is
+not handled by switching the API back to synchronous execution.
+
 Examples below document route schemas and deterministic tested behavior. They
 do not by themselves prove live Notion, Telegram, OpenAI, parser, or worker
 integration.
@@ -1199,6 +1204,9 @@ Notes:
 - With Redis configured, command work starts in `scripts/run_worker.py` rather
   than in the webhook request. The worker consumes the `telegram` queue and
   applies bounded retries.
+- Worker startup derives the repository root from its own file path and
+  fail-fast resolves `src.worker.telegram.process_telegram_webhook_job` through
+  RQ. The API and worker therefore use the same fresh-process import path.
 - Duplicate running updates return `202`; duplicate succeeded and failed
   updates replay the original result or error. Updates without `update_id` are
   accepted for backward compatibility without deduplication.

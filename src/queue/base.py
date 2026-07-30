@@ -1,9 +1,28 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import inspect
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from src.queue.models import EnqueuedJob, QueueRetryPolicy
+
+
+def get_callable_import_path(function: Callable[..., Any]) -> str:
+    """Return the import path RQ will persist for a module-level function."""
+
+    if not inspect.isfunction(function):
+        raise TypeError("queued functions must be module-level functions")
+    module_name = getattr(function, "__module__", None)
+    qualified_name = getattr(function, "__qualname__", None)
+    if (
+        not module_name
+        or not qualified_name
+        or "<locals>" in qualified_name
+    ):
+        raise ValueError(
+            "queued functions must have a fresh-process importable module path"
+        )
+    return f"{module_name}.{qualified_name}"
 
 
 class QueueClient(ABC):

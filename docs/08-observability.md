@@ -60,6 +60,21 @@ mode-specific provider configuration is unavailable.
   and `REDIS_UNAVAILABLE` when Redis cannot answer `PING`. Test/demo/mock modes
   may omit the queue dependency.
 
+## Step 88 Telegram Worker Import Boundary
+
+- The queued Telegram callable is the module-level path
+  `src.worker.telegram.process_telegram_webhook_job`.
+- `scripts/run_worker.py` adds the repository root derived from its own file
+  location to `sys.path`; it does not rely on the current working directory or
+  a machine-specific absolute path.
+- Before connecting to or consuming the RQ queue, worker startup resolves the
+  canonical path through RQ `import_attribute()` and compares it with the
+  actual callable. Failure is fail-fast and safe to diagnose without running
+  Telegram work.
+- A previously claimed `running` update is not re-run by this fix. The ledger
+  remains the source of truth; operators inspect the redacted ledger/job state
+  and use an explicit recovery decision rather than raw SQL or replay.
+
 ## Workflow Metadata Notes
 
 - LLM-backed workflows record `provider_name`, `model`, `prompt_id`, and

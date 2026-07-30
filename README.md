@@ -30,8 +30,9 @@ Confirmed today:
 Not yet available as a real-user flow:
 
 - The default Notion backend uses bundled mock JSON. A live read-only reader
-  and append-only writer can be selected with `NOTION_BACKEND=live`, but no
-  real workspace access or append has been verified.
+  and append-only writer can be selected with `NOTION_BACKEND=live`. Step 83
+  verified one human-approved append against a dedicated sandbox page, but
+  this does not establish arbitrary production-workspace readiness.
 - A wired Redis/RQ worker is optional by configuration. Prometheus-compatible
   metrics, protected workflow status/reconciliation, and cost-budget alerts
   are implemented. API/webhook authentication, persistent Telegram update idempotency, and `/ready` are
@@ -39,8 +40,9 @@ Not yet available as a real-user flow:
   dependency-aware readiness; it is distinct from the shallow `/health` route.
 - Telegram transport and target-aware `/ingest` are mock-tested, but live
   Telegram delivery still requires operator configuration and verification.
-- No complete real Notion indexing -> QA -> proposal -> accept -> append ->
-  re-index or Telegram E2E has been live-verified.
+- A complete Notion indexing -> QA -> proposal -> accept -> append -> re-index
+  flow has been verified only in the dedicated sandbox canary; the full
+  Telegram live E2E remains unverified.
 
 See `dev_state/PROJECT_ROADMAP.md` for the local
 `Real-World Usability + Release Hardening` plan.
@@ -325,13 +327,14 @@ run the cleanup dry run and fail-closed release gate described above.
 - The isolated demo uses bundled mock Notion pages; production PostgreSQL
   rejects mock-source indexing. Real Notion access requires
   `NOTION_BACKEND=live` and operator verification.
-- Only one-page and caller-supplied incremental indexing routes exist. Full
-  discovery and index-status routes are planned.
-- Proposal review list/detail and a user-facing target-page selection flow are
-  missing.
-- The API and Telegram webhook do not yet enforce authentication or an allowed
-  chat list.
-- Long Telegram ingestion work is synchronous; no Redis/RQ worker is wired.
+- Full Notion discovery and index-status routes exist; manual incremental sync
+  remains an explicit operator action.
+- Proposal review list/detail and target-page selection are implemented through
+  the review APIs and Telegram `/pages` plus `/ingest --page` flow.
+- API bearer auth, Telegram webhook secret/allowed-chat policy, and persistent
+  idempotency are implemented; real deployment still requires configuration.
+- Configured Telegram long work uses Redis/RQ; local no-Redis compatibility is
+  retained, while release readiness requires the worker path.
 - `/health` is liveness only; `/ready` is dependency-aware and `/metrics` is a
   redacted Prometheus-compatible operator surface.
 - No direct original-note editing.

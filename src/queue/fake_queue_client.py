@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from uuid import uuid4
 
-from src.queue.base import QueueClient
+from src.queue.base import QueueClient, get_callable_import_path
 from src.queue.models import EnqueuedJob, QueueRetryPolicy
 
 
@@ -25,7 +25,7 @@ class FakeQueueClient(QueueClient):
         job = EnqueuedJob(
             job_id=str(uuid4()),
             queue_name=queue_name,
-            function_name=function.__name__,
+            function_name=get_callable_import_path(function),
             args=args,
             kwargs=kwargs or {},
             retry_policy=retry_policy,

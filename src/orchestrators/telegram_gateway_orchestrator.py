@@ -7,7 +7,7 @@ from http import HTTPStatus
 from typing import Optional
 
 from src.observability.redaction import sanitize_sensitive_text
-from src.queue import QueueClient, QueueRetryPolicy
+from src.queue import QueueClient, QueueRetryPolicy, get_callable_import_path
 from src.orchestrators.telegram_ingestion_orchestrator import (
     TelegramDocumentAttachment,
     TelegramIngestionError,
@@ -180,10 +180,19 @@ class TelegramGatewayOrchestrator:
                 request_workflow_id=request_workflow_id,
             )
 
-        from src.worker.telegram import process_telegram_webhook_job
-
         retry_policy = QueueRetryPolicy(max_retries=2, retry_intervals=(5, 30))
         try:
+            from src.worker.telegram import (
+                TELEGRAM_WEBHOOK_JOB_PATH,
+                process_telegram_webhook_job,
+            )
+
+            if (
+                get_callable_import_path(process_telegram_webhook_job)
+                != TELEGRAM_WEBHOOK_JOB_PATH
+            ):
+                raise RuntimeError("Telegram worker callable path is not canonical")
+
             self._queue_client.enqueue(
                 queue_name="telegram",
                 function=process_telegram_webhook_job,

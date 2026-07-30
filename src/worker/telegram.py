@@ -23,6 +23,8 @@ from src.orchestrators import (
     TelegramPhotoAttachment,
 )
 
+TELEGRAM_WEBHOOK_JOB_PATH = f"{__name__}.process_telegram_webhook_job"
+
 
 def process_telegram_webhook_job(
     update_id: Optional[int],

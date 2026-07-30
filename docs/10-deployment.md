@@ -42,12 +42,18 @@ The repository is demo-ready, not local-user-ready or release-ready.
   requires `NOTION_TOKEN`; incomplete live configuration fails closed without
   falling back to mock data.
 - The append-only Notion REST writer adapter is selected with the live backend
-  behind `NotionWriterTool`; it has not been verified against a real workspace.
+  behind `NotionWriterTool`. Step 83 verified one human-approved append through
+  this live adapter against a dedicated sandbox page, including durable
+  identity, re-index, and scoped citation. This is bounded sandbox evidence;
+  it does not establish arbitrary production-workspace readiness or the full
+  Telegram live E2E.
 - Telegram runtime requests enqueue background jobs through `QueueClient` when
   `REDIS_URL` is configured. Run `uv run --no-env-file --frozen python
-  scripts/run_worker.py` in a separate process to consume them. Jobs use two
-  bounded retries after the initial attempt; expected Telegram/domain failures
-  are persisted as terminal ledger outcomes.
+  scripts/run_worker.py` in a separate process to consume them. The worker
+  derives the repository root from its own file path and fail-fast validates
+  RQ resolution of `src.worker.telegram.process_telegram_webhook_job` before
+  consuming jobs. Jobs use two bounded retries after the initial attempt;
+  expected Telegram/domain failures are persisted as terminal ledger outcomes.
 - Tesseract is required for OCR. Useful non-English OCR also requires matching
   language data installed on the host.
 - Upload limits are enforced in API routes, orchestrators, and parser adapters;
@@ -80,6 +86,9 @@ the `Real-World Usability + Release Hardening` phase are complete.
   `test`, `demo`, and `mock` modes do not require a live provider.
 - Redis is required in local readiness because Telegram webhook work depends on
   the queue when `REDIS_URL` is configured. Test/demo/mock modes may skip it.
+- Worker startup is cwd-independent: it adds the repository root derived from
+  `scripts/run_worker.py` to `sys.path`. Do not replace this with a hardcoded
+  local path or a synchronous fallback.
 
 ## Portable Preflight Contract
 
@@ -144,6 +153,20 @@ the report shows zero Notion write attempts. If it fails, use the redacted
 `failed_stage` and `failure_reason` fields to diagnose the local index/QA
 boundary; the report does not expose exception text. This canary does not
 authorize or perform an append.
+
+## Human-approved Notion Append Canary (Step 83)
+
+Step 83 has completed its separate live canary against a dedicated synthetic
+sandbox page. The canary used explicit live opt-in plus human approval and
+verified `pending -> accepted`, append-only `AI Supplement Zone` behavior,
+durable change-request identity visibility, page re-index, and a scoped QA
+citation. Derived state remained ephemeral and the report was redacted to
+counts and operation classes.
+
+This evidence confirms the bounded sandbox append contract only. It is not a
+complete production Notion workspace E2E or the complete Telegram-to-Notion
+`live_e2e` chain. Step 88 remains the next planned verification and is not
+run by default.
 
 ## Local Secret Handling
 
