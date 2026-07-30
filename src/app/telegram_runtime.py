@@ -4,6 +4,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from src.app.config import get_settings
 from src.db.session import SessionFactory, UnitOfWorkFactory
 from src.orchestrators import (
     DocumentIngestionOrchestrator,
@@ -111,6 +112,7 @@ def build_telegram_gateway_orchestrator(
                 workflow_run_service=workflow_run_service,
                 embedding_client=embedding_client,
                 cost_tracker=cost_tracker,
+                source_is_synthetic=get_settings().notion_backend == "mock",
             ),
             workflow_run_service=workflow_run_service,
         )

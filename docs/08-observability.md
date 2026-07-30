@@ -218,7 +218,14 @@ append evidence.
   `URL_RESPONSE_TYPE_UNSUPPORTED`, and `URL_RESPONSE_TOO_LARGE`.
 - Current business-rule and workflow reasons:
   `CHANGE_REQUEST_NOT_FOUND`, `WRITE_POLICY_VIOLATION`,
-  `DUPLICATE_SOURCE`, and `UNKNOWN_ERROR`.
+  `DUPLICATE_SOURCE`, `SYNTHETIC_DATA_NOT_ALLOWED`, and `UNKNOWN_ERROR`.
+
+## Synthetic Data Hygiene Evidence (Step 87)
+
+Synthetic-data cleanup and release-gate reports may contain only fixed status,
+check id, error code, and aggregate counts. They must not expose database URLs,
+credentials, page ids, titles, paths, source text, vectors, or exception
+bodies. A failed inspection is fail-closed evidence, not a clean result.
 
 ## Retrieval Fallback Reasons
 

@@ -24,7 +24,12 @@ from src.repositories import (
     NotionChunkUpsert,
     StaleNotionPageSnapshotError,
 )
-from src.services import CostTracker, STANDARD_FAILURE_REASONS, WorkflowRunService
+from src.services import (
+    CostTracker,
+    STANDARD_FAILURE_REASONS,
+    WorkflowRunService,
+    is_known_synthetic_notion_page_id,
+)
 from src.tools import ToolContext, ToolRegistry
 
 NOTION_READER_TOOL_NAME = "notion_reader"
@@ -116,12 +121,18 @@ class NotionPageIndexOrchestrator:
         workflow_run_service: WorkflowRunService,
         embedding_client: Optional[EmbeddingClient] = None,
         cost_tracker: Optional[CostTracker] = None,
+        allow_synthetic_postgres_persistence: bool = False,
+        source_is_synthetic: bool = False,
     ) -> None:
         self._tool_registry = tool_registry
         self._unit_of_work_factory = unit_of_work_factory
         self._workflow_run_service = workflow_run_service
         self._embedding_client = embedding_client
         self._cost_tracker = cost_tracker
+        self._allow_synthetic_postgres_persistence = (
+            allow_synthetic_postgres_persistence
+        )
+        self._source_is_synthetic = source_is_synthetic
 
     def start_indexing_workflow(
         self,
@@ -399,6 +410,20 @@ class NotionPageIndexOrchestrator:
         unit_of_work: SqlAlchemyUnitOfWork,
     ) -> NotionIndexedPageSnapshot:
         page_payload = prepared_snapshot.page_payload
+        if (
+            getattr(unit_of_work, "database_dialect", None) == "postgresql"
+            and not self._allow_synthetic_postgres_persistence
+            and (
+                self._source_is_synthetic
+                or is_known_synthetic_notion_page_id(page_payload.page_id)
+            )
+        ):
+            raise NotionPageIndexError(
+                error_code="SYNTHETIC_DATA_NOT_ALLOWED",
+                message="Synthetic Notion data cannot be persisted to PostgreSQL",
+                http_status_code=HTTPStatus.CONFLICT,
+                failure_reason="SYNTHETIC_DATA_NOT_ALLOWED",
+            )
         notion_page = unit_of_work.notion_pages.upsert_page_snapshot(
             notion_page_id=page_payload.page_id,
             title=page_payload.title,

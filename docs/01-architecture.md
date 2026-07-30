@@ -205,3 +205,12 @@ Logic that must stay deterministic backend code (not MCP-owned):
   receive the bounded prompt, while target resolution, citation construction,
   output validation, and Notion write policy remain deterministic backend
   responsibilities.
+
+## Synthetic Data Boundary (Step 87)
+
+The fixed synthetic-data policy is a neutral policy dependency used by the
+indexing boundary and the repository-backed cleanup operator. When PostgreSQL
+is selected, mock-source indexing and known synthetic page ids fail before
+page, block, chunk, or vector persistence. Deterministic demos and evals use
+ephemeral SQLite instead. The cleanup operator and release gate use repository
+interfaces, never Notion clients or raw content output.

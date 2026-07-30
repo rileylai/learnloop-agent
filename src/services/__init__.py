@@ -90,6 +90,10 @@ from src.services.upload_limits import (
     validate_pdf_page_count,
     upload_error_http_status,
 )
+from src.policies.synthetic_data import (
+    SYNTHETIC_NOTION_PAGE_IDS,
+    is_known_synthetic_notion_page_id,
+)
 
 __all__ = [
     "CostTracker",
@@ -163,4 +167,6 @@ __all__ = [
     "validate_pdf_metadata",
     "validate_pdf_page_count",
     "upload_error_http_status",
+    "SYNTHETIC_NOTION_PAGE_IDS",
+    "is_known_synthetic_notion_page_id",
 ]

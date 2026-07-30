@@ -223,3 +223,20 @@ identity uncertainty stops recovery.
 The release evidence for this step is the redacted drill result, migration
 revision, readiness result, re-index result, and scoped QA citation. Secrets,
 connection URLs, page ids, and private source content are not evidence fields.
+
+## Step 87 Synthetic Data Release Gate
+
+Before a release, inspect the configured PostgreSQL database and fail closed
+on any known synthetic data:
+
+```bash
+uv run --no-env-file --frozen python scripts/cleanup_synthetic_data.py --json
+uv run --no-env-file --frozen python scripts/release_gate.py --json
+```
+
+The cleanup command is dry-run by default. After reviewing aggregate counts,
+an operator may apply the fixed allowlist only with
+`--apply --confirm CLEAN_SYNTHETIC_DATA`. It is transactional, does not call
+Notion, and does not accept arbitrary ids. Run the release gate again after
+cleanup; a database connection or inspection failure remains a release
+failure.

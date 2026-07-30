@@ -217,6 +217,21 @@ Failure response example `404` (page not found):
 }
 ```
 
+When the configured source is mock data or the requested page id is in the
+fixed synthetic allowlist, a PostgreSQL-backed request fails before any page,
+block, chunk, or vector persistence with `409`:
+
+```json
+{
+  "detail": {
+    "error_code": "SYNTHETIC_DATA_NOT_ALLOWED",
+    "message": "Synthetic Notion data cannot be persisted to PostgreSQL",
+    "failure_reason": "SYNTHETIC_DATA_NOT_ALLOWED",
+    "workflow_run_id": 101
+  }
+}
+```
+
 Notes:
 - Route must call orchestrator. Route does not call Notion directly.
 - Orchestrator must call `ToolRegistry` -> `NotionReaderTool`.

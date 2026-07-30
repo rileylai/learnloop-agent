@@ -486,6 +486,7 @@ def _build_page_index_orchestrator(
         workflow_run_service=WorkflowRunService(session_factory),
         embedding_client=embedding_client,
         cost_tracker=CostTracker(),
+        allow_synthetic_postgres_persistence=True,
     )
 
 

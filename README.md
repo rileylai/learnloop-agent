@@ -101,8 +101,20 @@ flowchart TD
 - MVP is local-only.
 - Docker Compose provides local PostgreSQL and Redis.
 - The bundled mock Notion pages under `mock_data/notion_pages/` are loaded
-  automatically for the demo flow.
+  automatically for the demo flow. They are test/demo fixtures only; the demo
+  uses ephemeral SQLite and production PostgreSQL rejects mock-source indexing.
 - The default demo path performs no real Notion write.
+
+To inspect a configured PostgreSQL database for known synthetic rows before a
+release, run the dry-run cleanup and fail-closed release gate:
+
+```bash
+uv run --no-env-file --frozen python scripts/cleanup_synthetic_data.py --json
+uv run --no-env-file --frozen python scripts/release_gate.py --json
+```
+
+Review the aggregate dry-run counts before any explicit apply operation. The
+cleanup allowlist is fixed, transactional, and does not connect to Notion.
 
 ## Prerequisites
 
@@ -284,88 +296,35 @@ qa_citation=Knowledge/NLP/Week5/...
 qa_answer=Positional encoding gives the model an order signal ...
 ```
 
-## Mock demo flow
+## Mock demo fixtures
 
-The repo already includes synthetic, public-safe mock Notion pages:
+The repo includes synthetic, public-safe mock Notion pages for the isolated
+demo and deterministic tests:
 
 - `page-nlp-week5`
 - `page-rag-basics`
 - `page-iso-9001`
 
 These pages are read through the same `NotionReaderTool` boundary used by the
-real indexing flow, but without any real Notion access.
+real indexing flow, but without any real Notion access. Do not index these
+fixtures through a server connected to a persistent PostgreSQL database:
+PostgreSQL mock-source indexing is blocked with `SYNTHETIC_DATA_NOT_ALLOWED`.
+Use `scripts/run_mock_demo.py`, which creates isolated in-memory SQLite state,
+for the complete index-and-QA walkthrough.
 
-### 1. Index one mock Notion page
+For a live API walkthrough, select `NOTION_BACKEND=live` and use a real
+read-only Notion configuration instead of these fixtures.
 
-```bash
-curl -X POST http://127.0.0.1:8000/api/notion/index/page \
-  -H "Content-Type: application/json" \
-  -d '{"page_id":"page-nlp-week5"}'
-```
-
-Expected behavior:
-
-- Response status is `200`
-- `page_title` is `NLP Week 5`
-- `notion_path` is `Knowledge/NLP/Week5`
-- `indexed_block_count` is greater than `0`
-
-### 2. Ask a mock QA question
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/qa \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "What does positional encoding do?",
-    "page_ids": ["page-nlp-week5"],
-    "top_k": 5,
-    "provider_name": "openai",
-    "model": "gpt-4o-mini"
-  }'
-```
-
-Expected behavior:
-
-- Response status is `200`
-- `status` is `succeeded`
-- `insufficient_info` is `false`
-- `citations` includes a path under `Knowledge/NLP/Week5`
-- `provider` is `openai`
-
-The exact answer text can vary by model, but it should stay grounded in the
-indexed mock notes and accepted synthetic `AI Supplement Zone` content.
-
-### 3. Optional second QA example
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/notion/index/page \
-  -H "Content-Type: application/json" \
-  -d '{"page_id":"page-rag-basics"}'
-```
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/qa \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "Why should a learning agent return citations?",
-    "page_ids": ["page-rag-basics"],
-    "top_k": 5,
-    "provider_name": "openai",
-    "model": "gpt-4o-mini"
-  }'
-```
-
-Expected behavior:
-
-- The answer explains citation discipline.
-- `citations` includes a path under `Knowledge/AI/RAG Basics`.
+The synthetic pages are not production retrieval evidence. Before release,
+run the cleanup dry run and fail-closed release gate described above.
 
 ## Current limits
 
 - MVP is local-only.
 - Telegram is the first user channel, but it is optional for the README demo.
-- The running API uses bundled mock Notion pages; real Notion access is not
-  wired.
+- The isolated demo uses bundled mock Notion pages; production PostgreSQL
+  rejects mock-source indexing. Real Notion access requires
+  `NOTION_BACKEND=live` and operator verification.
 - Only one-page and caller-supplied incremental indexing routes exist. Full
   discovery and index-status routes are planned.
 - Proposal review list/detail and a user-facing target-page selection flow are

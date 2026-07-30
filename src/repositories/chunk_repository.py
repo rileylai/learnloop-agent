@@ -8,6 +8,7 @@ from sqlalchemy import Float, Text, bindparam, cast, func, or_
 from sqlalchemy.orm import Session
 
 from src.db.models import KnowledgeChunk, NotionBlock, NotionPage
+from src.policies.synthetic_data import SYNTHETIC_NOTION_PAGE_IDS
 
 
 class ChunkRepositoryError(Exception):
@@ -175,6 +176,7 @@ class ChunkRepository:
             .outerjoin(NotionPage, NotionBlock.notion_page_id == NotionPage.id)
             .filter(KnowledgeChunk.source_kind.in_(effective_source_kinds))
         )
+        query = self._exclude_known_synthetic_pages(query)
         query = self._apply_page_filter(
             query=query,
             normalized_page_ids=normalized_page_ids,
@@ -258,6 +260,7 @@ class ChunkRepository:
                 KnowledgeChunk.embedding.is_not(None),
             )
         )
+        query = self._exclude_known_synthetic_pages(query)
         query = self._apply_page_filter(
             query=query,
             normalized_page_ids=normalized_page_ids,
@@ -334,6 +337,17 @@ class ChunkRepository:
         if normalized_page_ids:
             query = query.filter(NotionPage.notion_page_id.in_(normalized_page_ids))
         return query
+
+    def _exclude_known_synthetic_pages(self, query):
+        bind = self._session.get_bind()
+        if bind is None or bind.dialect.name != "postgresql":
+            return query
+        return query.filter(
+            or_(
+                NotionPage.notion_page_id.is_(None),
+                NotionPage.notion_page_id.notin_(SYNTHETIC_NOTION_PAGE_IDS),
+            )
+        )
 
     def _apply_section_filter(
         self,

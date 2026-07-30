@@ -376,3 +376,18 @@ Rules:
 - Existing pages with NULL `last_edited_time` are accepted deterministically;
   a timestamp-less reader update preserves a timestamp already stored for the
   page.
+
+## Synthetic Data Exclusion (Step 87)
+
+Production retrieval accepts Notion chunks by `source_kind`, so synthetic
+Notion rows must not be present in the live PostgreSQL database. The indexing
+orchestrator blocks known synthetic page ids and mock-source writes when the
+database dialect is PostgreSQL. Demo and deterministic eval flows continue to
+use ephemeral SQLite state.
+
+The fixed synthetic allowlist is inspected by
+`scripts/cleanup_synthetic_data.py`, and `scripts/release_gate.py` fails
+closed if any allowlisted page, block, or production-eligible chunk remains.
+Cleanup is explicit, transactional, and does not access Notion. This is a
+release invariant; it is not a retrieval-time substitute for the existing
+production source and pending/rejected-state filters.

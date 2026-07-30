@@ -789,6 +789,7 @@ Failure taxonomy:
 - `CHANGE_REQUEST_NOT_FOUND`
 - `WRITE_POLICY_VIOLATION`
 - `DUPLICATE_SOURCE`
+- `SYNTHETIC_DATA_NOT_ALLOWED`
 - `TELEGRAM_NOT_CONFIGURED`
 - `TELEGRAM_SEND_FAILED`
 - `TELEGRAM_FILE_DOWNLOAD_FAILED`
@@ -802,6 +803,25 @@ Failure taxonomy:
 - `INVALID_IMAGE`
 - `EXTRACTED_TEXT_LIMIT_EXCEEDED`
 - `UNKNOWN_ERROR`
+
+## Step 87 Synthetic Data Hygiene
+
+Mock Notion JSON remains available for the deterministic demo and test-only
+fixtures. The demo uses ephemeral SQLite state. A mock Notion source is not
+allowed to persist into PostgreSQL, and the known synthetic page-id allowlist
+is not treated as production knowledge.
+
+The operator command `scripts/cleanup_synthetic_data.py` inspects that fixed
+allowlist by default. It performs a dry run unless `--apply` is supplied with
+the exact confirmation `CLEAN_SYNTHETIC_DATA`; apply runs in one transaction,
+deletes only synthetic pages and their owned blocks/chunks, and never connects
+to Notion. It does not accept caller-supplied page ids.
+
+`scripts/release_gate.py` must pass before release. It fails closed when any
+allowlisted synthetic page, block, or chunk remains in the PostgreSQL database,
+and it also fails closed when the database cannot be inspected. The operator
+must review the dry-run counts before applying cleanup. Real Notion rows are
+outside the allowlist and are not modified by this command.
 
 ## 18. Architectural Decisions
 - ADR-001: Use FastAPI.

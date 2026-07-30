@@ -5,6 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
+from src.app.config import get_settings
 from src.app.dependencies import (
     get_cost_tracker,
     get_embedding_client,
@@ -191,6 +192,7 @@ def _build_supplement_review_orchestrator(
         workflow_run_service=WorkflowRunService(db_session_factory),
         embedding_client=embedding_client,
         cost_tracker=cost_tracker,
+        source_is_synthetic=get_settings().notion_backend == "mock",
     )
     return SupplementReviewOrchestrator(
         change_request_repository=ChangeRequestRepository(db_session),

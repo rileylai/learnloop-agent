@@ -110,6 +110,12 @@ class SqlAlchemyUnitOfWork:
             raise UnitOfWorkInactiveError("Unit of Work is not active")
         return self._change_requests
 
+    @property
+    def database_dialect(self) -> Optional[str]:
+        if self._session is None or self._session.bind is None:
+            return None
+        return self._session.bind.dialect.name
+
     def _clear_repositories(self) -> None:
         self._notion_pages = None
         self._notion_blocks = None

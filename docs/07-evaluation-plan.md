@@ -382,3 +382,20 @@ It never prints page ids, titles, paths, source text, credentials, or exception
 bodies.
 This is read/index/QA evidence only; the human-approved append canary is Step
 83.
+
+## Synthetic Data Hygiene Gate (Step 87)
+
+`tests/test_synthetic_data_hygiene.py` verifies the fixed allowlist, dry-run
+default, explicit apply confirmation, transactional cleanup, preservation of
+non-synthetic rows, PostgreSQL persistence blocking, and fail-closed release
+gate behavior. Run the operator checks with:
+
+```bash
+uv run --no-env-file --frozen python scripts/cleanup_synthetic_data.py --json
+uv run --no-env-file --frozen python scripts/release_gate.py --json
+```
+
+The default mock fixtures are test/demo inputs, not release evidence. A live
+release requires a successful gate against the intended PostgreSQL database;
+an unavailable database is a failed inspection and must not be interpreted as
+clean.
