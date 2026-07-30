@@ -106,6 +106,7 @@ def process_telegram_upload_settle_job(
     chat_id: str,
     user_id: str,
     request_workflow_id: str,
+    settle_version: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Settle a media group once; Redis state prevents duplicate pickers."""
 
@@ -125,14 +126,25 @@ def process_telegram_upload_settle_job(
             telegram_session_store=get_telegram_session_store(),
             queue_client=get_queue_client(),
         )
-        asyncio.run(
+        settle_status = asyncio.run(
             gateway.settle_upload_session(
                 session_id=session_id,
                 chat_id=chat_id,
                 user_id=user_id,
                 request_workflow_id=request_workflow_id,
+                settle_version=settle_version,
             )
         )
+        if settle_status in {"stale", "duplicate"}:
+            return {
+                "status": "skipped",
+                "skipped_reason": (
+                    "STALE_SETTLE_JOB"
+                    if settle_status == "stale"
+                    else "DUPLICATE_SETTLE_JOB"
+                ),
+                "session_id": session_id,
+            }
         return {"status": "succeeded", "session_id": session_id}
     except TelegramGatewayError as exc:
         return {

@@ -54,6 +54,76 @@ class RQQueueClient(QueueClient):
         except Exception:
             return False
 
+    def is_scheduler_available(self, *, queue_name: str) -> bool:
+        """Check the RQ scheduler lock without mutating any registry."""
+
+        try:
+            return (
+                Queue(name=queue_name, connection=self._connection).scheduler_pid
+                is not None
+            )
+        except Exception:
+            return False
+
+    def inspect_state(
+        self,
+        *,
+        queue_name: str,
+        limit: int = 50,
+    ) -> Dict[str, Any]:
+        """Return redacted queue state without registry cleanup or deletion."""
+
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        from rq.registry import StartedJobRegistry
+
+        queue = Queue(name=queue_name, connection=self._connection)
+        scheduled = queue.scheduled_job_registry
+        started = StartedJobRegistry(name=queue_name, connection=self._connection)
+        scheduled_ids = scheduled.get_job_ids(
+            start=0,
+            end=limit - 1,
+            cleanup=False,
+        )
+        scheduled_jobs = []
+        for job_id in scheduled_ids:
+            job = queue.fetch_job(job_id)
+            if job is None:
+                scheduled_jobs.append(
+                    {"job_id": job_id, "status": "missing_job_record"}
+                )
+                continue
+            try:
+                scheduled_at = scheduled.get_expiration_time(job)
+            except Exception:
+                scheduled_at = None
+            scheduled_jobs.append(
+                {
+                    "job_id": job.id,
+                    "function": job.func_name,
+                    "status": job.get_status(refresh=False),
+                    "scheduled_at": (
+                        scheduled_at.isoformat() if scheduled_at is not None else None
+                    ),
+                    "enqueued_at": (
+                        job.enqueued_at.isoformat()
+                        if job.enqueued_at is not None
+                        else None
+                    ),
+                    "retries_left": job.retries_left,
+                }
+            )
+
+        return {
+            "queue_name": queue_name,
+            "scheduler_running": queue.scheduler_pid is not None,
+            "queued": queue.count,
+            "started": started.get_job_count(cleanup=False),
+            "scheduled": scheduled.get_job_count(cleanup=False),
+            "scheduled_jobs": scheduled_jobs,
+            "inspection_mutates_redis": False,
+        }
+
     def enqueue_in(
         self,
         *,

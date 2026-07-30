@@ -8,6 +8,7 @@ from src.queue import QueueClient
 
 READINESS_OK = "ok"
 READINESS_FAILED = "failed"
+TELEGRAM_QUEUE_NAME = "telegram"
 
 
 @dataclass(frozen=True)
@@ -85,9 +86,21 @@ class ReadinessService:
                 failure_reason="REDIS_URL_NOT_CONFIGURED",
             )
         if self._queue_client.is_available():
+            try:
+                scheduler_available = self._queue_client.is_scheduler_available(
+                    queue_name=TELEGRAM_QUEUE_NAME
+                )
+            except Exception:
+                scheduler_available = False
+            if not scheduler_available:
+                return ReadinessCheckResult(
+                    status=READINESS_FAILED,
+                    detail="Redis is available but the RQ scheduler is not running",
+                    failure_reason="RQ_SCHEDULER_NOT_RUNNING",
+                )
             return ReadinessCheckResult(
                 status=READINESS_OK,
-                detail="Redis queue is available",
+                detail="Redis queue and RQ scheduler are available",
             )
         return ReadinessCheckResult(
             status=READINESS_FAILED,

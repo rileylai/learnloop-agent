@@ -24,11 +24,16 @@ class _FakeReadinessProbe:
 
 
 class _FakeQueueClient:
-    def __init__(self, available: bool) -> None:
+    def __init__(self, available: bool, scheduler_available: bool = True) -> None:
         self._available = available
+        self._scheduler_available = scheduler_available
 
     def is_available(self) -> bool:
         return self._available
+
+    def is_scheduler_available(self, *, queue_name: str) -> bool:
+        _ = queue_name
+        return self._scheduler_available
 
 
 def _override_readiness_service(
@@ -136,3 +141,21 @@ def test_ready_reports_redis_failure_when_queue_is_required() -> None:
 
     assert report.is_ready is False
     assert report.checks["queue"].failure_reason == "REDIS_UNAVAILABLE"
+
+
+def test_ready_reports_scheduler_failure_when_redis_is_available() -> None:
+    service = ReadinessService(
+        probe=_FakeReadinessProbe(),
+        mode="local",
+        openai_configured=True,
+        queue_client=_FakeQueueClient(
+            available=True,
+            scheduler_available=False,
+        ),
+        queue_required=True,
+    )
+
+    report = service.check()
+
+    assert report.is_ready is False
+    assert report.checks["queue"].failure_reason == "RQ_SCHEDULER_NOT_RUNNING"

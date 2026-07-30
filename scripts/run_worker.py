@@ -32,6 +32,12 @@ from rq.worker import SpawnWorker, Worker
 LOGGER = logging.getLogger("learnloop.worker")
 
 
+def run_worker(*, worker: Worker, burst: bool) -> bool:
+    """Run the Telegram worker with RQ's embedded scheduler enabled."""
+
+    return worker.work(burst=burst, with_scheduler=True)
+
+
 def select_worker_class(
     *,
     system_name: str | None = None,
@@ -114,7 +120,13 @@ def main() -> int:
         [Queue(name=args.queue, connection=connection)],
         connection=connection,
     )
-    worker.work(burst=args.burst)
+    LOGGER.info(
+        "queue=%s worker_started=true scheduler_enabled=true "
+        "scheduler_mode=embedded worker_class=%s",
+        args.queue,
+        worker_class.__name__,
+    )
+    run_worker(worker=worker, burst=args.burst)
     return 0
 
 

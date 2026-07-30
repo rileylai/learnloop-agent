@@ -50,6 +50,11 @@ The repository is demo-ready, not local-user-ready or release-ready.
 - Telegram runtime requests enqueue background jobs through `QueueClient` when
   `REDIS_URL` is configured. Run `uv run --no-env-file --frozen python
   scripts/run_worker.py` in a separate process to consume them. The worker
+  uses RQ's embedded scheduler (`with_scheduler=True`), so the same process
+  promotes delayed settle jobs and interval-based retries.
+  Startup emits only safe fields such as
+  `queue=telegram worker_started=true scheduler_enabled=true`; it never logs
+  the Redis URL or secrets. The worker
   derives the repository root from its own file path and fail-fast validates
   RQ resolution of `src.worker.telegram.process_telegram_webhook_job` before
   consuming jobs. RQ 2.8.0's platform policy selects `SpawnWorker` on
@@ -87,8 +92,10 @@ the `Real-World Usability + Release Hardening` phase are complete.
   check details.
 - `APP_ENV=local` requires `OPENAI_API_KEY` for server-backed indexing. The
   `test`, `demo`, and `mock` modes do not require a live provider.
-- Redis is required in local readiness because Telegram webhook work depends on
-  the queue when `REDIS_URL` is configured. Test/demo/mock modes may skip it.
+- Redis and the RQ scheduler are required in local readiness because Telegram
+  webhook work depends on delayed queue promotion. Test/demo/mock modes may
+  skip them. Redis availability without a live scheduler fails `/ready` with
+  `RQ_SCHEDULER_NOT_RUNNING`.
 - Worker startup is cwd-independent: it adds the repository root derived from
   `scripts/run_worker.py` to `sys.path`. Do not replace this with a hardcoded
   local path or a synchronous fallback. Use `--worker-class auto` for the
@@ -117,6 +124,23 @@ the `Real-World Usability + Release Hardening` phase are complete.
 - Preflight checks dependency/configuration state only. Database, Redis,
   migration, vector, and external-service connectivity belong to the later
   readiness step.
+
+## RQ delayed-job inspection
+
+Inspect queue counts, scheduler liveness, and scheduled job identity without
+deleting or cleaning any registry:
+
+```bash
+uv run --no-env-file --frozen python scripts/inspect_rq_queue.py \
+  --queue telegram --json
+```
+
+The report includes only queue name, counts, scheduler state, job id, callable,
+status, schedule/enqueue timestamps, and retries left. It never prints job
+arguments or the Redis URL. Existing scheduled webhook retry and upload-settle
+jobs should remain in place; after the worker starts with the embedded scheduler,
+due jobs are promoted and the update ledger/session version claims prevent
+duplicate business work. Do not run registry cleanup or deletion as recovery.
 
 ## Adapter Smoke Matrix
 

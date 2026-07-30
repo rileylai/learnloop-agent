@@ -44,6 +44,26 @@ class QueueClient(ABC):
         """Return whether the queue backend can accept work now."""
         raise NotImplementedError
 
+    def is_scheduler_available(self, *, queue_name: str) -> bool:
+        """Return whether delayed jobs for a queue have an active scheduler.
+
+        Queue fakes may keep the default false value. Production adapters must
+        report the scheduler's durable liveness signal rather than assuming
+        that a reachable Redis server also promotes scheduled jobs.
+        """
+        _ = queue_name
+        return False
+
+    def inspect_state(
+        self,
+        *,
+        queue_name: str,
+        limit: int = 50,
+    ) -> Dict[str, Any]:
+        """Return safe operator state without mutating queue registries."""
+        _ = (queue_name, limit)
+        raise NotImplementedError
+
     def enqueue_in(
         self,
         *,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
@@ -68,8 +69,9 @@ class _OCRParser(ImageOCRParserClient):
 
 
 class _ProposalProvider(LLMProvider):
-    def __init__(self, *, source_type: str) -> None:
+    def __init__(self, *, source_type: str, screenshot_count: int = 1) -> None:
         self._source_type = source_type
+        self._screenshot_count = screenshot_count
 
     @property
     def name(self) -> str:
@@ -93,7 +95,7 @@ class _ProposalProvider(LLMProvider):
                         "source_display_name": (
                             "lesson.pdf"
                             if self._source_type == "pdf"
-                            else "Screenshot batch (1 images)"
+                            else f"Screenshot batch ({self._screenshot_count} images)"
                         ),
                     },
                     "summary": "Proposal created after a page button selection.",
@@ -1083,7 +1085,14 @@ def test_media_group_store_is_idempotent_and_concurrency_safe() -> None:
         chat_id="1",
         user_id="2",
         media_group_id="album-1",
-        attachments=[TelegramUploadAttachment(kind="photo", file_id="a")],
+        attachments=[
+            TelegramUploadAttachment(
+                kind="photo",
+                file_id="a",
+                file_unique_id="unique-a",
+                message_id=30,
+            )
+        ],
         command_text="/ingest",
     )
     assert len(first.attachments) == 1
@@ -1105,17 +1114,42 @@ def test_media_group_store_is_idempotent_and_concurrency_safe() -> None:
         user_id="2",
         media_group_id="album-1",
         attachments=[
-            TelegramUploadAttachment(kind="photo", file_id="a"),
-            TelegramUploadAttachment(kind="photo", file_id="b"),
+            TelegramUploadAttachment(
+                kind="photo",
+                file_id="a-retry",
+                file_unique_id="unique-a",
+                message_id=30,
+            ),
+            TelegramUploadAttachment(kind="photo", file_id="b", message_id=10),
         ],
         command_text=None,
     )
     assert store.claim_settle(session_id="group-1", chat_id="1", user_id="2") is False
+    assert store.claim_settled(
+        session_id="group-1",
+        chat_id="1",
+        user_id="2",
+        settle_version=999,
+    ) is False
+    assert store.claim_settled(
+        session_id="group-1",
+        chat_id="1",
+        user_id="2",
+        settle_version=1,
+    ) is True
+    assert store.claim_settled(
+        session_id="group-1",
+        chat_id="1",
+        user_id="2",
+        settle_version=1,
+    ) is False
     assert store.claim_picker(session_id="group-1", chat_id="1", user_id="2") is True
     assert store.claim_picker(session_id="group-1", chat_id="1", user_id="2") is False
     session = store.get_upload(session_id="group-1", chat_id="1", user_id="2")
     assert session is not None
     assert {item.file_id for item in session.attachments} == {"a", "b"}
+    assert [item.file_id for item in session.attachments] == ["b", "a"]
+    assert session.state == "awaiting_target"
     assert store.claim_target(
         session_id="group-1",
         chat_id="1",
@@ -1130,6 +1164,164 @@ def test_media_group_store_is_idempotent_and_concurrency_safe() -> None:
         target_notion_page_id="canonical-page",
         target_notion_path="Knowledge/Page",
     )[0] == "in_progress"
+
+
+def test_three_media_group_updates_use_one_picker_and_one_business_batch(
+    monkeypatch,
+) -> None:
+    session_factory = _session_factory()
+    _seed_pages(session_factory)
+    telegram_client = InMemoryTelegramBotClient()
+    for message_id in (30, 10, 20):
+        telegram_client.add_file(
+            file_id=f"group-image-{message_id}",
+            file_bytes=f"image-{message_id}".encode(),
+            file_name=f"image-{message_id}.png",
+        )
+
+    class _FakeRedisWithLocalLock:
+        def __init__(self, redis_client) -> None:
+            self._redis = redis_client
+            self._lock = threading.RLock()
+
+        def lock(self, *_args, **_kwargs):
+            return self._lock
+
+        def __getattr__(self, name):
+            return getattr(self._redis, name)
+
+    redis_client = fakeredis.FakeRedis()
+    session_store = RedisTelegramSessionStore(
+        redis_client=_FakeRedisWithLocalLock(redis_client)
+    )
+    queue_client = RQQueueClient(connection=redis_client)
+    _configure_app(
+        session_factory=session_factory,
+        telegram_client=telegram_client,
+        session_store=session_store,
+        source_type="screenshot",
+    )
+    app.dependency_overrides[get_queue_client] = lambda: queue_client
+
+    registry = ToolRegistry()
+    registry.register_tool(TelegramBotTool(telegram_client))
+    registry.register_tool(ImageOCRTool(_OCRParser()))
+    router = ProviderRouter()
+    router.register_provider(
+        _ProposalProvider(source_type="screenshot", screenshot_count=3)
+    )
+    monkeypatch.setattr(telegram_worker, "get_db_session_factory", lambda: session_factory)
+    monkeypatch.setattr(
+        telegram_worker,
+        "get_unit_of_work_factory",
+        lambda: (lambda: SqlAlchemyUnitOfWork(session_factory)),
+    )
+    monkeypatch.setattr(telegram_worker, "get_tool_registry", lambda: registry)
+    monkeypatch.setattr(telegram_worker, "get_provider_router", lambda: router)
+    monkeypatch.setattr(telegram_worker, "get_embedding_client", lambda: None)
+    monkeypatch.setattr(telegram_worker, "get_cost_tracker", lambda: CostTracker())
+    monkeypatch.setattr(
+        telegram_worker,
+        "get_prompt_template_loader",
+        lambda: PromptTemplateLoader(),
+    )
+    monkeypatch.setattr(
+        telegram_worker,
+        "get_trust_boundary",
+        lambda: TrustBoundaryService(),
+    )
+    monkeypatch.setattr(telegram_worker, "get_queue_client", lambda: queue_client)
+    monkeypatch.setattr(
+        telegram_worker,
+        "get_telegram_session_store",
+        lambda: session_store,
+    )
+
+    try:
+        client = TestClient(app)
+        for update_id, message_id in enumerate((30, 10, 20), start=9600):
+            response = client.post(
+                "/api/telegram/webhook",
+                json={
+                    "update_id": update_id,
+                    "message": {
+                        "message_id": message_id,
+                        "chat": {"id": 566},
+                        "from": {"id": 786},
+                        "caption": "/ingest",
+                        "media_group_id": "album-three",
+                        "photo": [
+                            {
+                                "file_id": f"group-image-{message_id}",
+                                "file_unique_id": f"group-unique-{message_id}",
+                                "width": 1200,
+                                "height": 800,
+                                "file_size": 100,
+                            }
+                        ],
+                    },
+                },
+            )
+            assert response.status_code == 202
+
+        SimpleWorker(
+            [Queue(name="telegram", connection=redis_client)],
+            connection=redis_client,
+        ).work(burst=True)
+        time.sleep(1.1)
+        SimpleWorker(
+            [Queue(name="telegram", connection=redis_client)],
+            connection=redis_client,
+        ).work(burst=True, with_scheduler=True)
+
+        picker_messages = [
+            message
+            for message in telegram_client.list_sent_messages()
+            if message.reply_markup is not None
+            and message.text.startswith("File received. Choose")
+        ]
+        assert len(picker_messages) == 1
+        # The session id is derived from the media_group_id; inspect it through
+        # the user-scoped latest pointer so the UI never needs that id.
+        session = session_store.find_latest_upload(chat_id="566", user_id="786")
+        assert session is not None
+        assert session.state == "awaiting_target"
+        assert [item.message_id for item in session.attachments] == [10, 20, 30]
+        assert [item.file_id for item in session.attachments] == [
+            "group-image-10",
+            "group-image-20",
+            "group-image-30",
+        ]
+
+        picker_data = picker_messages[0].reply_markup["inline_keyboard"][1][0][
+            "callback_data"
+        ]
+        callback_response = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 9700,
+                "callback_query": {
+                    "id": "group-picker",
+                    "from": {"id": 786},
+                    "data": picker_data,
+                    "message": {"message_id": 31, "chat": {"id": 566}},
+                },
+            },
+        )
+        assert callback_response.status_code == 202
+        SimpleWorker(
+            [Queue(name="telegram", connection=redis_client)],
+            connection=redis_client,
+        ).work(burst=True)
+
+        session = session_factory()
+        try:
+            assert session.query(SourceDocument).count() == 1
+            assert session.query(ChangeRequest).count() == 1
+        finally:
+            session.close()
+    finally:
+        app.dependency_overrides.clear()
 
 
 def test_expired_session_and_cross_user_lookup_fail_closed() -> None:

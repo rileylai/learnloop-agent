@@ -30,6 +30,10 @@ Worker import boundary (Step 88):
   standard RQ `Worker` on Linux. The macOS fork-based worker is rejected by
   policy; this does not require `OBJC_DISABLE_INITIALIZE_FORK_SAFETY` and does
   not change the asynchronous queue boundary.
+- `scripts/run_worker.py` calls `worker.work(with_scheduler=True)` and uses
+  RQ's embedded scheduler for the selected queue. This is required for both
+  `enqueue_at`/`enqueue_in` jobs and interval-based RQ retries; Redis being
+  reachable by itself is not sufficient.
 
 Prompt safety boundary (Step 80):
 - Query, retrieved context, and source text are rendered as explicitly
@@ -319,6 +323,11 @@ Rules:
 - A worker cannot silently fall back to synchronous handling after a queued
   request. Import-resolution failure is a startup blocker; the webhook/ledger
   queue contract remains unchanged.
+- Existing scheduled jobs are retained when the worker is restarted. The
+  embedded scheduler promotes due jobs; the Telegram update ledger and
+  upload-session claims make old webhook retries and settle jobs safe to
+  replay. Operators inspect them with the read-only queue inspector instead
+  of deleting or cleaning a registry.
 
 ## API Mutation Idempotency Workflow (Step 76)
 
@@ -434,6 +443,10 @@ Rules:
   request for the update/session. An unexpected RQ retry reuses the ledger or
   session claim and must not rerun OCR, proposal generation, or change-request
   creation.
+- Upload sessions carry a monotonic settle version. The settle job atomically
+  promotes `collecting` to `settled`, sorts attachments by Telegram
+  `message_id`, and stale/duplicate versions skip before picker or business
+  work. Duplicate `file_unique_id` values are ignored in the session store.
 - Preview delivery is post-commit. A failed `send_message` records
   `TELEGRAM_PREVIEW_DELIVERY_FAILED`, preserves the pending change request, and
   emits a short recovery message. Recovery may resend the existing preview but

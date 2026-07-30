@@ -42,6 +42,7 @@ def infer_telegram_callback_kind(action: str) -> str:
 class TelegramUploadAttachment:
     kind: str
     file_id: str
+    message_id: Optional[int] = None
     file_unique_id: Optional[str] = None
     file_name: Optional[str] = None
     mime_type: Optional[str] = None
@@ -57,6 +58,8 @@ class TelegramUploadSession:
     attachments: List[TelegramUploadAttachment] = field(default_factory=list)
     command_text: Optional[str] = None
     state: str = "collecting"
+    settle_scheduled: bool = False
+    settle_version: int = 0
     target_notion_page_id: Optional[str] = None
     target_notion_path: Optional[str] = None
     source_document_id: Optional[int] = None
@@ -132,6 +135,18 @@ class TelegramSessionStore(ABC):
         chat_id: str,
         user_id: str,
     ) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def claim_settled(
+        self,
+        *,
+        session_id: str,
+        chat_id: str,
+        user_id: str,
+        settle_version: Optional[int] = None,
+    ) -> bool:
+        """Atomically promote one scheduled session to settled."""
         raise NotImplementedError
 
     @abstractmethod
@@ -285,6 +300,22 @@ def _callback_from_payload(*, token: str, payload: dict[str, Any]) -> TelegramCa
     )
 
 
+def _attachment_sort_key(attachment: TelegramUploadAttachment) -> tuple:
+    """Sort media-group attachments deterministically by Telegram message id."""
+
+    return (
+        attachment.message_id is None,
+        attachment.message_id if attachment.message_id is not None else 0,
+        attachment.file_unique_id or attachment.file_id,
+    )
+
+
+def _sort_attachments(
+    attachments: List[TelegramUploadAttachment],
+) -> List[TelegramUploadAttachment]:
+    return sorted(attachments, key=_attachment_sort_key)
+
+
 class InMemoryTelegramSessionStore(TelegramSessionStore):
     """Deterministic test/demo store with the same ownership semantics as Redis."""
 
@@ -323,6 +354,8 @@ class InMemoryTelegramSessionStore(TelegramSessionStore):
                     media_group_id=kwargs["media_group_id"],
                 )
                 self._sessions[key] = session
+            if session.state not in {"collecting", "settling"}:
+                return session
             known = {item.file_unique_id or item.file_id for item in session.attachments}
             for attachment in kwargs["attachments"]:
                 identity = attachment.file_unique_id or attachment.file_id
@@ -362,9 +395,39 @@ class InMemoryTelegramSessionStore(TelegramSessionStore):
     def claim_settle(self, **kwargs) -> bool:
         with self._lock:
             session = self._get_unlocked(**kwargs)
-            if session is None or session.state != "collecting":
+            if (
+                session is None
+                or session.state != "collecting"
+                or session.settle_scheduled
+            ):
                 return False
-            session.state = "settling"
+            session.settle_scheduled = True
+            session.settle_version += 1
+            session.updated_at = time.time()
+            return True
+
+    def claim_settled(self, **kwargs) -> bool:
+        with self._lock:
+            expected_version = kwargs.get("settle_version")
+            session = self._get_unlocked(
+                session_id=kwargs["session_id"],
+                chat_id=kwargs["chat_id"],
+                user_id=kwargs["user_id"],
+            )
+            if session is None or session.picker_sent:
+                return False
+            if expected_version is not None:
+                if (
+                    session.state != "collecting"
+                    or not session.settle_scheduled
+                    or session.settle_version != expected_version
+                ):
+                    return False
+            elif session.state not in {"collecting", "settling"}:
+                return False
+            session.attachments = _sort_attachments(session.attachments)
+            session.state = "settled"
+            session.settle_scheduled = False
             session.updated_at = time.time()
             return True
 
@@ -373,7 +436,12 @@ class InMemoryTelegramSessionStore(TelegramSessionStore):
             session = self._get_unlocked(**kwargs)
             if session is None or session.picker_sent:
                 return False
-            if session.state not in {"collecting", "settling", "awaiting_target"}:
+            if session.state not in {
+                "collecting",
+                "settling",
+                "settled",
+                "awaiting_target",
+            }:
                 return False
             session.state = "awaiting_target"
             session.picker_sent = True
@@ -537,6 +605,8 @@ class RedisTelegramSessionStore(TelegramSessionStore):
                     user_id=kwargs["user_id"],
                     media_group_id=kwargs["media_group_id"],
                 )
+            if session.state not in {"collecting", "settling"}:
+                return session
             known = {item.file_unique_id or item.file_id for item in session.attachments}
             for attachment in kwargs["attachments"]:
                 identity = attachment.file_unique_id or attachment.file_id
@@ -596,9 +666,41 @@ class RedisTelegramSessionStore(TelegramSessionStore):
                 chat_id=kwargs["chat_id"],
                 user_id=kwargs["user_id"],
             )
-            if session is None or session.state != "collecting":
+            if (
+                session is None
+                or session.state != "collecting"
+                or session.settle_scheduled
+            ):
                 return False
-            session.state = "settling"
+            session.settle_scheduled = True
+            session.settle_version += 1
+            session.updated_at = time.time()
+            self._redis.setex(key, self._ttl_seconds, _session_to_json(session))
+            return True
+
+    def claim_settled(self, **kwargs) -> bool:
+        key = _session_key(kwargs["chat_id"], kwargs["user_id"], kwargs["session_id"])
+        with self._locked(key):
+            session = self._get(
+                session_id=kwargs["session_id"],
+                chat_id=kwargs["chat_id"],
+                user_id=kwargs["user_id"],
+            )
+            expected_version = kwargs.get("settle_version")
+            if session is None or session.picker_sent:
+                return False
+            if expected_version is not None:
+                if (
+                    session.state != "collecting"
+                    or not session.settle_scheduled
+                    or session.settle_version != expected_version
+                ):
+                    return False
+            elif session.state not in {"collecting", "settling"}:
+                return False
+            session.attachments = _sort_attachments(session.attachments)
+            session.state = "settled"
+            session.settle_scheduled = False
             session.updated_at = time.time()
             self._redis.setex(key, self._ttl_seconds, _session_to_json(session))
             return True
@@ -613,7 +715,12 @@ class RedisTelegramSessionStore(TelegramSessionStore):
             )
             if session is None or session.picker_sent:
                 return False
-            if session.state not in {"collecting", "settling", "awaiting_target"}:
+            if session.state not in {
+                "collecting",
+                "settling",
+                "settled",
+                "awaiting_target",
+            }:
                 return False
             session.state = "awaiting_target"
             session.picker_sent = True

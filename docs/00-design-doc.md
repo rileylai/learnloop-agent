@@ -249,7 +249,9 @@ Sync behavior in MVP:
 Telegram queue behavior:
   - With `REDIS_URL` configured, the webhook claims update idempotency and
     enqueues long work through `QueueClient` before returning `202`.
-  - `scripts/run_worker.py` consumes the RQ `telegram` queue.
+  - `scripts/run_worker.py` consumes the RQ `telegram` queue with RQ's
+    embedded scheduler enabled (`with_scheduler=True`). Delayed settle jobs
+    and interval-based retries therefore return to the queue when due.
   - The worker derives the repository root from its own file path, then
     fail-fast validates that RQ resolves the canonical module-level callable
     `src.worker.telegram.process_telegram_webhook_job` before consuming jobs.

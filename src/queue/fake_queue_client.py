@@ -36,6 +36,10 @@ class FakeQueueClient(QueueClient):
     def is_available(self) -> bool:
         return True
 
+    def is_scheduler_available(self, *, queue_name: str) -> bool:
+        _ = queue_name
+        return True
+
     def enqueue_in(
         self,
         *,

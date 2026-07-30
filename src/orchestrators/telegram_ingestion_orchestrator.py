@@ -114,6 +114,7 @@ class TelegramIngestionOrchestrator:
         chat_id: str,
         user_id: str,
         media_group_id: Optional[str],
+        message_id: Optional[int],
         document: Optional[TelegramDocumentAttachment],
         photos: List[TelegramPhotoAttachment],
         command_text: Optional[str],
@@ -124,6 +125,7 @@ class TelegramIngestionOrchestrator:
                 TelegramUploadAttachment(
                     kind="pdf",
                     file_id=document.file_id,
+                    message_id=message_id,
                     file_name=document.file_name,
                     mime_type=document.mime_type,
                     file_size=document.file_size,
@@ -133,6 +135,7 @@ class TelegramIngestionOrchestrator:
             TelegramUploadAttachment(
                 kind="photo",
                 file_id=photo.file_id,
+                message_id=message_id,
                 file_unique_id=photo.file_unique_id,
                 file_size=photo.file_size,
             )
@@ -175,6 +178,21 @@ class TelegramIngestionOrchestrator:
             session_id=session_id,
             chat_id=chat_id,
             user_id=user_id,
+        )
+
+    def claim_upload_settled(
+        self,
+        *,
+        session_id: str,
+        chat_id: str,
+        user_id: str,
+        settle_version: Optional[int] = None,
+    ) -> bool:
+        return self._session_store.claim_settled(
+            session_id=session_id,
+            chat_id=chat_id,
+            user_id=user_id,
+            settle_version=settle_version,
         )
 
     def claim_upload_picker(self, *, session_id: str, chat_id: str, user_id: str) -> bool:

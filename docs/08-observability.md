@@ -59,6 +59,10 @@ mode-specific provider configuration is unavailable.
   Local mode reports `REDIS_URL_NOT_CONFIGURED` when no queue URL is supplied
   and `REDIS_UNAVAILABLE` when Redis cannot answer `PING`. Test/demo/mock modes
   may omit the queue dependency.
+- When the queue is required, readiness also checks the RQ scheduler lock for
+  the `telegram` queue. Redis `PING` can pass while delayed jobs remain in
+  `ScheduledJobRegistry`; that state is reported as
+  `RQ_SCHEDULER_NOT_RUNNING` and `/ready` stays unavailable.
 
 ## Step 88 Telegram Worker Import Boundary
 
@@ -78,6 +82,9 @@ mode-specific provider configuration is unavailable.
 - A previously claimed `running` update is not re-run by this fix. The ledger
   remains the source of truth; operators inspect the redacted ledger/job state
   and use an explicit recovery decision rather than raw SQL or replay.
+- Worker startup also emits safe `queue`, `worker_started`,
+  `scheduler_enabled`, and `scheduler_mode=embedded` fields. It never emits
+  `REDIS_URL` or credentials.
 
 Telegram ingestion observability:
 - Workflow metadata records safe operation classes, counts, target-set state,
@@ -104,6 +111,10 @@ Telegram ingestion observability:
 - Duplicate update, settle, target, and preview claims are observable through
   terminal status/failure outcomes without exposing private media or Notion
   content.
+- Upload sessions carry a monotonic settle version. The settle job atomically
+  promotes `collecting` to `settled`, sorts attachments by Telegram
+  `message_id`, and stale/duplicate versions skip before picker or business
+  work. Duplicate `file_unique_id` values are ignored in the session store.
 
 ## Workflow Metadata Notes
 

@@ -128,6 +128,22 @@ def test_darwin_rejects_fork_worker_override() -> None:
         raise AssertionError("Darwin must not select the fork-based Worker")
 
 
+def test_worker_entrypoint_enables_embedded_scheduler() -> None:
+    namespace = _worker_script_namespace()
+
+    class _Worker:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def work(self, **kwargs):
+            self.calls.append(kwargs)
+            return True
+
+    worker = _Worker()
+    assert namespace["run_worker"](worker=worker, burst=False) is True
+    assert worker.calls == [{"burst": False, "with_scheduler": True}]
+
+
 def test_rq_import_attribute_resolves_canonical_worker_path() -> None:
     resolved = import_attribute(TELEGRAM_WEBHOOK_JOB_PATH)
 

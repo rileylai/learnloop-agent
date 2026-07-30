@@ -895,6 +895,7 @@ class TelegramGatewayOrchestrator:
                         chat_id=normalized_chat_id,
                         user_id=normalized_user_id,
                         media_group_id=media_group_id,
+                        message_id=message_id,
                         document=document,
                         photos=photos,
                         command_text=normalized_input_text or None,
@@ -933,6 +934,7 @@ class TelegramGatewayOrchestrator:
                         chat_id=normalized_chat_id,
                         user_id=normalized_user_id,
                         media_group_id=media_group_id,
+                        message_id=message_id,
                         document=document,
                         photos=photos,
                         command_text=normalized_input_text or None,
@@ -953,11 +955,21 @@ class TelegramGatewayOrchestrator:
                             chat_id=normalized_chat_id,
                             user_id=normalized_user_id,
                         ):
+                            scheduled_session = self._telegram_ingestion_orchestrator.get_upload(
+                                session_id=session.session_id,
+                                chat_id=normalized_chat_id,
+                                user_id=normalized_user_id,
+                            )
                             self._schedule_upload_settle(
                                 session_id=session.session_id,
                                 chat_id=normalized_chat_id,
                                 user_id=normalized_user_id,
                                 request_workflow_id=request_workflow_id,
+                                settle_version=(
+                                    scheduled_session.settle_version
+                                    if scheduled_session is not None
+                                    else None
+                                ),
                             )
                         if not self._telegram_ingestion_orchestrator.claim_upload_receipt(
                             session_id=session.session_id,
@@ -1376,7 +1388,8 @@ class TelegramGatewayOrchestrator:
         chat_id: str,
         user_id: str,
         request_workflow_id: str,
-    ) -> None:
+        settle_version: Optional[int] = None,
+    ) -> str:
         if self._telegram_ingestion_orchestrator is None:
             raise TelegramGatewayError(
                 error_code="TELEGRAM_INGESTION_NOT_CONFIGURED",
@@ -1409,12 +1422,26 @@ class TelegramGatewayOrchestrator:
                 http_status_code=HTTPStatus.BAD_REQUEST,
                 failure_reason="EMPTY_UPLOAD",
             )
+        if not self._telegram_ingestion_orchestrator.claim_upload_settled(
+            session_id=session_id,
+            chat_id=chat_id,
+            user_id=user_id,
+            settle_version=settle_version,
+        ):
+            return "stale"
+        session = self._telegram_ingestion_orchestrator.get_upload(
+            session_id=session_id,
+            chat_id=chat_id,
+            user_id=user_id,
+        )
+        if session is None or not session.attachments:
+            return "stale"
         if not self._telegram_ingestion_orchestrator.claim_upload_picker(
             session_id=session_id,
             chat_id=chat_id,
             user_id=user_id,
         ):
-            return
+            return "duplicate"
         reply_text, reply_markup = self._build_page_picker(
             session_id=session_id,
             chat_id=chat_id,
@@ -1445,6 +1472,7 @@ class TelegramGatewayOrchestrator:
                 http_status_code=self._http_status_for_tool_error(error_code),
                 failure_reason=self._normalize_failure_reason(error_code),
             )
+        return "settled"
 
     def _parse_command(self, text: str) -> str:
         if not text.strip():
@@ -1779,6 +1807,7 @@ class TelegramGatewayOrchestrator:
         chat_id: str,
         user_id: str,
         request_workflow_id: str,
+        settle_version: Optional[int] = None,
     ) -> None:
         if self._queue_client is None:
             raise TelegramGatewayError(
@@ -1793,7 +1822,13 @@ class TelegramGatewayOrchestrator:
             queue_name="telegram",
             function=process_telegram_upload_settle_job,
             seconds=1,
-            args=(session_id, chat_id, user_id, request_workflow_id),
+            args=(
+                session_id,
+                chat_id,
+                user_id,
+                request_workflow_id,
+                settle_version,
+            ),
             description="Settle one Telegram media group upload session",
             retry_policy=QueueRetryPolicy(max_retries=2, retry_intervals=(1, 3)),
         )
