@@ -208,6 +208,27 @@ Rules:
 - A retry is safe because the writer's durable identity lookup detects the
   existing supplement before another append.
 
+## Operator Observability and Reconciliation (Step 84)
+
+```text
+Workflow runs -> protected status service -> redacted status surface
+Workflow runs -> metrics service -> Prometheus-compatible /metrics scrape
+Stale running workflow -> dry-run CLI/API inspection
+-> Explicit terminal resolution -> reconcile running workflow once
+Recorded workflow metadata -> deterministic cost aggregation -> budget alert
+```
+
+Rules:
+- Status and reconciliation routes are protected by the API bearer boundary;
+  `/metrics` contains only fixed metric names, safe labels, and numeric values.
+- Reconciliation accepts only `running` workflows older than the configured
+  stale threshold and transitions them to `succeeded` or `failed` once.
+- The reconciliation CLI is dry-run by default; `--apply` is required before
+  it commits a terminal state. It never retries business work.
+- Cost aggregation sums only recorded known cost fields. Unknown model pricing
+  remains `unknown` and does not get guessed; configured budgets expose alert
+  status without writing secrets or source content.
+
 ## Telegram Entrypoint Workflow (Step 32)
 
 ```text

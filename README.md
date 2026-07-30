@@ -32,8 +32,9 @@ Not yet available as a real-user flow:
 - The default Notion backend uses bundled mock JSON. A live read-only reader
   and append-only writer can be selected with `NOTION_BACKEND=live`, but no
   real workspace access or append has been verified.
-- A wired Redis/RQ worker and metrics are not implemented. API/webhook
-  authentication, persistent Telegram update idempotency, and `/ready` are
+- A wired Redis/RQ worker is optional by configuration. Prometheus-compatible
+  metrics, protected workflow status/reconciliation, and cost-budget alerts
+  are implemented. API/webhook authentication, persistent Telegram update idempotency, and `/ready` are
   implemented; `/ready` now provides
   dependency-aware readiness; it is distinct from the shallow `/health` route.
 - Telegram transport and target-aware `/ingest` are mock-tested, but live
@@ -372,7 +373,8 @@ Expected behavior:
 - The API and Telegram webhook do not yet enforce authentication or an allowed
   chat list.
 - Long Telegram ingestion work is synchronous; no Redis/RQ worker is wired.
-- `/health` is liveness only; readiness and metrics endpoints are planned.
+- `/health` is liveness only; `/ready` is dependency-aware and `/metrics` is a
+  redacted Prometheus-compatible operator surface.
 - No direct original-note editing.
 - No standalone MCP server in MVP.
 - No always-on cloud sync.

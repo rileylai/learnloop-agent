@@ -29,11 +29,16 @@ Confirmed:
 
 Missing from the current operator surface:
 
-- `/metrics` and a metrics exporter.
-- A CLI, API, worker, or scheduler that invokes stale-running workflow
-  reconciliation.
-- Aggregate cost budgets, alerts, log persistence/rotation, tracing backend,
-  and recovery dashboards.
+- Log persistence/rotation, tracing backend, and recovery dashboards.
+
+Implemented in Step 84:
+
+- Public Prometheus-compatible `/metrics` for workflow counts, stale-running
+  counts, known daily cost, unknown-cost count, and configured budget alerts.
+- Protected workflow status list/detail and cost-budget API surfaces.
+- Protected stale-running reconciliation API plus a dry-run-by-default CLI;
+  mutation requires `--apply` and only stale `running` workflows qualify.
+- Recursive workflow metadata redaction for private source text and secrets.
 
 The `/health` endpoint is liveness only and always reports `ok`; it must not be
 used as release-readiness evidence. `/ready` is the dependency-aware readiness
@@ -95,6 +100,19 @@ mode-specific provider configuration is unavailable.
 - `WORKFLOW_AUDIT_UPDATE_FAILED` is returned as a distinct service/API error.
   Operators reconcile the stale running workflow only after confirming the
   business outcome.
+
+## Step 84 Operator Contract
+
+- `WORKFLOW_STALE_AFTER_SECONDS` defaults to `3600` and controls the stale flag
+  and reconciliation guard.
+- `MAX_WORKFLOW_COST_USD` and `MAX_DAILY_COST_USD` are optional positive USD
+  thresholds. Missing thresholds report `unconfigured`; exceeded thresholds
+  report `exceeded`; a configured threshold with unknown recorded pricing
+  reports `unknown`.
+- `/metrics` failures return a fixed redacted failure metric and never expose
+  database driver or provider exception text.
+- Status metadata is recursively redacted for `raw_text`, `source_text`, API
+  keys, tokens, authorization values, and webhook secrets.
 
 ## Vector Retrieval Metadata
 

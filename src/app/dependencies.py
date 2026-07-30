@@ -28,10 +28,13 @@ from src.providers import (
 from src.queue import QueueClient, RQQueueClient
 from src.services import (
     CostTracker,
+    CostBudgetService,
+    MetricsService,
     PromptTemplateLoader,
     ReadinessService,
     TrustBoundaryError,
     TrustBoundaryService,
+    WorkflowObservabilityService,
 )
 from src.tools import (
     DEFAULT_MOCK_NOTION_DATA_DIR,
@@ -95,6 +98,38 @@ def get_trust_boundary() -> TrustBoundaryService:
         api_bearer_token=settings.api_bearer_token,
         telegram_webhook_secret=settings.telegram_webhook_secret,
         telegram_allowed_chat_ids=settings.telegram_allowed_chat_ids,
+    )
+
+
+def get_cost_budget_service() -> CostBudgetService:
+    settings = get_settings()
+    return CostBudgetService(
+        daily_budget_usd=settings.max_daily_cost_usd,
+        workflow_budget_usd=settings.max_workflow_cost_usd,
+    )
+
+
+def get_workflow_observability_service(
+    session_factory: SessionFactory = Depends(get_db_session_factory),
+    cost_budget_service: CostBudgetService = Depends(get_cost_budget_service),
+) -> WorkflowObservabilityService:
+    settings = get_settings()
+    return WorkflowObservabilityService(
+        session_factory,
+        cost_budget_service=cost_budget_service,
+        stale_after_seconds=settings.workflow_stale_after_seconds,
+    )
+
+
+def get_metrics_service(
+    session_factory: SessionFactory = Depends(get_db_session_factory),
+    cost_budget_service: CostBudgetService = Depends(get_cost_budget_service),
+) -> MetricsService:
+    settings = get_settings()
+    return MetricsService(
+        session_factory,
+        cost_budget_service=cost_budget_service,
+        stale_after_seconds=settings.workflow_stale_after_seconds,
     )
 
 

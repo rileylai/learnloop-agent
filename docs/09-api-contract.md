@@ -32,8 +32,11 @@ Current contract gaps:
   allowed-chat policy. Missing optional settings preserve local/test
   compatibility and are reported by preflight.
 - `/health` is shallow liveness. `/ready` is implemented with deterministic
-  dependency checks, including Redis/RQ in local mode; `/metrics` is not
-  implemented.
+  dependency checks, including Redis/RQ in local mode. `/metrics` is a public
+  Prometheus-compatible workflow/stale-run/cost-budget surface.
+- Protected `/api/ops/workflows` list/detail routes expose redacted workflow
+  metadata and stale state. Protected reconciliation and cost-budget routes
+  never contact Notion or rerun business work.
 - Telegram webhook updates with a non-null `update_id` are idempotent. When
   `REDIS_URL` is configured, the first request claims the ledger, enqueues the
   background job, and returns `202` with `status=running` and
@@ -54,6 +57,42 @@ do not by themselves prove live Notion, Telegram, OpenAI, parser, or worker
 integration.
 
 ## Ops APIs
+
+### GET `/metrics`
+
+Returns fixed Prometheus text metrics. It does not include workflow metadata,
+page ids, source text, credentials, or upstream exception bodies.
+
+### GET `/api/ops/workflows`
+
+Protected workflow status list. Optional `status` and bounded `limit` filters
+are supported. Returned metadata is recursively redacted.
+
+### GET `/api/ops/workflows/{workflow_run_id}`
+
+Protected workflow status detail. The response includes `age_seconds`, a
+deterministic `stale` flag, and nullable recorded cost.
+
+### POST `/api/ops/workflows/{workflow_run_id}/reconcile`
+
+Protected stale-running reconciliation.
+
+Request:
+
+```json
+{
+  "status": "failed",
+  "failure_reason": "UNKNOWN_ERROR"
+}
+```
+
+Only stale `running` workflows may transition to `succeeded` or `failed`; the
+endpoint never reruns the workflow's business operation.
+
+### GET `/api/ops/cost`
+
+Protected aggregate cost-budget status. Unknown model pricing is reported as
+unknown rather than estimated.
 
 ## Trust Boundaries
 

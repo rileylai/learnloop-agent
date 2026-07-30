@@ -3,6 +3,12 @@ from src.services.cost_tracker import (
     EmbeddingTokenPricing,
     LLMTokenPricing,
 )
+from src.services.cost_budget import (
+    CostBudgetDecision,
+    CostBudgetService,
+    CostBudgetSnapshot,
+    extract_workflow_cost,
+)
 from src.services.duplicate_checker import (
     DuplicateCheckResult,
     DuplicateKnowledgeChecker,
@@ -41,6 +47,11 @@ from src.services.workflow_run_service import (
     WorkflowRunServiceError,
     WorkflowRunValidationError,
 )
+from src.services.workflow_observability import (
+    WorkflowObservabilityService,
+    WorkflowStatusView,
+)
+from src.services.metrics import MetricsService
 from src.services.trust_boundary import TrustBoundaryError, TrustBoundaryService
 from src.services.telegram_update_idempotency import (
     TELEGRAM_UPDATE_FAILED,
@@ -82,6 +93,11 @@ from src.services.upload_limits import (
 
 __all__ = [
     "CostTracker",
+    "CostBudgetDecision",
+    "CostBudgetService",
+    "CostBudgetSnapshot",
+    "extract_workflow_cost",
+    "MetricsService",
     "DuplicateCheckResult",
     "DuplicateKnowledgeChecker",
     "DuplicateMatch",
@@ -112,6 +128,8 @@ __all__ = [
     "WorkflowRunService",
     "WorkflowRunServiceError",
     "WorkflowRunValidationError",
+    "WorkflowObservabilityService",
+    "WorkflowStatusView",
     "TrustBoundaryError",
     "TrustBoundaryService",
     "TELEGRAM_UPDATE_FAILED",

@@ -19,6 +19,9 @@ def test_settings_load_without_optional_env(monkeypatch) -> None:
         "API_BEARER_TOKEN",
         "TELEGRAM_WEBHOOK_SECRET",
         "TELEGRAM_ALLOWED_CHAT_IDS",
+        "MAX_WORKFLOW_COST_USD",
+        "MAX_DAILY_COST_USD",
+        "WORKFLOW_STALE_AFTER_SECONDS",
     ]
     for key in env_keys:
         monkeypatch.delenv(key, raising=False)
@@ -38,6 +41,9 @@ def test_settings_load_without_optional_env(monkeypatch) -> None:
     assert settings.api_bearer_token is None
     assert settings.telegram_webhook_secret is None
     assert settings.telegram_allowed_chat_ids == frozenset()
+    assert settings.max_workflow_cost_usd is None
+    assert settings.max_daily_cost_usd is None
+    assert settings.workflow_stale_after_seconds == 3600
 
 
 def test_settings_load_with_env_override(monkeypatch) -> None:
@@ -53,6 +59,9 @@ def test_settings_load_with_env_override(monkeypatch) -> None:
     monkeypatch.setenv("API_BEARER_TOKEN", "placeholder-api-token")
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "placeholder-webhook-secret")
     monkeypatch.setenv("TELEGRAM_ALLOWED_CHAT_IDS", "555, -100123, 555")
+    monkeypatch.setenv("MAX_WORKFLOW_COST_USD", "0.25")
+    monkeypatch.setenv("MAX_DAILY_COST_USD", "5")
+    monkeypatch.setenv("WORKFLOW_STALE_AFTER_SECONDS", "900")
 
     _clear_settings_cache()
     settings = get_settings()
@@ -69,3 +78,6 @@ def test_settings_load_with_env_override(monkeypatch) -> None:
     assert settings.api_bearer_token == "placeholder-api-token"
     assert settings.telegram_webhook_secret == "placeholder-webhook-secret"
     assert settings.telegram_allowed_chat_ids == frozenset({"555", "-100123"})
+    assert settings.max_workflow_cost_usd == 0.25
+    assert settings.max_daily_cost_usd == 5.0
+    assert settings.workflow_stale_after_seconds == 900

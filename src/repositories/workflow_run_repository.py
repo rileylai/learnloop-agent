@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
@@ -53,6 +53,47 @@ class WorkflowRunRepository:
             .filter(WorkflowRun.workflow_type == workflow_type)
             .order_by(desc(WorkflowRun.started_at), desc(WorkflowRun.id))
             .first()
+        )
+
+    def list_workflow_runs(
+        self,
+        *,
+        started_after: Optional[datetime] = None,
+        status: Optional[str] = None,
+        limit: int = 10000,
+    ) -> List[WorkflowRun]:
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+
+        query = self._session.query(WorkflowRun)
+        if started_after is not None:
+            query = query.filter(WorkflowRun.started_at >= started_after)
+        if status is not None:
+            query = query.filter(WorkflowRun.status == status)
+        return list(
+            query.order_by(desc(WorkflowRun.started_at), desc(WorkflowRun.id))
+            .limit(limit)
+            .all()
+        )
+
+    def list_running_workflows_before(
+        self,
+        *,
+        started_before: datetime,
+        limit: int = 100,
+    ) -> List[WorkflowRun]:
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+
+        return list(
+            self._session.query(WorkflowRun)
+            .filter(
+                WorkflowRun.status == "running",
+                WorkflowRun.started_at < started_before,
+            )
+            .order_by(WorkflowRun.started_at.asc(), WorkflowRun.id.asc())
+            .limit(limit)
+            .all()
         )
 
     def update_workflow_run(

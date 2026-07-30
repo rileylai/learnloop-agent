@@ -626,7 +626,11 @@ Metadata note:
 |---|---|---|
 | GET | `/health` | Health check endpoint. |
 | GET | `/ready` | Dependency-aware readiness check for database, migration, pgvector, and mode-specific provider configuration. |
-| GET | `/metrics` | Metrics endpoint. |
+| GET | `/metrics` | Public Prometheus-compatible workflow, stale-run, and cost-budget metrics. |
+| GET | `/api/ops/workflows` | Protected workflow status list with safe metadata and stale flag. |
+| GET | `/api/ops/workflows/{workflow_run_id}` | Protected workflow status detail. |
+| POST | `/api/ops/workflows/{workflow_run_id}/reconcile` | Protected stale-running workflow reconciliation. |
+| GET | `/api/ops/cost` | Protected aggregate cost and budget status. |
 
 ### 13.6 Telegram APIs
 | Method | Endpoint | Description |
@@ -745,6 +749,18 @@ Required structured fields:
 - `embedding_model`
 - `embedding_dimensions`
 - `vector_distance_metric`
+
+Operator surfaces:
+- `/metrics` emits fixed Prometheus metric names and bounded workflow-type/status
+  labels without workflow metadata, source text, page ids, or secrets.
+- `/api/ops/workflows` and `/api/ops/workflows/{workflow_run_id}` expose only
+  redacted workflow metadata and a deterministic stale flag.
+- Stale reconciliation requires a running workflow older than the configured
+  threshold and never reruns business work. The CLI defaults to dry-run and
+  requires `--apply` for mutation.
+- Optional `MAX_WORKFLOW_COST_USD` and `MAX_DAILY_COST_USD` settings produce
+  deterministic cost-budget alerts. Unknown model pricing is reported as
+  unknown and is never guessed.
 
 Failure taxonomy:
 - `NOTION_AUTH_FAILED`

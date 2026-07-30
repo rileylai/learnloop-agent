@@ -232,6 +232,7 @@ class WorkflowRunService:
         status: str,
         metadata_json: Optional[str] = None,
         failure_reason: Optional[str] = None,
+        stale_before: Optional[datetime] = None,
     ) -> WorkflowRun:
         normalized_status = status.strip().lower()
         if normalized_status not in {
@@ -248,6 +249,14 @@ class WorkflowRunService:
                 raise WorkflowRunValidationError(
                     f"failure_reason is invalid: '{failure_reason}'"
                 )
+        if normalized_status == WORKFLOW_STATUS_FAILED and normalized_failure_reason is None:
+            raise WorkflowRunValidationError(
+                "failed reconciliation requires failure_reason"
+            )
+        if normalized_status == WORKFLOW_STATUS_SUCCEEDED and normalized_failure_reason is not None:
+            raise WorkflowRunValidationError(
+                "succeeded reconciliation must not include failure_reason"
+            )
 
         def reconcile(repository: WorkflowRunRepository) -> Optional[WorkflowRun]:
             workflow_run = repository.get_workflow_run_by_id(workflow_run_id)
@@ -260,6 +269,19 @@ class WorkflowRunService:
                 raise WorkflowRunValidationError(
                     "Only running workflow runs can be reconciled"
                 )
+            if stale_before is not None:
+                started_at = workflow_run.started_at
+                if started_at.tzinfo is None:
+                    started_at = started_at.replace(tzinfo=timezone.utc)
+                normalized_stale_before = stale_before
+                if normalized_stale_before.tzinfo is None:
+                    normalized_stale_before = normalized_stale_before.replace(
+                        tzinfo=timezone.utc
+                    )
+                if started_at > normalized_stale_before:
+                    raise WorkflowRunValidationError(
+                        "Only stale running workflow runs can be reconciled"
+                    )
             return repository.update_workflow_run(
                 workflow_run_id,
                 status=normalized_status,

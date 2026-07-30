@@ -57,6 +57,9 @@ CONFIGURATION_KEYS: Tuple[str, ...] = (
     "API_BEARER_TOKEN",
     "TELEGRAM_WEBHOOK_SECRET",
     "TELEGRAM_ALLOWED_CHAT_IDS",
+    "MAX_WORKFLOW_COST_USD",
+    "MAX_DAILY_COST_USD",
+    "WORKFLOW_STALE_AFTER_SECONDS",
 )
 
 
@@ -229,6 +232,18 @@ def _check_configuration(
                 if configured
                 else "missing; Telegram accepts all chats after webhook authentication"
             )
+            required = False
+        elif key in {"MAX_WORKFLOW_COST_USD", "MAX_DAILY_COST_USD"}:
+            status = "pass" if configured else "warn"
+            detail = (
+                "configured"
+                if configured
+                else "missing; cost budget alert is disabled"
+            )
+            required = False
+        elif key == "WORKFLOW_STALE_AFTER_SECONDS":
+            status = "pass"
+            detail = "configured" if configured else "using 3600 second default"
             required = False
         else:
             status = "pass" if configured else "warn"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import math
 from functools import lru_cache
 from typing import FrozenSet, Optional
 
@@ -34,6 +35,32 @@ def _read_csv_env(name: str) -> FrozenSet[str]:
     return frozenset(item.strip() for item in value.split(",") if item.strip())
 
 
+def _read_optional_positive_float_env(name: str) -> Optional[float]:
+    value = _read_optional_env(name)
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a positive finite number") from exc
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise ValueError(f"{name} must be a positive finite number")
+    return parsed
+
+
+def _read_optional_positive_int_env(name: str, default: int) -> int:
+    value = _read_optional_env(name)
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a positive integer") from exc
+    if parsed <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return parsed
+
+
 class Settings(BaseModel):
     app_env: str = Field(default="local")
     log_level: str = Field(default="INFO")
@@ -47,6 +74,9 @@ class Settings(BaseModel):
     api_bearer_token: Optional[str] = None
     telegram_webhook_secret: Optional[str] = None
     telegram_allowed_chat_ids: FrozenSet[str] = Field(default_factory=frozenset)
+    max_workflow_cost_usd: Optional[float] = None
+    max_daily_cost_usd: Optional[float] = None
+    workflow_stale_after_seconds: int = 3600
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -64,6 +94,16 @@ class Settings(BaseModel):
             api_bearer_token=_read_optional_env("API_BEARER_TOKEN"),
             telegram_webhook_secret=_read_optional_env("TELEGRAM_WEBHOOK_SECRET"),
             telegram_allowed_chat_ids=_read_csv_env("TELEGRAM_ALLOWED_CHAT_IDS"),
+            max_workflow_cost_usd=_read_optional_positive_float_env(
+                "MAX_WORKFLOW_COST_USD"
+            ),
+            max_daily_cost_usd=_read_optional_positive_float_env(
+                "MAX_DAILY_COST_USD"
+            ),
+            workflow_stale_after_seconds=_read_optional_positive_int_env(
+                "WORKFLOW_STALE_AFTER_SECONDS",
+                default=3600,
+            ),
         )
 
 
