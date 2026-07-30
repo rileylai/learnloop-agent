@@ -1476,10 +1476,9 @@ def test_telegram_pages_targeted_ingest_preview_and_accept_e2e() -> None:
                 output_text=json.dumps(
                     {
                         "title": "Targeted Telegram proposal",
-                        "target_path": (
-                            "Knowledge/NLP/Targetable/AI Supplement Zone/"
-                            "Targeted Telegram proposal"
-                        ),
+                            "target_path": (
+                                "Knowledge/NLP/Targetable/AI Supplement Zone"
+                            ),
                         "source": {
                             "source_type": "pdf",
                             "source_display_name": "flow.pdf",

@@ -38,9 +38,11 @@ Prompt safety boundary (Step 80):
   write, target change, citation change, or bypass of human acceptance.
 - Citation paths come from deterministic backend retrieval results, not from
   model output.
-- A proposal target path is validated against the selected page's
-  `AI Supplement Zone`; the accept writer still derives the actual append path
-  from the backend page and change request.
+- For a selected indexed page, the backend derives the exact target
+  `<canonical notion_path>/AI Supplement Zone`. The proposal validator only
+  trims whitespace, removes duplicate slashes, and normalizes trailing slashes;
+  it rejects a different page or a child target. The accept writer still
+  derives the actual append path from the backend page and change request.
 
 This document will be expanded in later steps.
 
@@ -89,6 +91,9 @@ POST /api/supplement/propose
 
 Failure path:
 - If provider output JSON is invalid, fail workflow with `LLM_OUTPUT_INVALID`.
+- If a selected-page proposal target is missing `AI Supplement Zone`, points to
+  another page, or is otherwise not the backend-derived exact target, fail with
+  `LLM_OUTPUT_INVALID`.
 - If source document is missing, fail workflow with deterministic error and workflow id.
 
 State notes:

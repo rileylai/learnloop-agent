@@ -83,9 +83,9 @@ class _ProposalProvider(LLMProvider):
                 {
                     "title": "Telegram target-aware supplement",
                     "target_path": (
-                        "Knowledge/Parent/AI Supplement Zone/Telegram supplement"
+                        "Knowledge/Parent/AI Supplement Zone"
                         if self._source_type == "pdf"
-                        else "Knowledge/Parent/Child/AI Supplement Zone/Telegram supplement"
+                        else "Knowledge/Parent/Child/AI Supplement Zone"
                     ),
                     "source": {
                         "source_type": self._source_type,
@@ -98,6 +98,34 @@ class _ProposalProvider(LLMProvider):
                     "summary": "Proposal created after a page button selection.",
                     "concepts": ["target selection"],
                     "notes": ["Review before accepting."],
+                }
+            ),
+            token_input=10,
+            token_output=10,
+        )
+
+
+class _InvalidTargetProposalProvider(LLMProvider):
+    @property
+    def name(self) -> str:
+        return "openai"
+
+    async def generate(self, request: LLMRequest) -> LLMResponse:
+        _ = request
+        return LLMResponse(
+            provider="openai",
+            model="gpt-4o-mini",
+            output_text=json.dumps(
+                {
+                    "title": "Invalid target proposal",
+                    "target_path": "Knowledge/Other Page/AI Supplement Zone",
+                    "source": {
+                        "source_type": "pdf",
+                        "source_display_name": "lesson.pdf",
+                    },
+                    "summary": "The target is intentionally outside the selected page.",
+                    "concepts": ["target validation"],
+                    "notes": ["This must fail closed."],
                 }
             ),
             token_input=10,
@@ -336,6 +364,8 @@ def test_upload_then_page_button_creates_target_aware_pending_proposal(
             assert len(proposals) == 1
             assert proposals[0].status == "pending"
             assert proposals[0].target_notion_page_id == expected_db_id
+            proposal_payload = json.loads(proposals[0].proposal_json)
+            assert proposal_payload["target_path"] == f"{expected_path}/AI Supplement Zone"
             assert session.query(SourceDocument).count() == 1
         finally:
             session.close()
@@ -505,6 +535,108 @@ def test_redis_upload_picker_callback_restores_session_in_worker_and_creates_pen
         assert duplicate_upload_response.json()["status"] == "succeeded"
         assert Queue(name="telegram", connection=redis_client).count == 0
         assert len(telegram_client.list_sent_messages()) == 2
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_invalid_target_callback_reports_redacted_failure_without_retry_duplicates() -> None:
+    session_factory = _session_factory()
+    _seed_pages(session_factory)
+    telegram_client = InMemoryTelegramBotClient()
+    telegram_client.add_file(
+        file_id="invalid-target-pdf",
+        file_bytes=b"telegram-file-bytes",
+        file_name="lesson.pdf",
+    )
+    session_store = InMemoryTelegramSessionStore()
+    _configure_app(
+        session_factory=session_factory,
+        telegram_client=telegram_client,
+        session_store=session_store,
+        source_type="pdf",
+    )
+    invalid_router = ProviderRouter()
+    invalid_router.register_provider(_InvalidTargetProposalProvider())
+    app.dependency_overrides[get_provider_router] = lambda: invalid_router
+
+    try:
+        client = TestClient(app)
+        upload_response = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 9600,
+                "message": {
+                    "message_id": 60,
+                    "chat": {"id": 566},
+                    "from": {"id": 786},
+                    "caption": "/ingest",
+                    "document": {
+                        "file_id": "invalid-target-pdf",
+                        "file_name": "lesson.pdf",
+                        "mime_type": "application/pdf",
+                    },
+                },
+            },
+        )
+        assert upload_response.status_code == 200
+        callback_data = _page_callback_data(telegram_client, button_index=0)
+
+        callback_response = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 9601,
+                "callback_query": {
+                    "id": "invalid-target-callback",
+                    "from": {"id": 786},
+                    "data": callback_data,
+                    "message": {"message_id": 61, "chat": {"id": 566}},
+                },
+            },
+        )
+        assert callback_response.status_code == 502
+        detail = callback_response.json()["detail"]
+        assert detail["error_code"] == "LLM_OUTPUT_INVALID"
+        assert detail["failure_reason"] == "LLM_OUTPUT_INVALID"
+        assert "Knowledge/Other Page" not in detail["message"]
+        assert telegram_client.list_callback_answers() == [
+            {
+                "callback_query_id": "invalid-target-callback",
+                "text": "Proposal validation failed. Please upload the file again.",
+            }
+        ]
+
+        session = session_factory()
+        try:
+            assert session.query(SourceDocument).count() == 1
+            assert session.query(ChangeRequest).count() == 0
+            failed_ledger = (
+                session.query(TelegramUpdateLedger)
+                .filter(TelegramUpdateLedger.update_id == 9601)
+                .one()
+            )
+            assert failed_ledger.status == "failed"
+        finally:
+            session.close()
+
+        duplicate_callback_response = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 9601,
+                "callback_query": {
+                    "id": "invalid-target-callback-retry",
+                    "from": {"id": 786},
+                    "data": callback_data,
+                    "message": {"message_id": 62, "chat": {"id": 566}},
+                },
+            },
+        )
+        assert duplicate_callback_response.status_code == 502
+        session = session_factory()
+        try:
+            assert session.query(SourceDocument).count() == 1
+            assert session.query(ChangeRequest).count() == 0
+        finally:
+            session.close()
     finally:
         app.dependency_overrides.clear()
 

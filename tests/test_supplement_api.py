@@ -371,7 +371,7 @@ def test_supplement_propose_api_creates_pending_change_request() -> None:
             assert metadata["provider_name"] == "openai"
             assert metadata["model"] == "gpt-4o-mini"
             assert metadata["prompt_id"] == "supplement_proposal"
-            assert metadata["prompt_version"] == "supplement_proposal_v2"
+            assert metadata["prompt_version"] == "supplement_proposal_v3"
             assert metadata["estimated_cost"] == pytest.approx(0.000072)
 
             # Step 28 must not write to Notion.
@@ -454,7 +454,7 @@ def test_supplement_propose_api_uses_duplicate_reference_without_provider() -> N
             assert metadata["provider_name"] == "openai"
             assert metadata["model"] == "gpt-4o-mini"
             assert metadata["prompt_id"] == "supplement_proposal"
-            assert metadata["prompt_version"] == "supplement_proposal_v2"
+            assert metadata["prompt_version"] == "supplement_proposal_v3"
             assert metadata["estimated_cost"] is None
 
             # No Notion write should happen. Existing seeded rows remain unchanged.
@@ -521,7 +521,7 @@ def test_supplement_propose_api_returns_llm_output_invalid() -> None:
             assert metadata["provider_name"] == "openai"
             assert metadata["model"] == "gpt-4o-mini"
             assert metadata["prompt_id"] == "supplement_proposal"
-            assert metadata["prompt_version"] == "supplement_proposal_v2"
+            assert metadata["prompt_version"] == "supplement_proposal_v3"
             assert metadata["estimated_cost"] == pytest.approx(0.000072)
             assert verify_session.query(ChangeRequest).count() == 0
         finally:
@@ -589,7 +589,7 @@ def test_supplement_propose_api_returns_provider_not_found_when_provider_missing
             assert metadata["provider_name"] == "openai"
             assert metadata["model"] == "gpt-4o-mini"
             assert metadata["prompt_id"] == "supplement_proposal"
-            assert metadata["prompt_version"] == "supplement_proposal_v2"
+            assert metadata["prompt_version"] == "supplement_proposal_v3"
             assert metadata["estimated_cost"] is None
             assert verify_session.query(ChangeRequest).count() == 0
         finally:
@@ -1239,7 +1239,7 @@ def test_supplement_propose_resolves_external_target_and_rejects_unknown_target(
                 output_text=json.dumps(
                     {
                         "title": "Targeted proposal",
-                        "target_path": "Knowledge/Targetable/AI Supplement Zone/Targeted",
+                        "target_path": "Knowledge/Targetable/AI Supplement Zone",
                         "source": {
                             "source_type": "chat_text",
                             "source_display_name": "chat-target",

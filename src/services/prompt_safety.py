@@ -29,19 +29,49 @@ def is_safe_supplement_target_path(
     target_path: str,
     target_page_path: Optional[str],
 ) -> bool:
-    """Keep a proposed display target under the selected page's supplement zone."""
+    """Require the one backend-owned supplement target when a page is selected."""
+    return (
+        normalize_supplement_target_path(
+            target_path=target_path,
+            target_page_path=target_page_path,
+        )
+        is not None
+    )
+
+
+def normalize_notion_path(value: str) -> Optional[str]:
+    """Normalize a Notion hierarchy path without resolving path traversal."""
+    normalized = _normalize_path(value)
+    return normalized or None
+
+
+def build_supplement_target_path(*, target_page_path: str) -> Optional[str]:
+    """Build the sole allowed target path for an indexed Notion page."""
+    normalized_page = normalize_notion_path(target_page_path)
+    if normalized_page is None:
+        return None
+    return f"{normalized_page}/{AI_SUPPLEMENT_ZONE}"
+
+
+def normalize_supplement_target_path(
+    *,
+    target_path: str,
+    target_page_path: Optional[str],
+) -> Optional[str]:
+    """Normalize safe formatting and reject targets outside the selected page."""
+    normalized_target = normalize_notion_path(target_path)
+    if normalized_target is None:
+        return None
     if target_page_path is None:
-        return True
-    normalized_target = _normalize_path(target_path)
-    normalized_page = _normalize_path(target_page_path)
-    if not normalized_target or not normalized_page:
-        return False
-    required_prefix = f"{normalized_page}/{AI_SUPPLEMENT_ZONE}/"
-    if not normalized_target.startswith(required_prefix):
-        return False
-    suffix = normalized_target[len(required_prefix) :]
-    return bool(suffix) and ".." not in suffix.split("/")
+        return normalized_target
+    allowed_target = build_supplement_target_path(target_page_path=target_page_path)
+    if allowed_target is None or normalized_target != allowed_target:
+        return None
+    return allowed_target
 
 
 def _normalize_path(value: str) -> str:
-    return "/".join(part.strip() for part in str(value).strip().split("/") if part.strip())
+    parts = [part.strip() for part in str(value).strip().split("/") if part.strip()]
+    if any(part in {".", ".."} for part in parts):
+        return ""
+    return "/".join(parts)

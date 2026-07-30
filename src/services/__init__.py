@@ -25,8 +25,11 @@ from src.services.prompt_template_loader import (
 from src.services.prompt_safety import (
     AI_SUPPLEMENT_ZONE,
     PROMPT_SAFETY_VERSION,
+    build_supplement_target_path,
     format_untrusted_prompt_block,
     is_safe_supplement_target_path,
+    normalize_notion_path,
+    normalize_supplement_target_path,
 )
 from src.services.readiness_service import (
     READINESS_FAILED,
@@ -125,8 +128,11 @@ __all__ = [
     "PromptTemplateLoaderError",
     "AI_SUPPLEMENT_ZONE",
     "PROMPT_SAFETY_VERSION",
+    "build_supplement_target_path",
     "format_untrusted_prompt_block",
     "is_safe_supplement_target_path",
+    "normalize_notion_path",
+    "normalize_supplement_target_path",
     "READINESS_FAILED",
     "READINESS_OK",
     "ReadinessCheckResult",

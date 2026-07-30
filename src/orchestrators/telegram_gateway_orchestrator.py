@@ -364,6 +364,7 @@ class TelegramGatewayOrchestrator:
         request_workflow_id: str,
     ) -> None:
         if error.error_code not in {
+            "LLM_OUTPUT_INVALID",
             "UPLOAD_SESSION_EXPIRED",
             "UPLOAD_SESSION_INVALID",
             "INVALID_CALLBACK",
@@ -371,7 +372,15 @@ class TelegramGatewayOrchestrator:
             "EMPTY_UPLOAD",
         }:
             return
-        safe_message = sanitize_sensitive_text(error.message)[:190]
+        user_messages = {
+            "LLM_OUTPUT_INVALID": (
+                "Proposal validation failed. Please upload the file again."
+            ),
+        }
+        safe_message = user_messages.get(
+            error.error_code,
+            sanitize_sensitive_text(error.message)[:190],
+        )
         try:
             if callback is not None:
                 await self._tool_registry.call_tool(

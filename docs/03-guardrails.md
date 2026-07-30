@@ -77,9 +77,11 @@ Target policy:
   storing the internal foreign key used by the accept transaction.
 - Unknown external targets fail closed with `NOTION_PAGE_NOT_FOUND`; no
   proposal write or Notion write is performed for that target.
-- When a selected target page exists, the proposal's suggested `target_path`
-  must remain under that page's `AI Supplement Zone`. The accept path remains
-  backend-derived and append-only even if proposal text is adversarial.
+- When a selected target page exists, the backend derives the only allowed
+  proposal `target_path` as `<canonical notion_path>/AI Supplement Zone`.
+  Only harmless whitespace/duplicate-slash/trailing-slash formatting is
+  normalized; another page or child target fails closed. The accept path
+  remains backend-derived and append-only even if proposal text is adversarial.
 
 Telegram review policy:
 - `/pages` and proposal preview are read-only operations.

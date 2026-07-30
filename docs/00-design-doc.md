@@ -363,8 +363,9 @@ Checklist:
   output limits revalidated after extraction.
 - [ ] PDF page, image pixel, MIME, file-count, byte, and extracted-text limits
   fail closed with deterministic failure reasons.
-- [ ] Proposal target paths are validated against the selected page's
-  `AI Supplement Zone` before a change request is created.
+- [ ] For a selected indexed page, the backend derives the one allowed target
+  exactly as `<canonical notion_path>/AI Supplement Zone`; proposal output may
+  only use safe formatting normalization before exact validation.
 - [ ] Supplement proposal workflow metadata records provider name, model name, prompt id, and prompt version.
 
 ### 11.7 Guarded Notion Read/Index/QA Canary

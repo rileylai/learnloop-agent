@@ -1262,6 +1262,11 @@ Notes:
   accepted for backward compatibility without deduplication.
 - `/pages` lists indexed external Notion page ids, titles, and paths for target selection.
 - `/ingest --page <page_id>` creates a pending proposal targeted to that external page and returns a deterministic proposal preview with citations and `/accept` usage.
+- A selected page proposal stores exactly
+  `<indexed canonical notion_path>/AI Supplement Zone` as `proposal.target_path`.
+  `LLM_OUTPUT_INVALID` is returned when the model selects another page,
+  omits the supplement zone, or cannot satisfy the contract; Telegram sends a
+  short redacted callback failure instead of remaining silent.
 - Orchestrator sends reply through `ToolRegistry` -> `TelegramBotTool` (`send_message`).
 - `/ingest` downloads Telegram files through `ToolRegistry` -> `TelegramBotTool` (`download_file`).
 - `/ask` syntax is
@@ -1288,5 +1293,8 @@ Notes:
 - Invalid callback/session failures expose only redacted messages and specific
   `failure_reason` values such as `INVALID_CALLBACK`,
   `UPLOAD_SESSION_EXPIRED`, or `UPLOAD_SESSION_INVALID`.
+- `LLM_OUTPUT_INVALID` Telegram callbacks receive the fixed short message
+  `Proposal validation failed. Please upload the file again.`; model output
+  and canonical paths are not sent to the user.
 - `/ingest` creates `pending` change requests only; Notion append remains in accept workflow.
 - Telegram QA uses production Notion chunks only; pending and rejected proposals remain excluded.

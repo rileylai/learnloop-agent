@@ -35,8 +35,11 @@ from src.services import (
     STANDARD_FAILURE_REASONS,
     WorkflowRunAuditUpdateError,
     WorkflowRunService,
+    build_supplement_target_path,
     format_untrusted_prompt_block,
     is_safe_supplement_target_path,
+    normalize_notion_path,
+    normalize_supplement_target_path,
 )
 
 CHANGE_REQUEST_STATUS_PENDING = "pending"
@@ -54,6 +57,7 @@ class SupplementProposeResult:
     duplicate_detected: bool
     duplicate_notion_path: Optional[str]
     target_notion_page_id: Optional[str]
+    target_notion_path: Optional[str]
     provider: Optional[str]
     model: Optional[str]
     token_input: Optional[int]
@@ -163,6 +167,7 @@ class SupplementProposeOrchestrator:
         token_output: Optional[int] = None
         estimated_cost: Optional[float] = None
         target_page_path: Optional[str] = None
+        allowed_target_path: Optional[str] = None
         try:
             prompt_bundle = self._prompt_template_loader.load_bundle(prompt_id)
             prompt_version = prompt_bundle.version
@@ -195,7 +200,17 @@ class SupplementProposeOrchestrator:
                         failure_reason="NOTION_PAGE_NOT_FOUND",
                     )
                 target_page_db_id = int(target_page.id)
-                target_page_path = target_page.notion_path
+                target_page_path = normalize_notion_path(target_page.notion_path)
+                allowed_target_path = build_supplement_target_path(
+                    target_page_path=target_page_path or ""
+                )
+                if target_page_path is None or allowed_target_path is None:
+                    raise SupplementProposeError(
+                        error_code="NOTION_PAGE_NOT_FOUND",
+                        message="Target Notion page has no usable canonical path",
+                        http_status_code=HTTPStatus.NOT_FOUND,
+                        failure_reason="NOTION_PAGE_NOT_FOUND",
+                    )
 
             duplicate_match = self._check_duplicate(source_document.raw_text)
 
@@ -211,6 +226,10 @@ class SupplementProposeOrchestrator:
                         "source_display_name": format_untrusted_prompt_block(
                             label="SOURCE_DISPLAY_NAME",
                             value=source_document.source_display_name,
+                        ),
+                        "selected_target_path": format_untrusted_prompt_block(
+                            label="SELECTED_TARGET_PATH",
+                            value=allowed_target_path or "NONE (no selected target page)",
                         ),
                         "source_text": format_untrusted_prompt_block(
                             label="SOURCE_TEXT",
@@ -269,12 +288,14 @@ class SupplementProposeOrchestrator:
                         source_type=source_document.source_type,
                         source_display_name=source_document.source_display_name,
                         duplicate_match=duplicate_match,
+                        target_path=allowed_target_path,
                     )
             else:
                 proposal = self._build_duplicate_reference_proposal(
                     source_type=source_document.source_type,
                     source_display_name=source_document.source_display_name,
                     duplicate_match=duplicate_match,
+                    target_path=allowed_target_path,
                 )
 
             with self._unit_of_work_factory() as unit_of_work:
@@ -325,6 +346,7 @@ class SupplementProposeOrchestrator:
                     duplicate_match.notion_path if duplicate_match is not None else None
                 ),
                 target_notion_page_id=normalized_target_notion_page_id,
+                target_notion_path=target_page_path,
                 provider=provider,
                 model=model_name,
                 token_input=token_input,
@@ -495,9 +517,17 @@ class SupplementProposeOrchestrator:
             target_page_path=target_page_path,
         ):
             raise SupplementProposalValidationError(
-                "LLM output target_path must stay under the selected page's AI Supplement Zone"
+                "LLM output target_path must equal the selected page's AI Supplement Zone"
             )
-        return proposal
+        normalized_target_path = normalize_supplement_target_path(
+            target_path=proposal.target_path,
+            target_page_path=target_page_path,
+        )
+        if normalized_target_path is None:
+            raise SupplementProposalValidationError(
+                "LLM output target_path must equal the selected page's AI Supplement Zone"
+            )
+        return proposal.model_copy(update={"target_path": normalized_target_path})
 
     def _build_duplicate_reference_proposal(
         self,
@@ -505,11 +535,12 @@ class SupplementProposeOrchestrator:
         source_type: str,
         source_display_name: str,
         duplicate_match: DuplicateMatch,
+        target_path: Optional[str] = None,
     ) -> SupplementProposalSchema:
         return SupplementProposalSchema.model_validate(
             {
                 "title": f"Duplicate knowledge reference ({source_display_name})",
-                "target_path": duplicate_match.notion_path,
+                "target_path": target_path or duplicate_match.notion_path,
                 "source": {
                     "source_type": source_type,
                     "source_display_name": source_display_name,

@@ -351,6 +351,7 @@ class TelegramIngestionOrchestrator:
                 failure_reason=exc.failure_reason,
             )
             raise
+        resolved_target_notion_path = result.target_notion_path or target_notion_path
         self._session_store.record_proposal(
             session_id=session_id,
             chat_id=chat_id,
@@ -359,12 +360,12 @@ class TelegramIngestionOrchestrator:
             change_request_id=int(result.change_request_id or 0),
             source_type=str(result.source_type or "unknown"),
             target_notion_page_id=target_notion_page_id,
-            target_notion_path=target_notion_path,
+            target_notion_path=resolved_target_notion_path,
         )
         preview = self._build_proposal_preview(
             change_request_id=int(result.change_request_id or 0),
             target_notion_page_id=target_notion_page_id,
-            target_notion_path=target_notion_path,
+            target_notion_path=resolved_target_notion_path,
             source_type=str(result.source_type or "unknown"),
             source_document_id=int(result.source_document_id or 0),
             source_count=len(session.attachments),
@@ -375,7 +376,7 @@ class TelegramIngestionOrchestrator:
             change_request_id=result.change_request_id,
             source_type=result.source_type,
             target_notion_page_id=target_notion_page_id,
-            target_notion_path=target_notion_path,
+            target_notion_path=resolved_target_notion_path,
             session_id=session_id,
         )
 
@@ -425,7 +426,7 @@ class TelegramIngestionOrchestrator:
             proposal_preview = self._build_proposal_preview(
                 change_request_id=proposal_result.change_request_id,
                 target_notion_page_id=proposal_result.target_notion_page_id,
-                target_notion_path=None,
+                target_notion_path=proposal_result.target_notion_path,
                 source_type=source_result.source_type,
                 source_document_id=source_result.source_document_id,
                 source_count=source_count,
@@ -457,6 +458,7 @@ class TelegramIngestionOrchestrator:
             change_request_id=proposal_result.change_request_id,
             source_type=source_result.source_type,
             target_notion_page_id=proposal_result.target_notion_page_id,
+            target_notion_path=proposal_result.target_notion_path,
         )
 
     def _build_proposal_preview(

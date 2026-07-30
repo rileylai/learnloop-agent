@@ -125,6 +125,10 @@ def _check_untrusted_boundary(
                 label="SOURCE_DISPLAY_NAME",
                 value="adversarial-source",
             ),
+            "selected_target_path": format_untrusted_prompt_block(
+                label="SELECTED_TARGET_PATH",
+                value="NONE (no selected target page)",
+            ),
             "source_text": format_untrusted_prompt_block(
                 label="SOURCE_TEXT",
                 value=payload,
@@ -150,7 +154,7 @@ def _check_untrusted_boundary(
 def _check_target_scope_invariant() -> PromptInjectionCheckResult:
     passed = (
         is_safe_supplement_target_path(
-            target_path="Knowledge/NLP/Week5/AI Supplement Zone/Safe",
+            target_path="Knowledge/NLP/Week5/AI Supplement Zone",
             target_page_path="Knowledge/NLP/Week5",
         )
         and not is_safe_supplement_target_path(
