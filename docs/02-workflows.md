@@ -406,6 +406,9 @@ Rules:
 - An expired session, missing media, invalid callback, or unavailable queue
   returns an explicit deterministic error. The bot never guesses another
   chat/user's upload or silently reports success.
+- Invalid callback data is recorded as `INVALID_CALLBACK`; an expired or
+  unusable upload session is recorded as `UPLOAD_SESSION_EXPIRED` or
+  `UPLOAD_SESSION_INVALID`, never as `UNKNOWN_ERROR`.
 - No proposal without a target receives an Accept prompt. No callback or worker
   path auto-accepts; appending and re-indexing remain behind the existing
   human review guardrails.

@@ -475,7 +475,11 @@ class RedisTelegramSessionStore(TelegramSessionStore):
             return session
 
     def get_upload(self, **kwargs):
-        return self._get(**kwargs)
+        return self._get(
+            session_id=kwargs["session_id"],
+            chat_id=kwargs["chat_id"],
+            user_id=kwargs["user_id"],
+        )
 
     def find_latest_upload(self, **kwargs):
         raw = self._redis.get(_latest_key(kwargs["chat_id"], kwargs["user_id"]))
@@ -492,7 +496,11 @@ class RedisTelegramSessionStore(TelegramSessionStore):
     def mark_awaiting_target(self, **kwargs):
         key = _session_key(kwargs["chat_id"], kwargs["user_id"], kwargs["session_id"])
         with self._locked(key):
-            session = self._get(**kwargs)
+            session = self._get(
+                session_id=kwargs["session_id"],
+                chat_id=kwargs["chat_id"],
+                user_id=kwargs["user_id"],
+            )
             if session is not None and session.state in {"collecting", "settling"}:
                 session.state = "awaiting_target"
                 session.picker_sent = True
@@ -503,7 +511,11 @@ class RedisTelegramSessionStore(TelegramSessionStore):
     def claim_settle(self, **kwargs) -> bool:
         key = _session_key(kwargs["chat_id"], kwargs["user_id"], kwargs["session_id"])
         with self._locked(key):
-            session = self._get(**kwargs)
+            session = self._get(
+                session_id=kwargs["session_id"],
+                chat_id=kwargs["chat_id"],
+                user_id=kwargs["user_id"],
+            )
             if session is None or session.state != "collecting":
                 return False
             session.state = "settling"
@@ -514,7 +526,11 @@ class RedisTelegramSessionStore(TelegramSessionStore):
     def claim_picker(self, **kwargs) -> bool:
         key = _session_key(kwargs["chat_id"], kwargs["user_id"], kwargs["session_id"])
         with self._locked(key):
-            session = self._get(**kwargs)
+            session = self._get(
+                session_id=kwargs["session_id"],
+                chat_id=kwargs["chat_id"],
+                user_id=kwargs["user_id"],
+            )
             if session is None or session.picker_sent:
                 return False
             if session.state not in {"collecting", "settling", "awaiting_target"}:
@@ -528,7 +544,11 @@ class RedisTelegramSessionStore(TelegramSessionStore):
     def claim_receipt(self, **kwargs) -> bool:
         key = _session_key(kwargs["chat_id"], kwargs["user_id"], kwargs["session_id"])
         with self._locked(key):
-            session = self._get(**kwargs)
+            session = self._get(
+                session_id=kwargs["session_id"],
+                chat_id=kwargs["chat_id"],
+                user_id=kwargs["user_id"],
+            )
             if session is None or session.receipt_sent:
                 return False
             session.receipt_sent = True
@@ -539,7 +559,11 @@ class RedisTelegramSessionStore(TelegramSessionStore):
     def claim_target(self, **kwargs):
         key = _session_key(kwargs["chat_id"], kwargs["user_id"], kwargs["session_id"])
         with self._locked(key):
-            session = self._get(**kwargs)
+            session = self._get(
+                session_id=kwargs["session_id"],
+                chat_id=kwargs["chat_id"],
+                user_id=kwargs["user_id"],
+            )
             if session is None:
                 return "missing", None
             if session.state == "proposal_created":
@@ -558,7 +582,11 @@ class RedisTelegramSessionStore(TelegramSessionStore):
     def record_proposal(self, **kwargs):
         key = _session_key(kwargs["chat_id"], kwargs["user_id"], kwargs["session_id"])
         with self._locked(key):
-            session = self._get(**kwargs)
+            session = self._get(
+                session_id=kwargs["session_id"],
+                chat_id=kwargs["chat_id"],
+                user_id=kwargs["user_id"],
+            )
             if session is None:
                 return None
             session.source_document_id = kwargs["source_document_id"]
@@ -574,7 +602,11 @@ class RedisTelegramSessionStore(TelegramSessionStore):
     def claim_preview(self, **kwargs) -> bool:
         key = _session_key(kwargs["chat_id"], kwargs["user_id"], kwargs["session_id"])
         with self._locked(key):
-            session = self._get(**kwargs)
+            session = self._get(
+                session_id=kwargs["session_id"],
+                chat_id=kwargs["chat_id"],
+                user_id=kwargs["user_id"],
+            )
             if session is None or session.preview_sent:
                 return False
             session.preview_sent = True
@@ -585,7 +617,11 @@ class RedisTelegramSessionStore(TelegramSessionStore):
     def fail_upload(self, **kwargs) -> None:
         key = _session_key(kwargs["chat_id"], kwargs["user_id"], kwargs["session_id"])
         with self._locked(key):
-            session = self._get(**kwargs)
+            session = self._get(
+                session_id=kwargs["session_id"],
+                chat_id=kwargs["chat_id"],
+                user_id=kwargs["user_id"],
+            )
             if session is not None:
                 session.state = "failed"
                 session.failure_reason = kwargs["failure_reason"]

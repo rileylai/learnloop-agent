@@ -520,7 +520,7 @@ class TelegramGatewayOrchestrator:
                             error_code="INVALID_CALLBACK",
                             message="This page selection is invalid. Please upload again.",
                             http_status_code=HTTPStatus.BAD_REQUEST,
-                            failure_reason="INVALID_ARGUMENT",
+                            failure_reason="INVALID_CALLBACK",
                         )
                     ingestion_result = await self._telegram_ingestion_orchestrator.handle_target_selection(
                         session_id=callback_action.session_id,
@@ -561,7 +561,7 @@ class TelegramGatewayOrchestrator:
                             error_code="INVALID_CALLBACK",
                             message="This review action is invalid.",
                             http_status_code=HTTPStatus.BAD_REQUEST,
-                            failure_reason="INVALID_ARGUMENT",
+                            failure_reason="INVALID_CALLBACK",
                         )
                     review_command = f"/{callback_action.action} {callback_action.change_request_id}"
                     review_result = await self._telegram_review_orchestrator.handle_review_command(
@@ -588,7 +588,7 @@ class TelegramGatewayOrchestrator:
                             error_code="INVALID_CALLBACK",
                             message="This target action is invalid.",
                             http_status_code=HTTPStatus.BAD_REQUEST,
-                            failure_reason="INVALID_ARGUMENT",
+                            failure_reason="INVALID_CALLBACK",
                         )
                     reply_text, reply_markup = self._build_review_target_picker(
                         change_request_id=callback_action.change_request_id,
@@ -606,7 +606,7 @@ class TelegramGatewayOrchestrator:
                             error_code="INVALID_CALLBACK",
                             message="This target selection is invalid.",
                             http_status_code=HTTPStatus.BAD_REQUEST,
-                            failure_reason="INVALID_ARGUMENT",
+                            failure_reason="INVALID_CALLBACK",
                         )
                     review_result = await self._telegram_review_orchestrator.handle_change_target(
                         change_request_id=callback_action.change_request_id,
@@ -633,7 +633,7 @@ class TelegramGatewayOrchestrator:
                         error_code="INVALID_CALLBACK",
                         message="This button is no longer valid. Please upload again.",
                         http_status_code=HTTPStatus.BAD_REQUEST,
-                        failure_reason="INVALID_ARGUMENT",
+                        failure_reason="INVALID_CALLBACK",
                     )
             elif command == "health":
                 reply_text = self._build_reply_for_command(command)
@@ -1233,7 +1233,7 @@ class TelegramGatewayOrchestrator:
                 error_code="INVALID_CALLBACK",
                 message="This button is invalid or expired. Please upload the file again.",
                 http_status_code=HTTPStatus.BAD_REQUEST,
-                failure_reason="INVALID_ARGUMENT",
+                failure_reason="INVALID_CALLBACK",
             )
         token = raw_data[3:].strip()
         if not token or self._telegram_ingestion_orchestrator is None:
@@ -1241,7 +1241,7 @@ class TelegramGatewayOrchestrator:
                 error_code="INVALID_CALLBACK",
                 message="This button is invalid or expired. Please upload the file again.",
                 http_status_code=HTTPStatus.BAD_REQUEST,
-                failure_reason="INVALID_ARGUMENT",
+                failure_reason="INVALID_CALLBACK",
             )
         action = self._telegram_ingestion_orchestrator.resolve_callback(
             token=token,
@@ -1253,7 +1253,7 @@ class TelegramGatewayOrchestrator:
                 error_code="INVALID_CALLBACK",
                 message="This button is invalid or expired. Please upload the file again.",
                 http_status_code=HTTPStatus.BAD_REQUEST,
-                failure_reason="INVALID_ARGUMENT",
+                failure_reason="INVALID_CALLBACK",
             )
         return action
 

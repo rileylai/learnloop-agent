@@ -104,6 +104,8 @@ Telegram ingestion session policy:
 - An unexpired session with no media, an expired session, a cross-user lookup,
   or an invalid callback fails closed with a clear error. No stale upload is
   guessed or borrowed from another chat/user.
+- These failures use specific redacted reasons: `INVALID_CALLBACK`,
+  `UPLOAD_SESSION_EXPIRED`, or `UPLOAD_SESSION_INVALID` as applicable.
 - Inline Accept is only a deliberate user callback. It delegates to the
   existing `SupplementReviewOrchestrator`, allowed-chat checks, pending/target
   checks, append-only `AI Supplement Zone` policy, and immediate re-index

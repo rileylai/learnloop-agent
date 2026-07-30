@@ -1285,5 +1285,8 @@ Notes:
 - Expired sessions, missing media, invalid callbacks, and unavailable queue
   paths return explicit deterministic errors. A targetless proposal never
   receives an Accept prompt.
+- Invalid callback/session failures expose only redacted messages and specific
+  `failure_reason` values such as `INVALID_CALLBACK`,
+  `UPLOAD_SESSION_EXPIRED`, or `UPLOAD_SESSION_INVALID`.
 - `/ingest` creates `pending` change requests only; Notion append remains in accept workflow.
 - Telegram QA uses production Notion chunks only; pending and rejected proposals remain excluded.

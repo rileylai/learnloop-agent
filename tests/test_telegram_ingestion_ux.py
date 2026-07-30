@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 import pytest
 import fakeredis
+from rq import Queue, SimpleWorker
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -17,6 +18,7 @@ from src.app.dependencies import (
     get_db_session_factory,
     get_embedding_client,
     get_provider_router,
+    get_queue_client,
     get_tool_registry,
 )
 from src.app.main import app
@@ -26,10 +28,16 @@ from src.db.session import get_db_session, get_unit_of_work_factory
 from src.db.unit_of_work import SqlAlchemyUnitOfWork
 from src.providers import LLMProvider, LLMRequest, LLMResponse, ProviderRouter
 from src.services import (
+    CostTracker,
     InMemoryTelegramSessionStore,
+    PromptTemplateLoader,
     RedisTelegramSessionStore,
+    TelegramSessionStore,
     TelegramUploadAttachment,
+    TrustBoundaryService,
 )
+import src.worker.telegram as telegram_worker
+from src.queue import RQQueueClient
 from src.tools import (
     ImageOCRParserClient,
     ImageOCRTool,
@@ -146,7 +154,7 @@ def _configure_app(
     *,
     session_factory,
     telegram_client: InMemoryTelegramBotClient,
-    session_store: InMemoryTelegramSessionStore,
+    session_store: TelegramSessionStore,
     source_type: str,
 ) -> None:
     registry = ToolRegistry()
@@ -331,6 +339,172 @@ def test_upload_then_page_button_creates_target_aware_pending_proposal(
             assert session.query(SourceDocument).count() == 1
         finally:
             session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_redis_upload_picker_callback_restores_session_in_worker_and_creates_pending_proposal(
+    monkeypatch,
+) -> None:
+    session_factory = _session_factory()
+    _seed_pages(session_factory)
+    telegram_client = InMemoryTelegramBotClient()
+    telegram_client.add_file(
+        file_id="redis-worker-pdf",
+        file_bytes=b"telegram-file-bytes",
+        file_name="lesson.pdf",
+    )
+
+    class _FakeRedisWithLocalLock:
+        def __init__(self, redis_client) -> None:
+            self._redis = redis_client
+            self._lock = threading.RLock()
+
+        def lock(self, *_args, **_kwargs):
+            return self._lock
+
+        def __getattr__(self, name):
+            return getattr(self._redis, name)
+
+    redis_client = fakeredis.FakeRedis()
+    session_store = RedisTelegramSessionStore(
+        redis_client=_FakeRedisWithLocalLock(redis_client)
+    )
+    queue_client = RQQueueClient(connection=redis_client)
+    _configure_app(
+        session_factory=session_factory,
+        telegram_client=telegram_client,
+        session_store=session_store,
+        source_type="pdf",
+    )
+    app.dependency_overrides[get_queue_client] = lambda: queue_client
+
+    registry = ToolRegistry()
+    registry.register_tool(TelegramBotTool(telegram_client))
+    registry.register_tool(PDFParserTool(_PDFParser()))
+    router = ProviderRouter()
+    router.register_provider(_ProposalProvider(source_type="pdf"))
+    monkeypatch.setattr(telegram_worker, "get_db_session_factory", lambda: session_factory)
+    monkeypatch.setattr(
+        telegram_worker,
+        "get_unit_of_work_factory",
+        lambda: (lambda: SqlAlchemyUnitOfWork(session_factory)),
+    )
+    monkeypatch.setattr(telegram_worker, "get_tool_registry", lambda: registry)
+    monkeypatch.setattr(telegram_worker, "get_provider_router", lambda: router)
+    monkeypatch.setattr(telegram_worker, "get_embedding_client", lambda: None)
+    monkeypatch.setattr(telegram_worker, "get_cost_tracker", lambda: CostTracker())
+    monkeypatch.setattr(
+        telegram_worker,
+        "get_prompt_template_loader",
+        lambda: PromptTemplateLoader(),
+    )
+    monkeypatch.setattr(
+        telegram_worker,
+        "get_trust_boundary",
+        lambda: TrustBoundaryService(),
+    )
+    monkeypatch.setattr(telegram_worker, "get_queue_client", lambda: queue_client)
+    monkeypatch.setattr(
+        telegram_worker,
+        "get_telegram_session_store",
+        lambda: session_store,
+    )
+
+    upload_payload = {
+        "update_id": 9500,
+        "message": {
+            "message_id": 50,
+            "chat": {"id": 565},
+            "from": {"id": 785},
+            "caption": "/ingest",
+            "document": {
+                "file_id": "redis-worker-pdf",
+                "file_name": "lesson.pdf",
+                "mime_type": "application/pdf",
+            },
+        },
+    }
+
+    try:
+        client = TestClient(app)
+        upload_response = client.post("/api/telegram/webhook", json=upload_payload)
+        assert upload_response.status_code == 202
+        assert upload_response.json()["skipped_reason"] == "QUEUED"
+        assert Queue(name="telegram", connection=redis_client).count == 1
+
+        SimpleWorker(
+            [Queue(name="telegram", connection=redis_client)],
+            connection=redis_client,
+        ).work(burst=True)
+        picker_message = telegram_client.list_sent_messages()[-1]
+        picker_token = picker_message.reply_markup["inline_keyboard"][0][0][
+            "callback_data"
+        ]
+        restored = session_store.get_upload(
+            session_id="single-update-9500",
+            chat_id="565",
+            user_id="785",
+        )
+        assert restored is not None
+        assert restored.state == "awaiting_target"
+        assert [item.file_id for item in restored.attachments] == [
+            "redis-worker-pdf"
+        ]
+
+        callback_response = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 9501,
+                "callback_query": {
+                    "id": "redis-worker-callback",
+                    "from": {"id": 785},
+                    "data": picker_token,
+                    "message": {"message_id": 51, "chat": {"id": 565}},
+                },
+            },
+        )
+        assert callback_response.status_code == 202
+        assert Queue(name="telegram", connection=redis_client).count == 1
+
+        SimpleWorker(
+            [Queue(name="telegram", connection=redis_client)],
+            connection=redis_client,
+        ).work(burst=True)
+        assert len(telegram_client.list_sent_messages()) == 2
+
+        session = session_factory()
+        try:
+            proposal = session.query(ChangeRequest).one()
+            assert proposal.status == "pending"
+            assert proposal.target_notion_page_id == 1
+            assert session.query(SourceDocument).count() == 1
+            ledgers = {
+                ledger.update_id: ledger.status
+                for ledger in session.query(TelegramUpdateLedger).all()
+            }
+            assert ledgers == {9500: "succeeded", 9501: "succeeded"}
+        finally:
+            session.close()
+
+        persisted = session_store.get_upload(
+            session_id="single-update-9500",
+            chat_id="565",
+            user_id="785",
+        )
+        assert persisted is not None
+        assert persisted.state == "proposal_created"
+        assert persisted.target_notion_page_id == "notion-parent-canonical"
+        assert persisted.target_notion_path == "Knowledge/Parent"
+
+        duplicate_upload_response = client.post(
+            "/api/telegram/webhook",
+            json=upload_payload,
+        )
+        assert duplicate_upload_response.status_code == 200
+        assert duplicate_upload_response.json()["status"] == "succeeded"
+        assert Queue(name="telegram", connection=redis_client).count == 0
+        assert len(telegram_client.list_sent_messages()) == 2
     finally:
         app.dependency_overrides.clear()
 
@@ -577,6 +751,7 @@ def test_expired_upload_command_returns_clear_error_and_requires_reupload() -> N
         )
         assert response.status_code == 410
         assert response.json()["detail"]["error_code"] == "UPLOAD_SESSION_EXPIRED"
+        assert response.json()["detail"]["failure_reason"] == "UPLOAD_SESSION_EXPIRED"
         assert telegram_client.list_sent_messages()[-1].text.endswith(
             "Please upload a PDF or image first."
         )
@@ -654,6 +829,7 @@ def test_invalid_callback_is_rejected_without_creating_proposal() -> None:
         )
         assert response.status_code == 400
         assert response.json()["detail"]["error_code"] == "INVALID_CALLBACK"
+        assert response.json()["detail"]["failure_reason"] == "INVALID_CALLBACK"
         session = session_factory()
         try:
             assert session.query(ChangeRequest).count() == 0
