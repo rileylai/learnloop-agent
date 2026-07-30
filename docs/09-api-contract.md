@@ -1045,16 +1045,43 @@ The callback creates one target-aware `pending` proposal, returns
 target buttons. Callback Accept is explicit and delegates to the same review
 orchestrator as `/accept`; it never appends automatically at proposal time.
 
-For a valid page-picker callback, the backend first validates callback token
-ownership, session state, and selected page, then calls Telegram
-`answerCallbackQuery` before OCR, provider, or proposal work. The response and
-workflow metadata expose `business_status`, `callback_ack_status`, and
-`preview_delivery_status`. A transient acknowledgement failure is classified
-as `TELEGRAM_CALLBACK_ACK_FAILED` and does not fail a business workflow that
-successfully commits its source document and pending change request. A preview
-`send_message` failure is classified as
+Callback button data remains `ll:<opaque_token>`. The server-side mapping has
+the following allowlisted semantic fields:
+
+| Field | Values | Meaning |
+| --- | --- | --- |
+| `callback_kind` | `review`, `picker` | Dispatch family; review is checked first. |
+| `action` | `accept`, `reject`, `change_target`, `select_target`, `change_target_select` | Specific operation. |
+| `change_request_id` | positive integer or null | Required for review actions. |
+| `target_notion_page_id`, `target_notion_path` | server-resolved values | Required only for page-selection actions. |
+
+Redis mappings written before `callback_kind` existed are normalized from the
+allowlisted action. Unknown or mismatched mappings fail closed. A
+`ready_for_review` or `proposal_created` upload-session state is presentation
+state only and cannot route a valid review Accept to the page-picker branch.
+The normal Accept target is resolved from the change request; the
+`LEARNLOOP_NOTION_CANARY_PAGE_ID` environment variable is not consulted by
+normal Telegram review callbacks.
+
+For a valid callback, the backend first validates callback ownership and the
+mapping family. Review actions dispatch before generic picker/session actions.
+For a page-picker callback, it also validates session state and selected page.
+Then it calls Telegram `answerCallbackQuery` before OCR, provider, or proposal
+work. The response and workflow metadata expose `business_status`,
+`callback_ack_status`, and `preview_delivery_status`. A transient
+acknowledgement failure is classified as `TELEGRAM_CALLBACK_ACK_FAILED` and
+does not fail a legal review/business workflow. A preview `send_message` failure is classified as
 `TELEGRAM_PREVIEW_DELIVERY_FAILED`; the pending change request remains and the
 user receives a short recovery message.
+
+Inline Accept delegates to `TelegramReviewOrchestrator` and the existing
+`SupplementReviewOrchestrator.accept_change_request()` path: pending
+validation, AI Supplement Zone append, durable identity verification, page
+re-index, accepted transition, then the Telegram success reply. Inline Reject
+uses the same review orchestrator and performs no Notion write. Inline Change
+target only opens or applies the target picker. Duplicate `update_id` delivery
+replays the stored outcome and never repeats OCR, LLM generation, append, or
+change-request creation.
 
 Request example (`/ingest` + PDF):
 

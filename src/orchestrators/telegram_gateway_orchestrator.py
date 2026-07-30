@@ -35,6 +35,9 @@ from src.services import (
     TelegramUpdateClaim,
     TelegramUpdateIdempotencyError,
     TelegramUpdateIdempotencyService,
+    TELEGRAM_CALLBACK_KIND_PICKER,
+    TELEGRAM_CALLBACK_KIND_REVIEW,
+    TELEGRAM_REVIEW_CALLBACK_ACTIONS,
 )
 from src.tools import ToolContext, ToolRegistry
 
@@ -609,7 +612,49 @@ class TelegramGatewayOrchestrator:
                 if not ack_ok:
                     callback_ack_status = "failed"
                     callback_ack_failure_reason = ack_failure_reason
-                if callback_action.action == "select_target":
+                # Review callbacks are a distinct protocol family. Dispatch them
+                # before the generic picker/session branch so a restored or legacy
+                # review button can never be treated as "ready for review" again.
+                if (
+                    callback_action.callback_kind == TELEGRAM_CALLBACK_KIND_REVIEW
+                    and callback_action.action in {"accept", "reject"}
+                ):
+                    if self._telegram_review_orchestrator is None:
+                        raise TelegramGatewayError(
+                            error_code="TELEGRAM_REVIEW_NOT_CONFIGURED",
+                            message="Telegram review orchestrator is not configured",
+                            http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                            failure_reason="UNKNOWN_ERROR",
+                        )
+                    if callback_action.change_request_id is None:
+                        raise TelegramGatewayError(
+                            error_code="INVALID_CALLBACK",
+                            message="This review action is invalid.",
+                            http_status_code=HTTPStatus.BAD_REQUEST,
+                            failure_reason="INVALID_CALLBACK",
+                        )
+                    review_command = f"/{callback_action.action} {callback_action.change_request_id}"
+                    if callback_action.action == "reject":
+                        # The inline button has no text field for a rejection
+                        # reason; keep the existing orchestrator contract by
+                        # supplying a deterministic, non-sensitive reason.
+                        review_command += " Telegram review callback"
+                    review_result = await self._telegram_review_orchestrator.handle_review_command(
+                        command=callback_action.action,
+                        command_text=review_command,
+                        chat_id=normalized_chat_id,
+                        request_workflow_id=request_workflow_id,
+                    )
+                    business_status = "succeeded"
+                    reply_text = review_result.reply_text
+                    review_workflow_run_id = review_result.review_workflow_run_id
+                    change_request_id = review_result.change_request_id
+                    change_request_status = review_result.change_request_status
+                    review_action = review_result.review_action
+                elif (
+                    callback_action.callback_kind == TELEGRAM_CALLBACK_KIND_PICKER
+                    and callback_action.action == "select_target"
+                ):
                     if self._telegram_ingestion_orchestrator is None:
                         raise TelegramGatewayError(
                             error_code="TELEGRAM_INGESTION_NOT_CONFIGURED",
@@ -656,35 +701,10 @@ class TelegramGatewayOrchestrator:
                             preview_delivery_status = "pending"
                         else:
                             reply_text = "This proposal is already ready for review."
-                elif callback_action.action in {"accept", "reject"}:
-                    if self._telegram_review_orchestrator is None:
-                        raise TelegramGatewayError(
-                            error_code="TELEGRAM_REVIEW_NOT_CONFIGURED",
-                            message="Telegram review orchestrator is not configured",
-                            http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-                            failure_reason="UNKNOWN_ERROR",
-                        )
-                    if callback_action.change_request_id is None:
-                        raise TelegramGatewayError(
-                            error_code="INVALID_CALLBACK",
-                            message="This review action is invalid.",
-                            http_status_code=HTTPStatus.BAD_REQUEST,
-                            failure_reason="INVALID_CALLBACK",
-                        )
-                    review_command = f"/{callback_action.action} {callback_action.change_request_id}"
-                    review_result = await self._telegram_review_orchestrator.handle_review_command(
-                        command=callback_action.action,
-                        command_text=review_command,
-                        chat_id=normalized_chat_id,
-                        request_workflow_id=request_workflow_id,
-                    )
-                    business_status = "succeeded"
-                    reply_text = review_result.reply_text
-                    review_workflow_run_id = review_result.review_workflow_run_id
-                    change_request_id = review_result.change_request_id
-                    change_request_status = review_result.change_request_status
-                    review_action = review_result.review_action
-                elif callback_action.action == "change_target":
+                elif (
+                    callback_action.callback_kind == TELEGRAM_CALLBACK_KIND_REVIEW
+                    and callback_action.action == "change_target"
+                ):
                     if self._telegram_page_orchestrator is None:
                         raise TelegramGatewayError(
                             error_code="TELEGRAM_PAGES_NOT_CONFIGURED",
@@ -706,7 +726,10 @@ class TelegramGatewayOrchestrator:
                     )
                     business_status = "succeeded"
                     change_request_id = callback_action.change_request_id
-                elif callback_action.action == "change_target_select":
+                elif (
+                    callback_action.callback_kind == TELEGRAM_CALLBACK_KIND_PICKER
+                    and callback_action.action == "change_target_select"
+                ):
                     if (
                         self._telegram_review_orchestrator is None
                         or callback_action.change_request_id is None
@@ -1507,7 +1530,48 @@ class TelegramGatewayOrchestrator:
     ) -> None:
         """Validate callback ownership/state before acknowledging or doing work."""
 
-        if callback_action.action == "select_target":
+        # Validate the semantic family first. Review callbacks must not depend
+        # on upload-session state because the session may already be in the
+        # ready-for-review/proposal-created state when the user clicks Accept.
+        if callback_action.callback_kind == TELEGRAM_CALLBACK_KIND_REVIEW:
+            if callback_action.action not in TELEGRAM_REVIEW_CALLBACK_ACTIONS:
+                raise TelegramGatewayError(
+                    error_code="INVALID_CALLBACK",
+                    message="This review action is invalid.",
+                    http_status_code=HTTPStatus.BAD_REQUEST,
+                    failure_reason="INVALID_CALLBACK",
+                )
+            if callback_action.change_request_id is None or callback_action.change_request_id <= 0:
+                raise TelegramGatewayError(
+                    error_code="INVALID_CALLBACK",
+                    message="This review action is invalid.",
+                    http_status_code=HTTPStatus.BAD_REQUEST,
+                    failure_reason="INVALID_CALLBACK",
+                )
+            return
+
+        if callback_action.callback_kind == TELEGRAM_CALLBACK_KIND_PICKER:
+            if callback_action.action == "change_target_select":
+                if (
+                    callback_action.change_request_id is None
+                    or callback_action.change_request_id <= 0
+                    or not callback_action.target_notion_page_id
+                ):
+                    raise TelegramGatewayError(
+                        error_code="INVALID_CALLBACK",
+                        message="This target selection is invalid.",
+                        http_status_code=HTTPStatus.BAD_REQUEST,
+                        failure_reason="INVALID_CALLBACK",
+                    )
+                return
+
+            if callback_action.action != "select_target":
+                raise TelegramGatewayError(
+                    error_code="INVALID_CALLBACK",
+                    message="This button is no longer valid. Please upload again.",
+                    http_status_code=HTTPStatus.BAD_REQUEST,
+                    failure_reason="INVALID_CALLBACK",
+                )
             if (
                 self._telegram_ingestion_orchestrator is None
                 or not callback_action.target_notion_page_id
@@ -1551,23 +1615,6 @@ class TelegramGatewayOrchestrator:
                 )
             return
 
-        if callback_action.action in {"accept", "reject", "change_target", "change_target_select"}:
-            if callback_action.change_request_id is None or callback_action.change_request_id <= 0:
-                raise TelegramGatewayError(
-                    error_code="INVALID_CALLBACK",
-                    message="This review action is invalid.",
-                    http_status_code=HTTPStatus.BAD_REQUEST,
-                    failure_reason="INVALID_CALLBACK",
-                )
-            if callback_action.action == "change_target_select" and not callback_action.target_notion_page_id:
-                raise TelegramGatewayError(
-                    error_code="INVALID_CALLBACK",
-                    message="This target selection is invalid.",
-                    http_status_code=HTTPStatus.BAD_REQUEST,
-                    failure_reason="INVALID_CALLBACK",
-                )
-            return
-
         raise TelegramGatewayError(
             error_code="INVALID_CALLBACK",
             message="This button is no longer valid. Please upload again.",
@@ -1605,6 +1652,7 @@ class TelegramGatewayOrchestrator:
                 chat_id=chat_id,
                 user_id=user_id,
                 action="select_target",
+                callback_kind=TELEGRAM_CALLBACK_KIND_PICKER,
                 target_notion_page_id=page.page_id,
                 target_notion_path=page.notion_path,
             )
@@ -1656,6 +1704,7 @@ class TelegramGatewayOrchestrator:
             chat_id=chat_id,
             user_id=user_id,
             action="accept",
+            callback_kind=TELEGRAM_CALLBACK_KIND_REVIEW,
             change_request_id=change_request_id,
         )
         reject_token = self._telegram_ingestion_orchestrator.create_callback(
@@ -1663,6 +1712,7 @@ class TelegramGatewayOrchestrator:
             chat_id=chat_id,
             user_id=user_id,
             action="reject",
+            callback_kind=TELEGRAM_CALLBACK_KIND_REVIEW,
             change_request_id=change_request_id,
         )
         change_target_token = self._telegram_ingestion_orchestrator.create_callback(
@@ -1670,6 +1720,7 @@ class TelegramGatewayOrchestrator:
             chat_id=chat_id,
             user_id=user_id,
             action="change_target",
+            callback_kind=TELEGRAM_CALLBACK_KIND_REVIEW,
             change_request_id=change_request_id,
         )
         return {
@@ -1705,6 +1756,7 @@ class TelegramGatewayOrchestrator:
                 chat_id=chat_id,
                 user_id=user_id,
                 action="change_target_select",
+                callback_kind=TELEGRAM_CALLBACK_KIND_PICKER,
                 change_request_id=change_request_id,
                 target_notion_page_id=page.page_id,
                 target_notion_path=page.notion_path,

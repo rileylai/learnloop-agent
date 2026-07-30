@@ -1232,6 +1232,30 @@ def test_redis_session_and_callback_mapping_are_ttl_and_user_scoped() -> None:
         chat_id="other-chat",
         user_id="other-user",
     ) is None
+    resolved = store.resolve_callback(
+        token=token,
+        chat_id="chat-redis",
+        user_id="user-redis",
+    )
+    assert resolved.callback_kind == "picker"
+    redis_client.setex(
+        "learnloop:telegram:callback:chat-redis:user-redis:legacy-review-token",
+        60,
+        json.dumps(
+            {
+                "session_id": "proposal-88",
+                "action": "accept",
+                "change_request_id": 88,
+            }
+        ),
+    )
+    legacy = store.resolve_callback(
+        token="legacy-review-token",
+        chat_id="chat-redis",
+        user_id="user-redis",
+    )
+    assert legacy is not None
+    assert legacy.callback_kind == "review"
     assert redis_client.ttl("learnloop:telegram:upload:chat-redis:user-redis:redis-session") > 0
 
 

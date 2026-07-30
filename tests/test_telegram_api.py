@@ -14,6 +14,7 @@ from src.app.dependencies import (
     get_provider_router,
     get_tool_registry,
 )
+from src.app.api.routes.telegram import get_telegram_session_store
 from src.app.main import app
 from src.db.base import Base
 from src.db.models import (
@@ -53,9 +54,11 @@ from src.tools import (
     PDFParserClientError,
     PDFParserTool,
     ParsedImageOCR,
+    TelegramBotSendError,
     TelegramBotTool,
     ToolRegistry,
 )
+from src.services import InMemoryTelegramSessionStore
 
 
 @dataclass
@@ -197,6 +200,13 @@ class _FakeEmbeddingClient(EmbeddingClient):
             embeddings=embeddings,
             token_input=len(request.inputs) * 10,
         )
+
+
+class _CallbackAckFailureTelegramClient(InMemoryTelegramBotClient):
+    def answer_callback_query(self, *, callback_query_id: str, text=None) -> None:
+        _ = callback_query_id
+        _ = text
+        raise TelegramBotSendError("Telegram callback acknowledgement timed out")
 
 
 def _build_session_factory():
@@ -1420,7 +1430,7 @@ def test_telegram_webhook_ingest_screenshot_batch_creates_one_source_and_change_
         app.dependency_overrides.clear()
 
 
-def test_telegram_pages_targeted_ingest_preview_and_accept_e2e() -> None:
+def test_telegram_pages_targeted_ingest_preview_and_accept_e2e(monkeypatch) -> None:
     session_factory = _build_session_factory()
     snapshot_pages = {
         "page-telegram-flow": InMemoryNotionPageSnapshot(
@@ -1461,6 +1471,8 @@ def test_telegram_pages_targeted_ingest_preview_and_accept_e2e() -> None:
         )
     )
     registry.register_tool(ImageOCRTool(_FakeImageOCRParserClient()))
+    session_store = InMemoryTelegramSessionStore()
+    monkeypatch.setenv("LEARNLOOP_NOTION_CANARY_PAGE_ID", "canary-only-page")
 
     def _db_override():
         session = session_factory()
@@ -1498,6 +1510,7 @@ def test_telegram_pages_targeted_ingest_preview_and_accept_e2e() -> None:
         lambda: SqlAlchemyUnitOfWork(session_factory)
     )
     app.dependency_overrides[get_tool_registry] = lambda: registry
+    app.dependency_overrides[get_telegram_session_store] = lambda: session_store
     app.dependency_overrides[get_provider_router] = _provider_router_override
     app.dependency_overrides[get_embedding_client] = _embedding_client_override
 
@@ -1542,15 +1555,25 @@ def test_telegram_pages_targeted_ingest_preview_and_accept_e2e() -> None:
         assert "Proposal ready for review" in ingest_payload["reply_text"]
         assert "Review with /accept" in ingest_payload["reply_text"]
         change_request_id = ingest_payload["change_request_id"]
+        ready_session = session_store.find_latest_upload(
+            chat_id="7777", user_id="7777"
+        )
+        assert ready_session is not None
+        ready_session.state = "ready_for_review"
 
+        review_message = telegram_client.list_sent_messages()[-1]
+        accept_callback_data = review_message.reply_markup["inline_keyboard"][0][0][
+            "callback_data"
+        ]
         accept_response = client.post(
             "/api/telegram/webhook",
             json={
                 "update_id": 4003,
-                "message": {
-                    "message_id": 43,
-                    "chat": {"id": 7777},
-                    "text": f"/accept {change_request_id}",
+                "callback_query": {
+                    "id": "accept-callback-4003",
+                    "from": {"id": 7777},
+                    "data": accept_callback_data,
+                    "message": {"message_id": 43, "chat": {"id": 7777}},
                 },
             },
         )
@@ -1558,7 +1581,220 @@ def test_telegram_pages_targeted_ingest_preview_and_accept_e2e() -> None:
         accept_payload = accept_response.json()
         assert accept_payload["change_request_status"] == "accepted"
         assert accept_payload["review_action"] == "accept"
+        assert telegram_client.list_callback_answers() == [
+            {"callback_query_id": "accept-callback-4003", "text": None}
+        ]
         assert len(writer_client.list_operations(page_id="page-telegram-flow")) == 1
         assert len(snapshot_pages["page-telegram-flow"].ai_supplement_entries) == 1
+
+        duplicate_accept_response = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 4003,
+                "callback_query": {
+                    "id": "accept-callback-4003",
+                    "from": {"id": 7777},
+                    "data": accept_callback_data,
+                    "message": {"message_id": 43, "chat": {"id": 7777}},
+                },
+            },
+        )
+        assert duplicate_accept_response.status_code == 200
+        assert duplicate_accept_response.json()["change_request_status"] == "accepted"
+        assert len(writer_client.list_operations(page_id="page-telegram-flow")) == 1
+        assert len(snapshot_pages["page-telegram-flow"].ai_supplement_entries) == 1
+        assert telegram_client.list_callback_answers() == [
+            {"callback_query_id": "accept-callback-4003", "text": None}
+        ]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_review_accept_callback_ack_failure_still_executes_business_work() -> None:
+    session_factory = _build_session_factory()
+    snapshot_pages = {
+        "page-review-callback": InMemoryNotionPageSnapshot(
+            page_id="page-review-callback",
+            title="Callback Review Page",
+            notion_path="Knowledge/Callback Review",
+            original_blocks=["Original note remains unchanged."],
+        )
+    }
+    seed_session = session_factory()
+    try:
+        _seed_notion_page(
+            seed_session,
+            page_db_id=92,
+            notion_page_id="page-review-callback",
+            title="Callback Review Page",
+            notion_path="Knowledge/Callback Review",
+        )
+        _seed_change_request(
+            seed_session,
+            change_request_id=44,
+            target_notion_page_id=92,
+            proposal_json=json.dumps(
+                {
+                    "title": "Callback Accept Proposal",
+                    "target_path": (
+                        "Knowledge/Callback Review/AI Supplement Zone/"
+                        "Callback Accept Proposal"
+                    ),
+                    "source": {
+                        "source_type": "screenshot",
+                        "source_display_name": "callback-source",
+                    },
+                    "summary": "Accepted from the review callback.",
+                    "concepts": ["callback routing"],
+                    "notes": ["Callback acknowledgement is independent."],
+                }
+            ),
+        )
+    finally:
+        seed_session.close()
+
+    telegram_client = _CallbackAckFailureTelegramClient()
+    registry, writer_client = _build_review_tool_registry(
+        snapshot_pages=snapshot_pages,
+        telegram_client=telegram_client,
+    )
+    session_store = InMemoryTelegramSessionStore()
+    accept_token = session_store.create_callback(
+        session_id="proposal-44",
+        chat_id="8888",
+        user_id="8888",
+        action="accept",
+        change_request_id=44,
+    )
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
+    app.dependency_overrides[get_tool_registry] = lambda: registry
+    app.dependency_overrides[get_embedding_client] = _embedding_client_override
+    app.dependency_overrides[get_telegram_session_store] = lambda: session_store
+
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 4401,
+                "callback_query": {
+                    "id": "review-ack-failure",
+                    "from": {"id": 8888},
+                    "data": f"ll:{accept_token}",
+                    "message": {"message_id": 44, "chat": {"id": 8888}},
+                },
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["business_status"] == "succeeded"
+        assert payload["callback_ack_status"] == "failed"
+        assert payload["review_action"] == "accept"
+        assert payload["change_request_status"] == "accepted"
+        assert len(writer_client.list_operations(page_id="page-review-callback")) == 1
+
+        session = session_factory()
+        try:
+            change_request = session.get(ChangeRequest, 44)
+            assert change_request is not None
+            assert change_request.status == "accepted"
+            workflow = session.get(WorkflowRun, payload["workflow_run_id"])
+            assert workflow is not None
+            assert workflow.status == "succeeded"
+            metadata = json.loads(workflow.metadata_json or "{}")
+            assert metadata["callback_ack_failure_reason"] == (
+                "TELEGRAM_CALLBACK_ACK_FAILED"
+            )
+            ledger = session.get(TelegramUpdateLedger, 4401)
+            assert ledger is not None
+            assert ledger.status == "succeeded"
+        finally:
+            session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_review_reject_callback_updates_status_without_notion_write() -> None:
+    session_factory = _build_session_factory()
+    seed_session = session_factory()
+    try:
+        _seed_change_request(
+            seed_session,
+            change_request_id=45,
+            proposal_json='{"title":"Reject callback proposal"}',
+        )
+    finally:
+        seed_session.close()
+
+    telegram_client = InMemoryTelegramBotClient()
+    registry = ToolRegistry()
+    registry.register_tool(TelegramBotTool(telegram_client))
+    session_store = InMemoryTelegramSessionStore()
+    reject_token = session_store.create_callback(
+        session_id="proposal-45",
+        chat_id="8999",
+        user_id="8999",
+        action="reject",
+        change_request_id=45,
+    )
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
+    app.dependency_overrides[get_tool_registry] = lambda: registry
+    app.dependency_overrides[get_embedding_client] = _embedding_client_override
+    app.dependency_overrides[get_telegram_session_store] = lambda: session_store
+
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 4501,
+                "callback_query": {
+                    "id": "reject-callback",
+                    "from": {"id": 8999},
+                    "data": f"ll:{reject_token}",
+                    "message": {"message_id": 45, "chat": {"id": 8999}},
+                },
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["review_action"] == "reject"
+        assert payload["change_request_status"] == "rejected"
+        assert telegram_client.list_callback_answers() == [
+            {"callback_query_id": "reject-callback", "text": None}
+        ]
+
+        session = session_factory()
+        try:
+            change_request = session.get(ChangeRequest, 45)
+            assert change_request is not None
+            assert change_request.status == "rejected"
+            assert session.query(NotionBlock).count() == 0
+        finally:
+            session.close()
     finally:
         app.dependency_overrides.clear()

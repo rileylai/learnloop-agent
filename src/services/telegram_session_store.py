@@ -12,6 +12,31 @@ from typing import Any, Dict, List, Optional
 TELEGRAM_UPLOAD_SESSION_TTL_SECONDS = 600
 TELEGRAM_CALLBACK_TTL_SECONDS = 600
 
+# Callback data is intentionally opaque to Telegram.  The server-side mapping
+# keeps the semantic family explicit so review actions cannot fall through to
+# the upload/page-picker state machine.
+TELEGRAM_CALLBACK_KIND_REVIEW = "review"
+TELEGRAM_CALLBACK_KIND_PICKER = "picker"
+TELEGRAM_CALLBACK_KIND_UNKNOWN = "unknown"
+
+TELEGRAM_REVIEW_CALLBACK_ACTIONS = frozenset(
+    {"accept", "reject", "change_target"}
+)
+TELEGRAM_PICKER_CALLBACK_ACTIONS = frozenset(
+    {"select_target", "change_target_select"}
+)
+
+
+def infer_telegram_callback_kind(action: str) -> str:
+    """Infer the callback family for mappings written before callback_kind existed."""
+
+    normalized_action = str(action or "").strip().lower()
+    if normalized_action in TELEGRAM_REVIEW_CALLBACK_ACTIONS:
+        return TELEGRAM_CALLBACK_KIND_REVIEW
+    if normalized_action in TELEGRAM_PICKER_CALLBACK_ACTIONS:
+        return TELEGRAM_CALLBACK_KIND_PICKER
+    return TELEGRAM_CALLBACK_KIND_UNKNOWN
+
 
 @dataclass(frozen=True)
 class TelegramUploadAttachment:
@@ -50,6 +75,7 @@ class TelegramCallbackAction:
     token: str
     session_id: str
     action: str
+    callback_kind: str = TELEGRAM_CALLBACK_KIND_UNKNOWN
     change_request_id: Optional[int] = None
     target_notion_page_id: Optional[str] = None
     target_notion_path: Optional[str] = None
@@ -197,6 +223,7 @@ class TelegramSessionStore(ABC):
         chat_id: str,
         user_id: str,
         action: str,
+        callback_kind: Optional[str] = None,
         change_request_id: Optional[int] = None,
         target_notion_page_id: Optional[str] = None,
         target_notion_path: Optional[str] = None,
@@ -238,6 +265,24 @@ def _session_from_json(raw: str) -> TelegramUploadSession:
         TelegramUploadAttachment(**item) for item in payload.get("attachments", [])
     ]
     return TelegramUploadSession(**payload)
+
+
+def _callback_from_payload(*, token: str, payload: dict[str, Any]) -> TelegramCallbackAction:
+    """Build a callback mapping with legacy callback records normalized safely."""
+
+    action = str(payload.get("action") or "").strip().lower()
+    callback_kind = str(payload.get("callback_kind") or "").strip().lower()
+    if not callback_kind:
+        callback_kind = infer_telegram_callback_kind(action)
+    return TelegramCallbackAction(
+        token=token,
+        session_id=str(payload.get("session_id") or ""),
+        action=action,
+        callback_kind=callback_kind,
+        change_request_id=payload.get("change_request_id"),
+        target_notion_page_id=payload.get("target_notion_page_id"),
+        target_notion_path=payload.get("target_notion_path"),
+    )
 
 
 class InMemoryTelegramSessionStore(TelegramSessionStore):
@@ -425,13 +470,17 @@ class InMemoryTelegramSessionStore(TelegramSessionStore):
     def create_callback(self, **kwargs) -> str:
         with self._lock:
             token = secrets.token_urlsafe(12)
-            action = TelegramCallbackAction(
+            payload = {
+                "session_id": kwargs["session_id"],
+                "action": kwargs["action"],
+                "callback_kind": kwargs.get("callback_kind"),
+                "change_request_id": kwargs.get("change_request_id"),
+                "target_notion_page_id": kwargs.get("target_notion_page_id"),
+                "target_notion_path": kwargs.get("target_notion_path"),
+            }
+            action = _callback_from_payload(
                 token=token,
-                session_id=kwargs["session_id"],
-                action=kwargs["action"],
-                change_request_id=kwargs.get("change_request_id"),
-                target_notion_page_id=kwargs.get("target_notion_page_id"),
-                target_notion_path=kwargs.get("target_notion_path"),
+                payload=payload,
             )
             key = (kwargs["chat_id"], kwargs["user_id"], token)
             self._callbacks[key] = action
@@ -684,6 +733,8 @@ class RedisTelegramSessionStore(TelegramSessionStore):
         payload = {
             "session_id": kwargs["session_id"],
             "action": kwargs["action"],
+            "callback_kind": kwargs.get("callback_kind")
+            or infer_telegram_callback_kind(kwargs["action"]),
             "change_request_id": kwargs.get("change_request_id"),
             "target_notion_page_id": kwargs.get("target_notion_page_id"),
             "target_notion_path": kwargs.get("target_notion_path"),
@@ -703,4 +754,4 @@ class RedisTelegramSessionStore(TelegramSessionStore):
         if isinstance(raw, bytes):
             raw = raw.decode("utf-8")
         payload = json.loads(raw)
-        return TelegramCallbackAction(token=kwargs["token"], **payload)
+        return _callback_from_payload(token=kwargs["token"], payload=payload)

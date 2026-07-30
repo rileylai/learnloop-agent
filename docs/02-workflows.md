@@ -390,8 +390,12 @@ Telegram message or caption with PDF/image
 -> settle job claims the picker and sends full hierarchy-path inline buttons
 -> callback_data contains only `ll:<opaque_token>`
 -> Redis resolves token by chat/user to the canonical external Notion page id/path
+-> callback parser restores callback_kind/action from the server-side mapping
 -> callback validates token ownership, session state, and selected page
 -> answerCallbackQuery immediately; record callback_ack_status separately
+-> review callbacks dispatch before generic picker/session callbacks
+   - Accept/Reject -> TelegramReviewOrchestrator
+   - Change target -> review target picker
 -> atomic target claim starts existing PDF/OCR -> proposal orchestration
 -> commit source document and pending change request
 -> atomically claim preview delivery and send one preview with
@@ -406,6 +410,16 @@ Rules:
   target.
 - Full external page ids never appear in inline `callback_data`; opaque tokens
   are short-lived Redis mappings isolated by chat and user.
+- Server-side callback mappings carry `callback_kind` (`review` or `picker`)
+  and an explicit action. Legacy mappings without that field infer the kind
+  from the allowlisted action, then fail closed for unknown actions.
+- Review actions are dispatched before picker/session actions. The
+  `ready_for_review`/`proposal_created` presentation state cannot intercept a
+  valid Accept or Reject callback; Accept still validates the change request's
+  durable `pending` status through `SupplementReviewOrchestrator`.
+- Normal review targets come from the change request's indexed target page.
+  `LEARNLOOP_NOTION_CANARY_PAGE_ID` is restricted to canary/evaluation code and
+  is not a runtime fallback for a Telegram review.
 - `/ingest` text/caption parsing remains a fallback. The primary flow is upload,
   page button selection, target-aware pending proposal, then explicit review.
 - `answerCallbackQuery` is a Telegram UX side effect. After basic callback and
@@ -462,6 +476,13 @@ POST /api/telegram/webhook with `/accept <change_request_id>`
 -> Reuse SupplementReviewOrchestrator
 -> Append to AI Supplement Zone and immediately re-index
 -> Send success reply only after the business workflow succeeds
+
+POST /api/telegram/webhook with an inline Accept callback
+-> Validate callback mapping and acknowledge Telegram
+-> Delegate to TelegramReviewOrchestrator.accept_change_request()
+-> Reuse the same pending validation -> append -> durable identity check
+   -> page re-index -> accepted transition as the text command
+-> Send success reply
 ```
 
 Rules:
@@ -472,6 +493,12 @@ Rules:
 - Inline Accept is an explicit user callback and delegates to the same
   `SupplementReviewOrchestrator` as `/accept`; it does not create a second
   write path.
+- Inline Reject delegates to the same review orchestrator with a deterministic
+  non-sensitive callback reason; it never calls a Notion writer.
+- Inline Change target opens the picker and changes only the pending request's
+  target. It does not run OCR, LLM proposal generation, or append work.
+- Duplicate `update_id` callbacks replay the durable result and cannot append
+  the same change request twice.
 
 ## Telegram QA Workflow (Step 34)
 

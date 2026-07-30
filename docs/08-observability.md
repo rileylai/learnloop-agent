@@ -86,6 +86,11 @@ Telegram ingestion observability:
   `preview_delivery_status`. It does not record callback tokens,
   canonical page ids, upload bytes, captions, OCR text, or proposal source
   content.
+- Review callback metadata records the normalized action and
+  `change_request_status` only. Callback routing uses a server-side
+  `callback_kind` (`review` or `picker`); the opaque callback token and raw
+  Telegram payload are never logged. Legacy mappings are normalized by their
+  allowlisted action so an old Accept token remains a review callback.
 - A valid callback acknowledgement emits a structured warning with
   `failure_reason=TELEGRAM_CALLBACK_ACK_FAILED` when `answerCallbackQuery`
   fails. This warning is independent from the workflow terminal status; a
