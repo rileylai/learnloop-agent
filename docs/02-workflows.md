@@ -382,6 +382,13 @@ Rules:
 - Screenshot OCR preprocessing removes only high-confidence browser chrome
   (address-bar URLs and exact navigation labels), while Tesseract receives a
   grayscale/autocontrast image. The cleaned OCR is the only proposal source.
+- Production screenshot OCR requires the fixed Tesseract language set
+  `eng+chi_tra+chi_sim` so mixed SQL, Traditional Chinese, and Simplified
+  Chinese screenshots are handled in one ordered pass. The adapter checks all
+  three traineddata languages before processing any image and fails with
+  `OCR_FAILED` when one is unavailable; it never falls back to English-only
+  OCR. Source-language detection happens only after OCR and persistence, so it
+  is not used to select the Tesseract languages.
 - Screenshot proposal output is deterministic-validated: source-language
   output (Traditional Chinese for Chinese), concrete title, 1-2 sentence
   summary, 3-30 concepts, 3-6 grounded notes, and no unsupported advice or

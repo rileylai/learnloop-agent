@@ -10,11 +10,18 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 from typing import Callable, Iterable, Mapping, Optional, Sequence, Tuple
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+TESSERACT_REQUIRED_LANGUAGES: Tuple[str, ...] = (
+    "eng",
+    "chi_tra",
+    "chi_sim",
+)
+TESSERACT_LANGUAGE_CHECK_TIMEOUT_SECONDS = 5.0
 
 RUNTIME_DEPENDENCIES: Tuple[Tuple[str, str], ...] = (
     ("alembic", "alembic"),
@@ -83,6 +90,7 @@ class PreflightReport:
 
 ModuleFinder = Callable[[str], object]
 CommandFinder = Callable[[str], Optional[str]]
+CommandRunner = Callable[[Sequence[str], float], subprocess.CompletedProcess[str]]
 
 
 def _default_module_finder(module_name: str) -> object:
@@ -91,6 +99,20 @@ def _default_module_finder(module_name: str) -> object:
 
 def _default_command_finder(command: str) -> Optional[str]:
     return shutil.which(command)
+
+
+def _default_command_runner(
+    command: Sequence[str],
+    timeout_seconds: float,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        list(command),
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=timeout_seconds,
+        shell=False,
+    )
 
 
 def _check_project_files(project_root: Path) -> Iterable[CheckResult]:
@@ -141,6 +163,49 @@ def _check_commands(
         available = command_finder(command) is not None
         yield CheckResult(
             key=f"command:{command}",
+            status="pass" if available else "fail",
+            detail="available" if available else "missing",
+            required=True,
+        )
+
+
+def _check_tesseract_languages(
+    command_runner: CommandRunner,
+) -> Iterable[CheckResult]:
+    try:
+        completed = command_runner(
+            ("tesseract", "--list-langs"),
+            TESSERACT_LANGUAGE_CHECK_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        for language in TESSERACT_REQUIRED_LANGUAGES:
+            yield CheckResult(
+                key=f"tesseract-language:{language}",
+                status="fail",
+                detail="error",
+                required=True,
+            )
+        return
+
+    if completed.returncode != 0 or not isinstance(completed.stdout, str):
+        for language in TESSERACT_REQUIRED_LANGUAGES:
+            yield CheckResult(
+                key=f"tesseract-language:{language}",
+                status="fail",
+                detail="error",
+                required=True,
+            )
+        return
+
+    available_languages = {
+        line.strip()
+        for line in completed.stdout.splitlines()
+        if line.strip() in TESSERACT_REQUIRED_LANGUAGES
+    }
+    for language in TESSERACT_REQUIRED_LANGUAGES:
+        available = language in available_languages
+        yield CheckResult(
+            key=f"tesseract-language:{language}",
             status="pass" if available else "fail",
             detail="available" if available else "missing",
             required=True,
@@ -264,6 +329,7 @@ def run_preflight(
     environ: Optional[Mapping[str, str]] = None,
     module_finder: ModuleFinder = _default_module_finder,
     command_finder: CommandFinder = _default_command_finder,
+    command_runner: CommandRunner = _default_command_runner,
     required_commands: Sequence[str] = (),
     project_root: Path = PROJECT_ROOT,
     python_version: Optional[Tuple[int, ...]] = None,
@@ -281,7 +347,10 @@ def run_preflight(
     ]
 
     if profile == "ocr":
+        tesseract_available = command_finder("tesseract") is not None
         checks.extend(_check_commands(("tesseract",), command_finder))
+        if tesseract_available:
+            checks.extend(_check_tesseract_languages(command_runner))
 
     return PreflightReport(profile=profile, checks=tuple(checks))
 

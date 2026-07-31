@@ -325,6 +325,23 @@ remain opt-in and must never replace backend invariants.
 
 ## Screenshot Proposal Quality Evaluation
 
+Screenshot OCR language coverage is deterministic at the adapter boundary:
+
+- `tests/test_image_ocr_tool.py` verifies that every Tesseract call uses the
+  exact `eng+chi_tra+chi_sim` language set and that a missing required
+  traineddata language fails before OCR without an English fallback.
+- `tests/test_preflight.py` injects a stdlib subprocess runner and covers
+  complete, missing, timed-out, failed, and malformed `tesseract --list-langs`
+  results without exposing command stderr.
+- `tests/test_source_ingest_api.py` uses public-safe mixed-script parser output
+  to prove that CJK characters and image order survive preprocessing,
+  persistence, and source-snapshot construction. It checks the existing
+  language enum without hard-coding a particular non-English enum.
+
+These tests do not prove live Tesseract recognition quality. Real Chinese OCR
+requires installed `eng`, `chi_tra`, and `chi_sim` traineddata and a separately
+approved re-upload that creates a new source document.
+
 `tests/evals/test_screenshot_proposal_eval.py` uses the public-safe fixture
 `tests/fixtures/screenshot_proposal_fixtures.json`. It does not call an LLM,
 write to Notion, modify SQL data outside its isolated test database, or delete

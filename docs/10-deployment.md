@@ -27,7 +27,9 @@ The repository is demo-ready, not local-user-ready or release-ready.
 - `scripts/preflight.py` is stdlib-only so it can report missing Python
   dependencies before importing the application. Its `api`, `test`, and `ocr`
   profiles produce a redacted dependency/configuration matrix; only
-  profile-required missing items fail the command.
+  profile-required missing items fail the command. The OCR profile invokes
+  `tesseract --list-langs` through a bounded stdlib subprocess and requires
+  `eng`, `chi_tra`, and `chi_sim`; it never imports `pytesseract`.
 - The application reads process environment variables directly and does not
   auto-load `.env`.
 - The running API requires PostgreSQL plus migrations for business routes.
@@ -108,8 +110,11 @@ the `Real-World Usability + Release Hardening` phase are complete.
 - Run `uv run --no-env-file --frozen python scripts/preflight.py --profile api`
   to check the API profile in the locked environment.
 - Run `--profile test` to include development test dependencies.
-- Run `--profile ocr` to require the `tesseract` executable in addition to
-  Python dependencies.
+- Run `--profile ocr` to require the `tesseract` executable, plus the `eng`,
+  `chi_tra`, and `chi_sim` traineddata languages, in addition to Python
+  dependencies. On Homebrew installations, install the extra language data
+  with `brew install tesseract-lang`, then verify `tesseract --list-langs`
+  before restarting the API and worker.
 - Use `--require-command COMMAND` for entrypoint-specific executable checks.
 - Human and JSON output report only presence, absence, or safe status text;
   environment variable values, tokens, URLs, and filesystem values are never
@@ -153,8 +158,11 @@ uv run --no-env-file --frozen python tests/evals/adapter_smoke_matrix.py --json
 
 The default run is local-only. It verifies PDF and URL extraction with
 controlled fixtures and verifies OCR only when the local Tesseract executable
-is available. Missing optional OCR runtime is reported as `skipped`; use
-`--require-ocr` when the deployment requires OCR.
+and required `eng`, `chi_tra`, and `chi_sim` traineddata are available. Missing
+optional OCR runtime is reported as `skipped`; use `--require-ocr` when the
+deployment requires OCR. Production screenshot OCR checks the same fixed
+language set again before processing any image and fails closed rather than
+silently using English.
 
 Use `--live` only with dedicated synthetic resources. Live checks are opt-in
 for YouTube transcript access, OpenAI embeddings, PostgreSQL connectivity, and

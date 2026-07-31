@@ -19,6 +19,10 @@ from src.services import (
 )
 
 
+TESSERACT_REQUIRED_LANGUAGES = ("eng", "chi_tra", "chi_sim")
+TESSERACT_OCR_LANGUAGE = "+".join(TESSERACT_REQUIRED_LANGUAGES)
+
+
 @dataclass
 class OCRImageInput:
     file_name: str
@@ -55,6 +59,23 @@ class TesseractImageOCRParserClient(ImageOCRParserClient):
                 "pytesseract or pillow dependency is missing"
             ) from exc
 
+        try:
+            available_languages = set(pytesseract.get_languages(config=""))
+        except Exception as exc:
+            raise ImageOCRParserClientError(
+                "Failed to inspect Tesseract OCR languages"
+            ) from exc
+        missing_languages = [
+            language
+            for language in TESSERACT_REQUIRED_LANGUAGES
+            if language not in available_languages
+        ]
+        if missing_languages:
+            raise ImageOCRParserClientError(
+                "Required Tesseract OCR languages are unavailable: "
+                + ", ".join(missing_languages)
+            )
+
         extracted_sections: List[str] = []
         for index, image in enumerate(images, start=1):
             try:
@@ -75,7 +96,11 @@ class TesseractImageOCRParserClient(ImageOCRParserClient):
                     # Grayscale/autocontrast improves OCR on screenshots with
                     # light browser chrome without changing source ordering.
                     prepared = ImageOps.autocontrast(ImageOps.grayscale(opened))
-                    text = pytesseract.image_to_string(prepared, config="--psm 6")
+                    text = pytesseract.image_to_string(
+                        prepared,
+                        lang=TESSERACT_OCR_LANGUAGE,
+                        config="--psm 6",
+                    )
             except Exception as exc:
                 raise ImageOCRParserClientError(
                     f"Failed to OCR image '{image.file_name}'",

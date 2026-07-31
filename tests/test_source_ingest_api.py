@@ -15,6 +15,11 @@ from src.db.base import Base
 from src.db.models import NotionBlock, NotionPage, SourceDocument, WorkflowRun
 from src.db.session import get_db_session, get_db_session_factory
 from src.orchestrators import MVP_CHAT_TEXT_MAX_CHARS
+from src.services.screenshot_quality import (
+    build_screenshot_source_snapshot,
+    detect_screenshot_language,
+    preprocess_screenshot_ocr_text,
+)
 from src.tools import (
     ImageOCRParserClient,
     ImageOCRParserClientError,
@@ -130,6 +135,31 @@ class _FakeImageOCRParserClient(ImageOCRParserClient):
             raw_text="\n".join(ordered_lines),
             image_count=len(images),
         )
+
+
+class _MixedScriptImageOCRParserClient(ImageOCRParserClient):
+    def __init__(self) -> None:
+        self.raw_text = ""
+
+    def parse_images(self, *, images: list[OCRImageInput]) -> ParsedImageOCR:
+        sections = []
+        for index, image in enumerate(images, start=1):
+            sections.append(
+                f"[Image {index}: {image.file_name}]\n"
+                "SQL 查詢與索引\n"
+                "Back\n"
+                "EXPLAIN 顯示執行計畫"
+            )
+        self.raw_text = "\n\n".join(sections)
+        return ParsedImageOCR(raw_text=self.raw_text, image_count=len(images))
+
+
+def _count_cjk(value: str) -> int:
+    return sum(
+        0x3400 <= ord(character) <= 0x4DBF
+        or 0x4E00 <= ord(character) <= 0x9FFF
+        for character in value
+    )
 
 
 def _build_session_factory():
@@ -734,6 +764,66 @@ def test_ingest_image_ocr_api_creates_one_screenshot_source_in_order() -> None:
             # Step 24 must not perform Notion writes.
             assert session.query(NotionPage).count() == 0
             assert session.query(NotionBlock).count() == 0
+        finally:
+            session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_ingest_image_ocr_preserves_mixed_script_cjk_through_snapshot() -> None:
+    session_factory = _build_session_factory()
+    parser = _MixedScriptImageOCRParserClient()
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _tool_registry_override() -> ToolRegistry:
+        return _build_tool_registry_with_image_ocr_parser(parser)
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_tool_registry] = _tool_registry_override
+
+    try:
+        response = TestClient(app).post(
+            "/api/ingest/image-ocr",
+            files=[
+                ("images", ("first.png", b"fake-image-1", "image/png")),
+                ("images", ("second.png", b"fake-image-2", "image/png")),
+            ],
+        )
+        assert response.status_code == 200
+        payload = response.json()
+
+        session: Session = session_factory()
+        try:
+            source_document = session.get(
+                SourceDocument,
+                payload["source_document_id"],
+            )
+            assert source_document is not None
+            persisted_text = source_document.raw_text
+            snapshot = build_screenshot_source_snapshot(persisted_text)
+            language = detect_screenshot_language(snapshot.text)
+            expected_text = preprocess_screenshot_ocr_text(parser.raw_text)
+
+            assert persisted_text == expected_text
+            assert _count_cjk(persisted_text) > 0
+            assert _count_cjk(persisted_text) == _count_cjk(parser.raw_text)
+            assert language.code in {"en", "zh-Hant", "ja", "ko", "ru", "ar"}
+            assert language.code != "en"
+            assert "Back" not in persisted_text
+            assert persisted_text.index("[Image 1: first.png]") < persisted_text.index(
+                "[Image 2: second.png]"
+            )
+            assert payload["content_hash"] == hashlib.sha256(
+                persisted_text.encode("utf-8")
+            ).hexdigest()
+            assert snapshot.digest == payload["content_hash"]
         finally:
             session.close()
     finally:
