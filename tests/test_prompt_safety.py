@@ -61,6 +61,7 @@ def test_runtime_prompts_contain_injection_boundary_instructions() -> None:
                 label="SOURCE_DISPLAY_NAME",
                 value="adversarial-source",
             ),
+            "source_language": "Traditional Chinese (繁體中文)",
             "selected_target_path": format_untrusted_prompt_block(
                 label="SELECTED_TARGET_PATH",
                 value="Knowledge/NLP/Week5/AI Supplement Zone",

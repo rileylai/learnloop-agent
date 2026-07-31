@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 
 from fastapi.testclient import TestClient
@@ -718,6 +719,17 @@ def test_ingest_image_ocr_api_creates_one_screenshot_source_in_order() -> None:
             assert workflow_run.workflow_type == "ingestion"
             assert workflow_run.status == "succeeded"
             assert workflow_run.failure_reason is None
+            workflow_metadata = json.loads(workflow_run.metadata_json or "{}")
+            for latency_key in (
+                "download_ms",
+                "ocr_ms",
+                "llm_ms",
+                "persist_ms",
+                "preview_delivery_ms",
+                "total_business_ms",
+            ):
+                assert latency_key in workflow_metadata
+                assert workflow_metadata[latency_key] >= 0
 
             # Step 24 must not perform Notion writes.
             assert session.query(NotionPage).count() == 0

@@ -111,6 +111,10 @@ Telegram ingestion observability:
 - Duplicate update, settle, target, and preview claims are observable through
   terminal status/failure outcomes without exposing private media or Notion
   content.
+- Screenshot proposal workflows record redacted latency evidence in milliseconds:
+  `download_ms`, `ocr_ms`, `llm_ms`, `persist_ms`, `preview_delivery_ms`, and
+  `total_business_ms`. These are numeric stage timings only; OCR text, proposal
+  fields, file bytes, callback tokens, URLs, and secrets are excluded.
 - Upload sessions carry a monotonic settle version. The settle job atomically
   promotes `collecting` to `settled`, sorts attachments by Telegram
   `message_id`, and stale/duplicate versions skip before picker or business

@@ -33,15 +33,17 @@ def test_prompt_template_loader_loads_and_renders_supplement_prompt() -> None:
         variables={
             "source_type": "chat_text",
             "source_display_name": "chat-2026-06-17",
+            "source_language": "English",
             "selected_target_path": "Knowledge/NLP/Week5/AI Supplement Zone",
             "source_text": "Source notes about residual connections and layer normalization.",
         }
     )
 
     assert bundle.prompt_id == PROMPT_ID_SUPPLEMENT_PROPOSAL
-    assert bundle.version == "supplement_proposal_v3"
-    assert "Return one strict JSON object" in system_message
+    assert bundle.version == "supplement_proposal_v4"
+    assert "Return exactly one JSON object" in system_message
     assert "exact" in system_message
     assert "source_type=chat_text" in user_message
     assert "chat-2026-06-17" in user_message
     assert "Knowledge/NLP/Week5/AI Supplement Zone" in user_message
+    assert "SOURCE_LANGUAGE=English" in user_message

@@ -376,6 +376,18 @@ Rules:
 - Route and gateway orchestrator still call Telegram only through `ToolRegistry`.
 - PDF and screenshot ingestion reuse existing ingestion/propose orchestrators; no duplicate business logic in API route.
 - Screenshot batch upload creates one `source_documents` row with `source_type=screenshot`.
+- Telegram media-group attachments are deduplicated by `file_unique_id`, sorted by
+  Telegram `message_id`, then OCR-merged as one batch. One batch invokes the
+  proposal provider exactly once.
+- Screenshot OCR preprocessing removes only high-confidence browser chrome
+  (address-bar URLs and exact navigation labels), while Tesseract receives a
+  grayscale/autocontrast image. The cleaned OCR is the only proposal source.
+- Screenshot proposal output is deterministic-validated: source-language
+  output (Traditional Chinese for Chinese), concrete title, 1-2 sentence
+  summary, 3-30 concepts, 3-6 grounded notes, and no unsupported advice or
+  conclusions. Grounding allows only bounded reporting-language/synonym
+  paraphrase; new products, numbers, URLs, commands, technical atoms, and
+  unsupported claim words fail closed without a second LLM judge.
 - Step 33 still follows safe write policy: create `pending` change request only; no Notion append in this workflow.
 - `/ingest --page <external_page_id>` resolves the target against indexed
   Notion pages; the target is optional for backward compatibility, but accept
@@ -473,6 +485,11 @@ is inspected and reconciled with
 `scripts/reconcile_telegram_outcome.py`, which is dry-run by default and uses
 repositories plus one explicit preview resend/reconcile transaction; it does
 not use ad-hoc SQL.
+
+Screenshot target-selection workflow metadata also records only redacted stage
+timings: `download_ms`, `ocr_ms`, `llm_ms`, `persist_ms`,
+`preview_delivery_ms`, and `total_business_ms`. These values contain no source
+text, identifiers, URLs, or credentials.
 
 ## Telegram Page and Review Workflow (Step 73)
 

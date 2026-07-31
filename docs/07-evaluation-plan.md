@@ -323,6 +323,28 @@ The evaluation reports `prompt_injection: pass (5/5)` when all deterministic
 checks pass. It is not evidence of live model resistance; live provider tests
 remain opt-in and must never replace backend invariants.
 
+## Screenshot Proposal Quality Evaluation
+
+`tests/evals/test_screenshot_proposal_eval.py` uses the public-safe fixture
+`tests/fixtures/screenshot_proposal_fixtures.json`. It does not call an LLM,
+write to Notion, modify SQL data outside its isolated test database, or delete
+Redis state.
+
+The fixtures cover:
+
+- continuous content split across multiple images, merged in message-id order;
+- browser tab/address/navigation noise removal;
+- Traditional Chinese language selection with original technical terms;
+- reasonable English and Traditional Chinese paraphrase acceptance;
+- deterministic rejection of unsupported concepts, advice, conclusions, and
+  browser-noise evidence without a second LLM judge.
+
+Run:
+
+```bash
+uv run --frozen pytest -q tests/evals/test_screenshot_proposal_eval.py
+```
+
 ## Real-Library Adapter Smoke Matrix (Step 81)
 
 `tests/evals/adapter_smoke_matrix.py` runs a small redacted matrix against the

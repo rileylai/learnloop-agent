@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from http import HTTPStatus
+from time import perf_counter
 from typing import Optional
 
 from src.db.unit_of_work import UnitOfWorkFactory
@@ -41,6 +42,11 @@ from src.services import (
     normalize_notion_path,
     normalize_supplement_target_path,
 )
+from src.services.latency_evidence import LatencyEvidence, elapsed_ms
+from src.services.screenshot_quality import (
+    detect_screenshot_language,
+    validate_screenshot_proposal,
+)
 
 CHANGE_REQUEST_STATUS_PENDING = "pending"
 DEFAULT_SUPPLEMENT_PROVIDER_NAME = "openai"
@@ -62,6 +68,7 @@ class SupplementProposeResult:
     model: Optional[str]
     token_input: Optional[int]
     token_output: Optional[int]
+    latency_metadata: dict[str, float]
 
 
 class SupplementProposeError(Exception):
@@ -146,6 +153,7 @@ class SupplementProposeOrchestrator:
                 http_status_code=HTTPStatus.BAD_REQUEST,
             )
 
+        business_started = perf_counter()
         workflow_run = self._workflow_run_service.start_workflow(
             workflow_type="supplement",
             metadata_json=json.dumps(
@@ -166,6 +174,7 @@ class SupplementProposeOrchestrator:
         token_input: Optional[int] = None
         token_output: Optional[int] = None
         estimated_cost: Optional[float] = None
+        latency = LatencyEvidence()
         target_page_path: Optional[str] = None
         allowed_target_path: Optional[str] = None
         try:
@@ -235,35 +244,44 @@ class SupplementProposeOrchestrator:
                             label="SOURCE_TEXT",
                             value=source_document.raw_text,
                         ),
+                        "source_language": detect_screenshot_language(
+                            source_document.raw_text
+                        ).instruction
+                        if source_document.source_type == "screenshot"
+                        else "the main language of the source text",
                     }
                 )
-                llm_response = await self._provider_router.route(
-                    normalized_provider_name,
-                    LLMRequest(
-                        model=normalized_model,
-                        messages=[
-                            LLMMessage(
-                                role="system",
-                                content=system_message,
-                            ),
-                            LLMMessage(
-                                role="user",
-                                content=user_message,
-                            ),
-                        ],
-                        temperature=0.2,
-                        max_tokens=900,
-                        metadata={
-                            "workflow_id": request_workflow_id,
-                            "operation": "propose_change_request",
-                            "prompt_id": prompt_id,
-                            "prompt_version": prompt_version,
-                            "prompt_safety_version": PROMPT_SAFETY_VERSION,
-                            "provider_name": normalized_provider_name,
-                            "model": normalized_model,
-                        },
-                    ),
-                )
+                llm_started = perf_counter()
+                try:
+                    llm_response = await self._provider_router.route(
+                        normalized_provider_name,
+                        LLMRequest(
+                            model=normalized_model,
+                            messages=[
+                                LLMMessage(
+                                    role="system",
+                                    content=system_message,
+                                ),
+                                LLMMessage(
+                                    role="user",
+                                    content=user_message,
+                                ),
+                            ],
+                            temperature=0.2,
+                            max_tokens=900,
+                            metadata={
+                                "workflow_id": request_workflow_id,
+                                "operation": "propose_change_request",
+                                "prompt_id": prompt_id,
+                                "prompt_version": prompt_version,
+                                "prompt_safety_version": PROMPT_SAFETY_VERSION,
+                                "provider_name": normalized_provider_name,
+                                "model": normalized_model,
+                            },
+                        ),
+                    )
+                finally:
+                    latency.add(llm_ms=elapsed_ms(llm_started))
                 provider = llm_response.provider
                 model_name = llm_response.model
                 token_input = llm_response.token_input
@@ -280,6 +298,11 @@ class SupplementProposeOrchestrator:
                     source_display_name=source_document.source_display_name,
                     target_page_path=target_page_path,
                 )
+                if source_document.source_type == "screenshot":
+                    proposal = validate_screenshot_proposal(
+                        proposal=proposal,
+                        source_text=source_document.raw_text,
+                    )
                 duplicate_match = self._check_duplicate(
                     self._build_duplicate_candidate_from_proposal(proposal)
                 )
@@ -298,6 +321,7 @@ class SupplementProposeOrchestrator:
                     target_path=allowed_target_path,
                 )
 
+            persist_started = perf_counter()
             with self._unit_of_work_factory() as unit_of_work:
                 change_request = unit_of_work.change_requests.create_change_request(
                     source_document_id=source_document.id,
@@ -308,6 +332,8 @@ class SupplementProposeOrchestrator:
                 )
                 change_request_id = int(change_request.id)
                 change_request_status = change_request.status
+            latency.add(persist_ms=elapsed_ms(persist_started))
+            latency.add(total_business_ms=elapsed_ms(business_started))
 
             self._workflow_run_service.mark_workflow_succeeded(
                 workflow_run.id,
@@ -330,6 +356,7 @@ class SupplementProposeOrchestrator:
                         "token_input": token_input,
                         "token_output": token_output,
                         "estimated_cost": estimated_cost,
+                        **latency.as_dict(),
                     },
                     sort_keys=True,
                 ),
@@ -351,6 +378,7 @@ class SupplementProposeOrchestrator:
                 model=model_name,
                 token_input=token_input,
                 token_output=token_output,
+                latency_metadata=latency.as_dict(),
             )
         except WorkflowRunAuditUpdateError:
             raise

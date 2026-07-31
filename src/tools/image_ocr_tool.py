@@ -49,7 +49,7 @@ class TesseractImageOCRParserClient(ImageOCRParserClient):
 
         try:
             import pytesseract
-            from PIL import Image
+            from PIL import Image, ImageOps
         except ModuleNotFoundError as exc:
             raise ImageOCRParserClientError(
                 "pytesseract or pillow dependency is missing"
@@ -72,7 +72,10 @@ class TesseractImageOCRParserClient(ImageOCRParserClient):
 
             try:
                 with opened:
-                    text = pytesseract.image_to_string(opened)
+                    # Grayscale/autocontrast improves OCR on screenshots with
+                    # light browser chrome without changing source ordering.
+                    prepared = ImageOps.autocontrast(ImageOps.grayscale(opened))
+                    text = pytesseract.image_to_string(prepared, config="--psm 6")
             except Exception as exc:
                 raise ImageOCRParserClientError(
                     f"Failed to OCR image '{image.file_name}'",

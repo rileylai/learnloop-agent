@@ -1,0 +1,131 @@
+[
+  {
+    "id": "continuous_multi_image_batch",
+    "images": [
+      {
+        "message_id": 30,
+        "ocr": "[Image 30]\nThe second section describes PyTorch batch normalization. It uses running statistics. The command python train.py --batch-size 32 starts the training step."
+      },
+      {
+        "message_id": 10,
+        "ocr": "[Image 10]\nKubernetes Deployment performs a rolling update. The command kubectl rollout status checks the Deployment."
+      }
+    ],
+    "proposal": {
+      "title": "Kubernetes Deployment rollout and PyTorch batch normalization",
+      "target_path": "Knowledge/ML/AI Supplement Zone",
+      "source": {
+        "source_type": "screenshot",
+        "source_display_name": "Screenshot batch (2 images)"
+      },
+      "summary": "The screenshots describe a Kubernetes Deployment rolling update and PyTorch batch normalization with running statistics.",
+      "concepts": [
+        "Kubernetes Deployment",
+        "rolling update",
+        "PyTorch batch normalization",
+        "running statistics",
+        "kubectl rollout status"
+      ],
+      "notes": [
+        "Kubernetes Deployment performs a rolling update.",
+        "PyTorch batch normalization uses running statistics.",
+        "The command kubectl rollout status checks the Deployment.",
+        "The command python train.py --batch-size 32 starts the training step."
+      ]
+    }
+  },
+  {
+    "id": "browser_ui_noise",
+    "images": [
+      {
+        "message_id": 10,
+        "ocr": "Back\nForward\nhttps://example.invalid/course/slide-1\nReload\n[Image 10]\nDocker Compose starts Redis with docker compose up -d."
+      },
+      {
+        "message_id": 20,
+        "ocr": "New Tab\nBookmarks\n[Image 20]\nRQ worker processes delayed jobs after Redis is available."
+      }
+    ],
+    "expected_cleaned": "[Image 10]\nDocker Compose starts Redis with docker compose up -d.\n[Image 20]\nRQ worker processes delayed jobs after Redis is available.",
+    "proposal": {
+      "title": "Docker Compose Redis startup and RQ worker delayed jobs",
+      "target_path": "Knowledge/Engineering/AI Supplement Zone",
+      "source": {
+        "source_type": "screenshot",
+        "source_display_name": "Screenshot batch (2 images)"
+      },
+      "summary": "The screenshots state that Docker Compose starts Redis with docker compose up -d and that an RQ worker processes delayed jobs after Redis is available.",
+      "concepts": [
+        "Docker Compose",
+        "Redis",
+        "docker compose up -d",
+        "RQ worker",
+        "delayed jobs"
+      ],
+      "notes": [
+        "Docker Compose starts Redis.",
+        "The command docker compose up -d starts the service.",
+        "RQ worker processes delayed jobs.",
+        "Redis is available before the delayed jobs are processed."
+      ]
+    }
+  },
+  {
+    "id": "traditional_chinese_source",
+    "images": [
+      {
+        "message_id": 10,
+        "ocr": "[Image 10]\n使用 Docker Compose 啟動 Redis，並以 docker compose up -d 啟動服務。"
+      },
+      {
+        "message_id": 20,
+        "ocr": "[Image 20]\nRedis 可用後，RQ worker 處理 Telegram delayed jobs。"
+      }
+    ],
+    "proposal": {
+      "title": "Docker Compose、Redis 與 RQ worker 的 Telegram delayed jobs",
+      "target_path": "知識庫/工程/AI Supplement Zone",
+      "source": {
+        "source_type": "screenshot",
+        "source_display_name": "Screenshot batch (2 images)"
+      },
+      "summary": "來源說明使用 Docker Compose 啟動 Redis，並由 RQ worker 處理 Telegram delayed jobs。",
+      "concepts": [
+        "Docker Compose",
+        "Redis",
+        "RQ worker",
+        "Telegram delayed jobs"
+      ],
+      "notes": [
+        "來源提到以 docker compose up -d 啟動服務。",
+        "Redis 可用後，RQ worker 處理 Telegram delayed jobs。",
+        "來源同時提到 Docker Compose 與 Redis。"
+      ]
+    },
+    "expected_language": "zh-Hant"
+  },
+  {
+    "id": "unsupported_hallucination",
+    "source": "Kubernetes Deployment performs a rolling update.",
+    "proposal": {
+      "title": "Kubernetes Deployment rollout",
+      "target_path": "Knowledge/ML/AI Supplement Zone",
+      "source": {
+        "source_type": "screenshot",
+        "source_display_name": "Screenshot batch (1 image)"
+      },
+      "summary": "The source describes a Kubernetes Deployment rolling update.",
+      "concepts": [
+        "Kubernetes Deployment",
+        "rolling update",
+        "Redis caching"
+      ],
+      "notes": [
+        "Kubernetes Deployment performs a rolling update.",
+        "Redis caching improves performance.",
+        "The source names a rolling update."
+      ]
+    },
+    "expected_error": "unsupported"
+  }
+]

@@ -63,7 +63,10 @@ class _PDFParser(PDFParserClient):
 class _OCRParser(ImageOCRParserClient):
     def parse_images(self, *, images: list[OCRImageInput]) -> ParsedImageOCR:
         return ParsedImageOCR(
-            raw_text="\n".join(image.file_name for image in images),
+            raw_text=(
+                "Target selection and source preview are shown before human review.\n"
+                + "\n".join(image.file_name for image in images)
+            ),
             image_count=len(images),
         )
 
@@ -72,6 +75,7 @@ class _ProposalProvider(LLMProvider):
     def __init__(self, *, source_type: str, screenshot_count: int = 1) -> None:
         self._source_type = source_type
         self._screenshot_count = screenshot_count
+        self.calls = 0
 
     @property
     def name(self) -> str:
@@ -79,12 +83,18 @@ class _ProposalProvider(LLMProvider):
 
     async def generate(self, request: LLMRequest) -> LLMResponse:
         _ = request
+        self.calls += 1
+        is_screenshot = self._source_type == "screenshot"
         return LLMResponse(
             provider="openai",
             model="gpt-4o-mini",
             output_text=json.dumps(
                 {
-                    "title": "Telegram target-aware supplement",
+                    "title": (
+                        "Target selection and source preview"
+                        if is_screenshot
+                        else "Telegram target-aware supplement"
+                    ),
                     "target_path": (
                         "Knowledge/Parent/AI Supplement Zone"
                         if self._source_type == "pdf"
@@ -98,9 +108,26 @@ class _ProposalProvider(LLMProvider):
                             else f"Screenshot batch ({self._screenshot_count} images)"
                         ),
                     },
-                    "summary": "Proposal created after a page button selection.",
-                    "concepts": ["target selection"],
-                    "notes": ["Review before accepting."],
+                    "summary": (
+                        "The screenshots show target selection and source preview "
+                        "before human review."
+                        if is_screenshot
+                        else "Proposal created after a page button selection."
+                    ),
+                    "concepts": (
+                        ["target selection", "source preview", "human review"]
+                        if is_screenshot
+                        else ["target selection"]
+                    ),
+                    "notes": (
+                        [
+                            "The source shows target selection.",
+                            "The source shows source preview.",
+                            "The source shows human review.",
+                        ]
+                        if is_screenshot
+                        else ["Review before accepting."]
+                    ),
                 }
             ),
             token_input=10,
@@ -411,6 +438,16 @@ def test_upload_then_page_button_creates_target_aware_pending_proposal(
             assert workflow_metadata["business_status"] == "succeeded"
             assert workflow_metadata["callback_ack_status"] == "succeeded"
             assert workflow_metadata["preview_delivery_status"] == "succeeded"
+            for latency_key in (
+                "download_ms",
+                "ocr_ms",
+                "llm_ms",
+                "persist_ms",
+                "preview_delivery_ms",
+                "total_business_ms",
+            ):
+                assert latency_key in workflow_metadata
+                assert workflow_metadata[latency_key] >= 0
             ledger = (
                 session.query(TelegramUpdateLedger)
                 .filter(TelegramUpdateLedger.update_id == (9200 if source_type == "pdf" else 9201))
@@ -1207,9 +1244,8 @@ def test_three_media_group_updates_use_one_picker_and_one_business_batch(
     registry.register_tool(TelegramBotTool(telegram_client))
     registry.register_tool(ImageOCRTool(_OCRParser()))
     router = ProviderRouter()
-    router.register_provider(
-        _ProposalProvider(source_type="screenshot", screenshot_count=3)
-    )
+    proposal_provider = _ProposalProvider(source_type="screenshot", screenshot_count=3)
+    router.register_provider(proposal_provider)
     monkeypatch.setattr(telegram_worker, "get_db_session_factory", lambda: session_factory)
     monkeypatch.setattr(
         telegram_worker,
@@ -1318,6 +1354,7 @@ def test_three_media_group_updates_use_one_picker_and_one_business_batch(
         try:
             assert session.query(SourceDocument).count() == 1
             assert session.query(ChangeRequest).count() == 1
+            assert proposal_provider.calls == 1
         finally:
             session.close()
     finally:

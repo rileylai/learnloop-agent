@@ -5,6 +5,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from http import HTTPStatus
+from time import perf_counter
 from typing import Any, Dict, List, Optional
 
 from src.db.unit_of_work import UnitOfWorkFactory
@@ -21,6 +22,8 @@ from src.services import (
     validate_ocr_batch,
     upload_error_http_status,
 )
+from src.services.latency_evidence import LatencyEvidence, elapsed_ms
+from src.services.screenshot_quality import preprocess_screenshot_ocr_text
 from src.tools import ToolContext, ToolRegistry
 
 IMAGE_OCR_TOOL_NAME = "image_ocr_parser"
@@ -53,6 +56,7 @@ class ImageOCRIngestionResult:
     source_type: str
     source_display_name: str
     content_hash: str
+    latency_metadata: Dict[str, float]
 
 
 class ImageOCRIngestionError(Exception):
@@ -91,6 +95,7 @@ class ImageOCRIngestionOrchestrator:
         images: List[ImageUploadInput],
         request_workflow_id: str,
     ) -> ImageOCRIngestionResult:
+        business_started = perf_counter()
         normalized_images = self._validate_images(images)
         source_display_name = self._build_source_display_name(len(normalized_images))
 
@@ -109,12 +114,15 @@ class ImageOCRIngestionOrchestrator:
         )
 
         try:
+            ocr_started = perf_counter()
             parsed = await self._parse_images(
                 images=normalized_images,
                 request_workflow_id=request_workflow_id,
             )
             raw_text = self._extract_raw_text(parsed)
+            ocr_ms = elapsed_ms(ocr_started)
             content_hash = self._build_content_hash(raw_text)
+            persist_started = perf_counter()
             with self._unit_of_work_factory() as unit_of_work:
                 source_document = unit_of_work.source_documents.create_source_document(
                     source_type="screenshot",
@@ -126,6 +134,13 @@ class ImageOCRIngestionOrchestrator:
                 persisted_source_type = source_document.source_type
                 persisted_display_name = source_document.source_display_name
                 persisted_content_hash = source_document.content_hash
+            persist_ms = elapsed_ms(persist_started)
+            latency = LatencyEvidence()
+            latency.add(
+                ocr_ms=ocr_ms,
+                persist_ms=persist_ms,
+                total_business_ms=elapsed_ms(business_started),
+            )
 
             self._workflow_run_service.mark_workflow_succeeded(
                 workflow_run.id,
@@ -138,6 +153,7 @@ class ImageOCRIngestionOrchestrator:
                         "image_count": len(normalized_images),
                         "content_hash": content_hash,
                         "char_count": len(raw_text),
+                        **latency.as_dict(),
                     },
                     sort_keys=True,
                 ),
@@ -178,6 +194,7 @@ class ImageOCRIngestionOrchestrator:
             source_type=persisted_source_type,
             source_display_name=persisted_display_name,
             content_hash=persisted_content_hash,
+            latency_metadata=latency.as_dict(),
         )
 
     def _validate_images(self, images: List[ImageUploadInput]) -> List[ImageUploadInput]:
@@ -300,7 +317,8 @@ class ImageOCRIngestionOrchestrator:
                 http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 failure_reason="UNKNOWN_ERROR",
             )
-        normalized_raw_text = raw_text.strip()
+        normalized_raw_text = preprocess_screenshot_ocr_text(raw_text)
+        normalized_raw_text = normalized_raw_text.strip()
         if not normalized_raw_text:
             raise ImageOCRIngestionError(
                 error_code="OCR_FAILED",

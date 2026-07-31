@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 import shlex
+from time import perf_counter
 import uuid
 from dataclasses import asdict, dataclass
 from http import HTTPStatus
@@ -39,6 +40,7 @@ from src.services import (
     TELEGRAM_CALLBACK_KIND_REVIEW,
     TELEGRAM_REVIEW_CALLBACK_ACTIONS,
 )
+from src.services.latency_evidence import LatencyEvidence, elapsed_ms
 from src.tools import ToolContext, ToolRegistry
 
 TELEGRAM_BOT_TOOL_NAME = "telegram_bot"
@@ -518,6 +520,8 @@ class TelegramGatewayOrchestrator:
         callback_ack_status = "not_applicable"
         callback_ack_failure_reason: Optional[str] = None
         business_status = "not_started"
+        business_started = perf_counter()
+        latency = LatencyEvidence()
         preview_delivery_status = "not_applicable"
         preview_session_id: Optional[str] = None
         preview_delivery_required = False
@@ -678,6 +682,10 @@ class TelegramGatewayOrchestrator:
                         target_notion_page_id=target_notion_page_id,
                         target_notion_path=target_notion_path,
                         request_workflow_id=request_workflow_id,
+                    )
+                    self._merge_stage_latency(
+                        latency,
+                        ingestion_result.latency_metadata,
                     )
                     business_status = "succeeded"
                     source_document_id = ingestion_result.source_document_id
@@ -990,6 +998,10 @@ class TelegramGatewayOrchestrator:
                         )
                     target_notion_page_id = session.target_notion_page_id
                 if ingestion_result is not None:
+                    self._merge_stage_latency(
+                        latency,
+                        ingestion_result.latency_metadata,
+                    )
                     source_document_id = ingestion_result.source_document_id
                     change_request_id = ingestion_result.change_request_id
                     source_type = ingestion_result.source_type
@@ -1028,6 +1040,7 @@ class TelegramGatewayOrchestrator:
             telegram_message_id: Optional[int] = None
 
             if reply_text:
+                preview_delivery_started = perf_counter()
                 tool_result = await self._tool_registry.call_tool(
                     TELEGRAM_BOT_TOOL_NAME,
                     context=ToolContext(
@@ -1045,6 +1058,10 @@ class TelegramGatewayOrchestrator:
                     },
                 )
                 if tool_result.is_error:
+                    if preview_delivery_required:
+                        latency.add(
+                            preview_delivery_ms=elapsed_ms(preview_delivery_started)
+                        )
                     error_code = "UNKNOWN_ERROR"
                     error_message = "Telegram reply failed"
                     if tool_result.error is not None:
@@ -1075,6 +1092,7 @@ class TelegramGatewayOrchestrator:
                                 ),
                                 "source_document_id": source_document_id,
                                 "change_request_id": change_request_id,
+                                **latency.as_dict(),
                             },
                         )
                     raise TelegramGatewayError(
@@ -1089,6 +1107,9 @@ class TelegramGatewayOrchestrator:
                 if isinstance(raw_message_id, int):
                     telegram_message_id = raw_message_id
                 if preview_delivery_required:
+                    latency.add(
+                        preview_delivery_ms=elapsed_ms(preview_delivery_started)
+                    )
                     preview_delivery_status = "succeeded"
                     if preview_session_id is not None:
                         self._telegram_ingestion_orchestrator.complete_upload_preview(
@@ -1098,6 +1119,7 @@ class TelegramGatewayOrchestrator:
                             success=True,
                         )
 
+            latency.add(total_business_ms=elapsed_ms(business_started))
             self._workflow_run_service.mark_workflow_succeeded(
                 workflow_run.id,
                 metadata_json=json.dumps(
@@ -1121,6 +1143,7 @@ class TelegramGatewayOrchestrator:
                         "callback_ack_status": callback_ack_status,
                         "callback_ack_failure_reason": callback_ack_failure_reason,
                         "preview_delivery_status": preview_delivery_status,
+                        **latency.as_dict(),
                     },
                     sort_keys=True,
                 ),
@@ -1898,6 +1921,24 @@ class TelegramGatewayOrchestrator:
                 failure_reason="UNKNOWN_ERROR",
             )
         return target_notion_page_id
+
+    def _merge_stage_latency(
+        self,
+        latency: LatencyEvidence,
+        incoming: dict[str, float],
+    ) -> None:
+        latency.update(
+            {
+                key: float(incoming.get(key, 0.0))
+                for key in (
+                    "download_ms",
+                    "ocr_ms",
+                    "llm_ms",
+                    "persist_ms",
+                    "preview_delivery_ms",
+                )
+            }
+        )
 
     def _normalize_failure_reason(self, failure_reason: str) -> str:
         normalized = failure_reason.strip().upper()

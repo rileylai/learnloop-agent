@@ -586,7 +586,7 @@ Notes:
 - MVP chat text length limit is `10000` characters.
 
 ### POST `/api/ingest/image-ocr`
-Ingest multiple screenshots, run OCR in upload order, and create one source document.
+Ingest multiple screenshots, run OCR in supplied order, and create one source document.
 
 Request:
 - `multipart/form-data`
@@ -622,7 +622,11 @@ Notes:
 - Route must call orchestrator only.
 - Orchestrator must call `ToolRegistry` -> `ImageOCRTool`.
 - This endpoint does not perform Notion write operations.
-- Uploaded image order must be preserved in OCR text concatenation.
+- Direct API uploads preserve supplied image order in OCR text concatenation.
+  Telegram media groups use Telegram `message_id` order before the same batch
+  OCR/proposal path.
+- High-confidence browser chrome is removed before source persistence and
+  proposal generation; the cleaned OCR is the sole proposal input.
 - OCR accepts at most 10 images, 5 MiB per image, and 20 MiB per batch.
   Supported supplied MIME types are JPEG, PNG, WebP, GIF, BMP, and TIFF.
 - The real Tesseract adapter rejects images over 40 million pixels before OCR;

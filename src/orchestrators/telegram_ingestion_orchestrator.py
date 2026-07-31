@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import base64
 import binascii
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from http import HTTPStatus
-from typing import Dict, List, Optional
+from time import perf_counter
+from typing import Any, Dict, List, Optional
 
 from src.orchestrators.document_ingestion_orchestrator import (
     DocumentIngestionError,
@@ -33,6 +34,7 @@ from src.services import (
     TelegramUploadAttachment,
     TelegramUploadSession,
 )
+from src.services.latency_evidence import LatencyEvidence, elapsed_ms
 from src.tools import ToolContext, ToolRegistry
 
 TELEGRAM_BOT_TOOL_NAME = "telegram_bot"
@@ -69,6 +71,7 @@ class TelegramIngestionCommandResult:
     target_notion_path: Optional[str] = None
     session_id: Optional[str] = None
     already_processed: bool = False
+    latency_metadata: Dict[str, float] = field(default_factory=dict)
 
 
 class TelegramIngestionError(Exception):
@@ -415,6 +418,7 @@ class TelegramIngestionOrchestrator:
             target_notion_page_id=target_notion_page_id,
             target_notion_path=resolved_target_notion_path,
             session_id=session_id,
+            latency_metadata=result.latency_metadata,
         )
 
     async def handle_ingest_command(
@@ -427,6 +431,8 @@ class TelegramIngestionOrchestrator:
         target_notion_page_id: Optional[str] = None,
     ) -> TelegramIngestionCommandResult:
         _ = chat_id
+        business_started = perf_counter()
+        latency = LatencyEvidence()
         normalized_photos = self._deduplicate_photos(photos)
         if document is None and not normalized_photos:
             return TelegramIngestionCommandResult(
@@ -441,17 +447,22 @@ class TelegramIngestionOrchestrator:
 
         try:
             if document is not None:
-                source_result = await self._ingest_pdf_document(
+                source_result, download_ms = await self._ingest_pdf_document(
                     document=document,
                     request_workflow_id=request_workflow_id,
                 )
                 source_count = 1
             else:
-                source_result = await self._ingest_screenshot_batch(
+                source_result, download_ms = await self._ingest_screenshot_batch(
                     photos=normalized_photos,
                     request_workflow_id=request_workflow_id,
                 )
                 source_count = len(normalized_photos)
+            latency.add(download_ms=download_ms)
+            self._merge_stage_latency(
+                latency,
+                getattr(source_result, "latency_metadata", {}),
+            )
 
             proposal_result = await self._supplement_propose_orchestrator.propose_change_request(
                 source_document_id=source_result.source_document_id,
@@ -460,6 +471,8 @@ class TelegramIngestionOrchestrator:
                 request_workflow_id=request_workflow_id,
                 target_notion_page_id=target_notion_page_id,
             )
+            self._merge_stage_latency(latency, proposal_result.latency_metadata)
+            latency.add(total_business_ms=elapsed_ms(business_started))
             proposal_preview = self._build_proposal_preview(
                 change_request_id=proposal_result.change_request_id,
                 target_notion_page_id=proposal_result.target_notion_page_id,
@@ -496,6 +509,7 @@ class TelegramIngestionOrchestrator:
             source_type=source_result.source_type,
             target_notion_page_id=proposal_result.target_notion_page_id,
             target_notion_path=proposal_result.target_notion_path,
+            latency_metadata=latency.as_dict(),
         )
 
     def _build_proposal_preview(
@@ -582,7 +596,8 @@ class TelegramIngestionOrchestrator:
         *,
         document: TelegramDocumentAttachment,
         request_workflow_id: str,
-    ):
+    ) -> tuple[Any, float]:
+        download_started = perf_counter()
         downloaded = await self._download_telegram_file(
             file_id=document.file_id,
             request_workflow_id=request_workflow_id,
@@ -597,25 +612,30 @@ class TelegramIngestionOrchestrator:
                 failure_reason="UNKNOWN_ERROR",
             )
 
-        return await self._document_ingestion_orchestrator.ingest_document(
+        download_ms = elapsed_ms(download_started)
+        result = await self._document_ingestion_orchestrator.ingest_document(
             file_name=source_file_name,
             file_bytes=downloaded.file_bytes,
             mime_type=document.mime_type,
             request_workflow_id=request_workflow_id,
         )
+        return result, download_ms
 
     async def _ingest_screenshot_batch(
         self,
         *,
         photos: List[TelegramPhotoAttachment],
         request_workflow_id: str,
-    ):
+    ) -> tuple[Any, float]:
         image_inputs: List[ImageUploadInput] = []
+        download_ms = 0.0
         for index, photo in enumerate(photos, start=1):
+            download_started = perf_counter()
             downloaded = await self._download_telegram_file(
                 file_id=photo.file_id,
                 request_workflow_id=request_workflow_id,
             )
+            download_ms += elapsed_ms(download_started)
             image_file_name = downloaded.file_name.strip() or f"telegram-screenshot-{index}.jpg"
             image_inputs.append(
                 ImageUploadInput(
@@ -624,9 +644,28 @@ class TelegramIngestionOrchestrator:
                 )
             )
 
-        return await self._image_ocr_ingestion_orchestrator.ingest_image_ocr(
+        result = await self._image_ocr_ingestion_orchestrator.ingest_image_ocr(
             images=image_inputs,
             request_workflow_id=request_workflow_id,
+        )
+        return result, download_ms
+
+    def _merge_stage_latency(
+        self,
+        latency: LatencyEvidence,
+        incoming: Dict[str, float],
+    ) -> None:
+        latency.update(
+            {
+                key: float(incoming.get(key, 0.0))
+                for key in (
+                    "download_ms",
+                    "ocr_ms",
+                    "llm_ms",
+                    "persist_ms",
+                    "preview_delivery_ms",
+                )
+            }
         )
 
     async def _download_telegram_file(

@@ -125,6 +125,7 @@ def _check_untrusted_boundary(
                 label="SOURCE_DISPLAY_NAME",
                 value="adversarial-source",
             ),
+            "source_language": "English",
             "selected_target_path": format_untrusted_prompt_block(
                 label="SELECTED_TARGET_PATH",
                 value="NONE (no selected target page)",

@@ -365,10 +365,18 @@ Checklist:
   output limits revalidated after extraction.
 - [ ] PDF page, image pixel, MIME, file-count, byte, and extracted-text limits
   fail closed with deterministic failure reasons.
+- [ ] Telegram screenshot media groups deduplicate attachments, sort by
+  Telegram `message_id`, merge one OCR batch, and make one proposal LLM call.
+- [ ] Screenshot OCR removes only high-confidence browser UI noise before
+  persistence; proposal language follows the source, with Traditional Chinese
+  for Chinese sources, and deterministic grounding/shape checks enforce
+  concrete title, 1-2 sentence summary, 3-30 concepts, and 3-6 notes.
 - [ ] For a selected indexed page, the backend derives the one allowed target
   exactly as `<canonical notion_path>/AI Supplement Zone`; proposal output may
   only use safe formatting normalization before exact validation.
-- [ ] Supplement proposal workflow metadata records provider name, model name, prompt id, and prompt version.
+- [ ] Supplement proposal workflow metadata records provider name, model name,
+  prompt id, prompt version, and redacted screenshot latency fields when
+  applicable.
 
 ### 11.7 Guarded Notion Read/Index/QA Canary
 ```text

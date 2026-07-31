@@ -16,7 +16,7 @@ PROMPT_ID_SUPPLEMENT_PROPOSAL = "supplement_proposal"
 
 _PROMPT_FILE_MAP = {
     PROMPT_ID_QA_ANSWER: "qa_answer_v2.md",
-    PROMPT_ID_SUPPLEMENT_PROPOSAL: "supplement_proposal_v3.md",
+    PROMPT_ID_SUPPLEMENT_PROPOSAL: "supplement_proposal_v4.md",
 }
 
 
