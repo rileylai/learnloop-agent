@@ -120,7 +120,25 @@ Telegram ingestion observability:
 - Upload sessions carry a monotonic settle version. The settle job atomically
   promotes `collecting` to `settled`, sorts attachments by Telegram
   `message_id`, and stale/duplicate versions skip before picker or business
-  work. Duplicate `file_unique_id` values are ignored in the session store.
+  work. Every update in the same `media_group_id` refreshes the debounce
+  version; earlier delayed jobs are expected to be visible as safe stale skips.
+  Duplicate `file_unique_id` values are ignored in the session store.
+- A failed screenshot proposal retains `source_document_id`, target page, and
+  attachment count in the session state. `/retry-proposal` and an old screenshot
+  picker callback use that existing source without download/OCR. Redacted
+  workflow metadata still records only stage identifiers, counts, and latency
+  fields.
+- Proposal validation failures record `failure_stage=proposal_validation` and
+  a safe `validation_field` such as `summary` or `title`, plus the source id
+  and already-measured latency fields. They never record OCR or proposal text.
+- Screenshot grounding diagnostics also record only deterministic evidence:
+  `source_normalized_char_count`, `candidate_field_char_count`,
+  `evidence_claim_count`, `unsupported_claim_count`, `validator_version`,
+  `source_snapshot_digest`, `prompt_source_digest`, and
+  `validation_source_digest`. The prompt and validator digests are computed
+  from the same persisted-source snapshot and must match. Telegram outer
+  workflow metadata propagates these fields from the supplement workflow
+  through an allowlist, along with `source_attachment_count` and `llm_ms`.
 
 ## Workflow Metadata Notes
 

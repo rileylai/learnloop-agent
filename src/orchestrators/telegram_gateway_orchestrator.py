@@ -44,6 +44,40 @@ from src.services.latency_evidence import LatencyEvidence, elapsed_ms
 from src.tools import ToolContext, ToolRegistry
 
 TELEGRAM_BOT_TOOL_NAME = "telegram_bot"
+_SAFE_PROPOSAL_FAILURE_METADATA_FIELDS = frozenset(
+    {
+        "failure_stage",
+        "validation_field",
+        "validator_version",
+        "source_document_id",
+        "source_attachment_count",
+        "session_state",
+        "session_retry_available",
+        "llm_ms",
+        "ocr_ms",
+        "download_ms",
+        "persist_ms",
+        "preview_delivery_ms",
+        "total_business_ms",
+        "source_normalized_char_count",
+        "candidate_field_char_count",
+        "evidence_claim_count",
+        "unsupported_claim_count",
+        "source_snapshot_digest",
+        "prompt_source_digest",
+        "validation_source_digest",
+        "provider_name",
+        "model",
+        "prompt_id",
+        "prompt_version",
+        "prompt_safety_version",
+        "token_input",
+        "token_output",
+        "estimated_cost",
+        "proposal_workflow_run_id",
+        "title_fallback_used",
+    }
+)
 
 
 @dataclass
@@ -1039,8 +1073,8 @@ class TelegramGatewayOrchestrator:
                             reply_text = ""
                         else:
                             reply_text = (
-                                f"Received media group ({len(session.attachments)} file(s)). "
-                                "I will group the files, then show target pages."
+                                "Received media group. I will finish collecting the "
+                                "files, then show target pages."
                             )
                     else:
                         reply_text, reply_markup = self._build_page_picker(
@@ -1233,19 +1267,44 @@ class TelegramGatewayOrchestrator:
                     chat_id=normalized_chat_id,
                     user_id=normalized_user_id,
                 )
-            failed_source_document_id = source_document_id or (
+            propagated_metadata = {
+                key: value
+                for key, value in exc.metadata.items()
+                if key in _SAFE_PROPOSAL_FAILURE_METADATA_FIELDS
+            }
+            failed_source_document_id = source_document_id or propagated_metadata.get(
+                "source_document_id"
+            ) or (
                 failed_session.source_document_id if failed_session is not None else None
             )
+            session_metadata = {
+                "source_attachment_count": (
+                    len(failed_session.attachments)
+                    if failed_session is not None
+                    else None
+                ),
+                "session_state": (
+                    failed_session.state if failed_session is not None else None
+                ),
+                "session_retry_available": bool(
+                    failed_session is not None
+                    and failed_session.source_document_id is not None
+                    and failed_session.failure_reason == "LLM_OUTPUT_INVALID"
+                ),
+            }
+            failure_metadata = {
+                "business_status": "failed",
+                "callback_ack_status": callback_ack_status,
+                "preview_delivery_status": preview_delivery_status,
+                **propagated_metadata,
+                "source_document_id": failed_source_document_id,
+                **session_metadata,
+            }
             self._mark_failed_workflow(
                 workflow_run_id=workflow_run.id,
                 failure_reason=exc.failure_reason,
                 error_code=exc.error_code,
-                metadata={
-                    "business_status": "failed",
-                    "callback_ack_status": callback_ack_status,
-                    "preview_delivery_status": preview_delivery_status,
-                    "source_document_id": failed_source_document_id,
-                },
+                metadata=failure_metadata,
             )
             raise TelegramGatewayError(
                 error_code=exc.error_code,
@@ -1253,12 +1312,7 @@ class TelegramGatewayOrchestrator:
                 http_status_code=exc.http_status_code,
                 failure_reason=self._normalize_failure_reason(exc.failure_reason),
                 workflow_run_id=workflow_run.id,
-                metadata={
-                    "business_status": "failed",
-                    "callback_ack_status": callback_ack_status,
-                    "preview_delivery_status": preview_delivery_status,
-                    "source_document_id": failed_source_document_id,
-                },
+                metadata=failure_metadata,
             ) from exc
 
         except TelegramQAError as exc:
@@ -1720,10 +1774,22 @@ class TelegramGatewayOrchestrator:
                     http_status_code=HTTPStatus.GONE,
                     failure_reason="UPLOAD_SESSION_EXPIRED",
                 )
-            if session.state not in {"awaiting_target", "processing", "proposal_created"}:
+            if session.state not in {
+                "awaiting_target",
+                "processing",
+                "proposal_created",
+            } and not (
+                session.state == "failed"
+                and session.failure_reason == "LLM_OUTPUT_INVALID"
+                and session.source_document_id is not None
+                and session.source_type == "screenshot"
+            ):
                 raise TelegramGatewayError(
                     error_code="UPLOAD_SESSION_INVALID",
-                    message="This upload session is no longer selectable. Please upload again.",
+                    message=(
+                        "This upload session is no longer selectable. Use "
+                        "/retry-proposal for the existing source."
+                    ),
                     http_status_code=HTTPStatus.CONFLICT,
                     failure_reason="UPLOAD_SESSION_INVALID",
                 )

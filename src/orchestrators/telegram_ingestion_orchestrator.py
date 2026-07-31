@@ -83,6 +83,7 @@ class TelegramIngestionError(Exception):
         http_status_code: int,
         failure_reason: str = "UNKNOWN_ERROR",
         workflow_run_id: Optional[int] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__(message)
         self.error_code = error_code
@@ -90,6 +91,7 @@ class TelegramIngestionError(Exception):
         self.http_status_code = http_status_code
         self.failure_reason = failure_reason
         self.workflow_run_id = workflow_run_id
+        self.metadata = dict(metadata or {})
 
 
 class TelegramIngestionOrchestrator:
@@ -348,6 +350,14 @@ class TelegramIngestionOrchestrator:
                 session_id=session.session_id,
                 already_processed=True,
             )
+        if claim_status == "retry":
+            return await self._retry_claimed_source_proposal(
+                session=session,
+                session_id=session_id,
+                chat_id=chat_id,
+                user_id=user_id,
+                request_workflow_id=request_workflow_id,
+            )
         if claim_status != "new":
             raise TelegramIngestionError(
                 error_code="UPLOAD_SESSION_INVALID",
@@ -497,6 +507,33 @@ class TelegramIngestionOrchestrator:
                 failure_reason="UPLOAD_SESSION_INVALID",
             )
 
+        return await self._retry_claimed_source_proposal(
+            session=session,
+            session_id=session_id,
+            chat_id=chat_id,
+            user_id=user_id,
+            request_workflow_id=request_workflow_id,
+        )
+
+    async def _retry_claimed_source_proposal(
+        self,
+        *,
+        session: TelegramUploadSession,
+        session_id: str,
+        chat_id: str,
+        user_id: str,
+        request_workflow_id: str,
+    ) -> TelegramIngestionCommandResult:
+        """Generate a proposal from a claimed source without re-ingestion."""
+
+        if session.source_document_id is None or session.target_notion_page_id is None:
+            raise TelegramIngestionError(
+                error_code="UPLOAD_SESSION_INVALID",
+                message="The existing source is missing a safe proposal retry target.",
+                http_status_code=HTTPStatus.CONFLICT,
+                failure_reason="UPLOAD_SESSION_INVALID",
+            )
+
         try:
             result = await self._supplement_propose_orchestrator.propose_change_request(
                 source_document_id=int(session.source_document_id),
@@ -518,6 +555,7 @@ class TelegramIngestionOrchestrator:
                 http_status_code=exc.http_status_code,
                 failure_reason=self._normalize_failure_reason(exc.failure_reason),
                 workflow_run_id=exc.workflow_run_id,
+                metadata=exc.metadata,
             ) from exc
 
         self._session_store.record_proposal(
@@ -622,6 +660,7 @@ class TelegramIngestionOrchestrator:
                 http_status_code=exc.http_status_code,
                 failure_reason=self._normalize_failure_reason(exc.failure_reason),
                 workflow_run_id=exc.workflow_run_id,
+                metadata=getattr(exc, "metadata", None),
             ) from exc
         except SupplementQueryError as exc:
             raise TelegramIngestionError(

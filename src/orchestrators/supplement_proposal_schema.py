@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import (
     BaseModel,
@@ -20,12 +20,19 @@ _JSON_CODE_BLOCK_PATTERN = re.compile(
 
 
 class SupplementProposalValidationError(Exception):
-    def __init__(self, message: str, *, field: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        field: Optional[str] = None,
+        diagnostics: Optional[Dict[str, Any]] = None,
+    ) -> None:
         super().__init__(message)
         self.error_code = "LLM_OUTPUT_INVALID"
         self.failure_reason = "LLM_OUTPUT_INVALID"
         self.message = message
         self.field = field
+        self.diagnostics = dict(diagnostics or {})
 
 
 class SupplementProposalSourceSchema(BaseModel):

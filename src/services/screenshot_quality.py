@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import unicodedata
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Iterable, List
+from typing import TYPE_CHECKING, Dict, Iterable, List, Optional
 
 if TYPE_CHECKING:
     from src.orchestrators.supplement_proposal_schema import SupplementProposalSchema
@@ -30,6 +31,11 @@ _TECHNICAL_ATOM_PATTERN = re.compile(
     r"(?<!\w)[A-Za-z][A-Za-z0-9_]*(?:[./:#][A-Za-z0-9_./:#-]+)(?!\w)",
     re.IGNORECASE,
 )
+_CLAIM_SEPARATOR_PATTERN = re.compile(
+    r"\n+|(?<=[.!?。！？；;])(?:\s+|$)"
+)
+
+SCREENSHOT_VALIDATOR_VERSION = "screenshot_grounding_v2"
 
 _BROWSER_CHROME_LINES = frozenset(
     {
@@ -350,9 +356,15 @@ _SAFE_PARAPHRASE_TOKENS = frozenset(
 )
 
 _ADVICE_PATTERN = re.compile(
+    # Do not treat the ordinary verb "use" as advice by itself.  A
+    # descriptive sentence such as "the section shows how to use SQL" is
+    # still subject to source-evidence checks, but is not an instruction.
+    # Imperative "use" remains advice when it starts a sentence.
     r"\b(?:should|recommend(?:ed|ation)?|consider|try|must|need(?:s)? to|"
-    r"use|avoid|you can)\b|"
-    r"(?:建議|建议|應該|应该|請|请|必須|必须|務必|务必|需要|可以|避免|推薦|推荐)"
+    r"avoid|you can)\b|"
+    r"(?:^|[.!?。！？]\s*)(?:use|try|avoid|consider)\b|"
+    r"(?:建議|建议|應該|应该|請|请|必須|必须|務必|务必|需要|避免|推薦|推荐|"
+    r"你可以|您可以)"
 )
 _CONCLUSION_PATTERN = re.compile(
     r"\b(?:improv(?:e|es|ed|ement)|enhanc(?:e|es|ed|ement)|"
@@ -372,9 +384,58 @@ class ScreenshotLanguage:
 
 
 @dataclass(frozen=True)
+class ScreenshotSourceSnapshot:
+    """The exact cleaned OCR snapshot shared by prompt and validator."""
+
+    text: str
+    normalized_text: str
+    source_normalized_char_count: int
+    digest: str
+
+
+@dataclass(frozen=True)
+class ScreenshotGroundingDiagnostics:
+    source_normalized_char_count: int
+    candidate_field_char_count: int
+    evidence_claim_count: int
+    unsupported_claim_count: int
+    validator_version: str
+    source_snapshot_digest: str
+    prompt_source_digest: str
+    validation_source_digest: str
+
+    def as_dict(self) -> Dict[str, object]:
+        return {
+            "source_normalized_char_count": self.source_normalized_char_count,
+            "candidate_field_char_count": self.candidate_field_char_count,
+            "evidence_claim_count": self.evidence_claim_count,
+            "unsupported_claim_count": self.unsupported_claim_count,
+            "validator_version": self.validator_version,
+            "source_snapshot_digest": self.source_snapshot_digest,
+            "prompt_source_digest": self.prompt_source_digest,
+            "validation_source_digest": self.validation_source_digest,
+        }
+
+
+@dataclass(frozen=True)
 class ScreenshotProposalValidationResult:
     proposal: "SupplementProposalSchema"
     title_fallback_used: bool = False
+    diagnostics: Optional[ScreenshotGroundingDiagnostics] = None
+
+
+def build_screenshot_source_snapshot(raw_text: str) -> ScreenshotSourceSnapshot:
+    """Build one bounded, deterministic OCR view for prompt and validation."""
+
+    cleaned_text = preprocess_screenshot_ocr_text(raw_text).strip()
+    normalized_text = _normalize_for_grounding(cleaned_text)
+    digest = hashlib.sha256(cleaned_text.encode("utf-8")).hexdigest()
+    return ScreenshotSourceSnapshot(
+        text=cleaned_text,
+        normalized_text=normalized_text,
+        source_normalized_char_count=len(normalized_text),
+        digest=digest,
+    )
 
 
 def detect_screenshot_language(text: str) -> ScreenshotLanguage:
@@ -440,7 +501,14 @@ def preprocess_screenshot_ocr_text(raw_text: str) -> str:
         cleaned_lines.pop(0)
     while cleaned_lines and cleaned_lines[-1] == "":
         cleaned_lines.pop()
-    return "\n".join(cleaned_lines)
+    cleaned_text = "\n".join(cleaned_lines)
+    # Keep source ordering and line boundaries, but repair OCR spaces inside
+    # CJK words before the generic grounding validator sees the source.
+    return re.sub(
+        r"(?<=[\u3400-\u4dbf\u4e00-\u9fff])\s+(?=[\u3400-\u4dbf\u4e00-\u9fff])",
+        "",
+        cleaned_text,
+    )
 
 
 def validate_screenshot_proposal(
@@ -450,85 +518,186 @@ def validate_screenshot_proposal(
 ) -> "SupplementProposalSchema":
     """Apply deterministic screenshot quality and source-grounding checks."""
 
+    return _validate_screenshot_proposal(
+        proposal=proposal,
+        source_snapshot=build_screenshot_source_snapshot(source_text),
+    )[0]
+
+
+def _validate_screenshot_proposal(
+    *,
+    proposal: "SupplementProposalSchema",
+    source_snapshot: ScreenshotSourceSnapshot,
+) -> tuple["SupplementProposalSchema", ScreenshotGroundingDiagnostics]:
+    """Validate claims against one exact OCR snapshot and return diagnostics."""
+
     # Imported lazily to keep the OCR tool path independent from the
     # orchestrators package import order.
     from src.orchestrators.supplement_proposal_schema import (
         SupplementProposalValidationError,
     )
 
-    if not 3 <= len(proposal.concepts) <= 30:
+    evidence_claim_count = 0
+    unsupported_claim_count = 0
+
+    def diagnostics(*, value: str, evidence: int, unsupported: int) -> Dict[str, object]:
+        result = ScreenshotGroundingDiagnostics(
+            source_normalized_char_count=source_snapshot.source_normalized_char_count,
+            candidate_field_char_count=len(value),
+            evidence_claim_count=evidence,
+            unsupported_claim_count=unsupported,
+            validator_version=SCREENSHOT_VALIDATOR_VERSION,
+            source_snapshot_digest=source_snapshot.digest,
+            prompt_source_digest=source_snapshot.digest,
+            validation_source_digest=source_snapshot.digest,
+        )
+        return result.as_dict()
+
+    def fail(
+        message: str,
+        *,
+        field: Optional[str] = None,
+        value: str = "",
+        evidence: Optional[int] = None,
+        unsupported: Optional[int] = None,
+    ) -> None:
         raise SupplementProposalValidationError(
-            "screenshot proposal concepts must contain 3 to 30 items"
+            message,
+            field=field,
+            diagnostics=diagnostics(
+                value=value,
+                evidence=evidence if evidence is not None else evidence_claim_count,
+                unsupported=(
+                    unsupported
+                    if unsupported is not None
+                    else unsupported_claim_count
+                ),
+            ),
+        )
+
+    if not 3 <= len(proposal.concepts) <= 30:
+        fail(
+            "screenshot proposal concepts must contain 3 to 30 items",
+            field="concepts",
+            value="\n".join(proposal.concepts),
         )
     if not 3 <= len(proposal.notes) <= 6:
-        raise SupplementProposalValidationError(
-            "screenshot proposal notes must contain 3 to 6 items"
+        fail(
+            "screenshot proposal notes must contain 3 to 6 items",
+            field="notes",
+            value="\n".join(proposal.notes),
         )
     if _normalize_title_text(proposal.title) in _GENERIC_SCREENSHOT_TITLES:
-        raise SupplementProposalValidationError(
+        fail(
             "screenshot proposal title must be concrete and specific",
             field="title",
+            value=proposal.title,
+            unsupported=1,
         )
     sentence_count = len(_SENTENCE_PATTERN.findall(proposal.summary))
     if sentence_count == 0:
         sentence_count = 1
     if sentence_count > 2:
+        fail(
+            "screenshot proposal summary must contain 1 to 2 sentences",
+            field="summary",
+            value=proposal.summary,
+        )
+
+    language = detect_screenshot_language(source_snapshot.text)
+    try:
+        _validate_output_language(proposal, language)
+    except SupplementProposalValidationError as exc:
         raise SupplementProposalValidationError(
-            "screenshot proposal summary must contain 1 to 2 sentences"
-        )
+            exc.message,
+            field=exc.field,
+            diagnostics=diagnostics(
+                value=" ".join(
+                    [proposal.title, proposal.summary, *proposal.concepts, *proposal.notes]
+                ),
+                evidence=0,
+                unsupported=0,
+            ),
+        ) from exc
 
-    language = detect_screenshot_language(source_text)
-    _validate_output_language(proposal, language)
-
-    # Re-apply the high-confidence OCR cleanup at the contract boundary. This
-    # keeps callers from accidentally grounding a proposal in browser chrome.
-    source_normalized = _normalize_for_grounding(
-        preprocess_screenshot_ocr_text(source_text)
-    )
+    source_normalized = source_snapshot.normalized_text
     for label, value in _proposal_text_items(proposal):
-        has_source_evidence = (
-            _has_title_source_anchor(value=value, source_text=source_text)
-            if label == "title"
-            else _has_source_evidence(
-                value=value,
-                source_normalized=source_normalized,
-            )
-        )
-        if not has_source_evidence:
-            # Keep unsupported-advice diagnostics useful even when the advice
-            # also contains a new, ungrounded content word.
-            if _introduces_new_advice(
-                value=value,
+        claims = [value] if label == "title" else _split_claims(value)
+        for claim in claims:
+            if label == "title":
+                has_source_evidence = _has_title_source_anchor(
+                    value=claim,
+                    source_text=source_snapshot.text,
+                )
+            else:
+                has_source_evidence = _has_source_evidence(
+                    value=claim,
+                    source_normalized=source_normalized,
+                )
+
+            if has_source_evidence:
+                evidence_claim_count += 1
+            else:
+                unsupported_claim_count += 1
+
+            if not label.startswith("concepts[") and _introduces_new_advice(
+                value=claim,
                 source_normalized=source_normalized,
             ):
-                raise SupplementProposalValidationError(
-                    f"screenshot proposal {label} introduces unsupported advice"
+                if has_source_evidence:
+                    unsupported_claim_count += 1
+                fail(
+                    f"screenshot proposal {label} introduces unsupported advice",
+                    field=label,
+                    value=value,
+                    evidence=evidence_claim_count,
+                    unsupported=unsupported_claim_count,
                 )
-            raise SupplementProposalValidationError(
-                f"screenshot proposal {label} is not supported by OCR source",
-                field=label,
-            )
-        if _introduces_new_advice(
-            value=value,
-            source_normalized=source_normalized,
-        ):
-            raise SupplementProposalValidationError(
-                f"screenshot proposal {label} introduces unsupported advice"
-            )
-        if _introduces_new_conclusion(
-            value=value,
-            source_normalized=source_normalized,
-        ):
-            raise SupplementProposalValidationError(
-                f"screenshot proposal {label} introduces unsupported conclusion"
-            )
-    return proposal
+            if _introduces_new_conclusion(
+                value=claim,
+                source_normalized=source_normalized,
+            ):
+                if has_source_evidence:
+                    unsupported_claim_count += 1
+                fail(
+                    f"screenshot proposal {label} introduces unsupported conclusion",
+                    field=label,
+                    value=value,
+                    evidence=evidence_claim_count,
+                    unsupported=unsupported_claim_count,
+                )
+            if not has_source_evidence:
+                fail(
+                    f"screenshot proposal {label} is not supported by OCR source",
+                    field=label,
+                    value=value,
+                    evidence=evidence_claim_count,
+                    unsupported=unsupported_claim_count,
+                )
+
+    return proposal, ScreenshotGroundingDiagnostics(
+        source_normalized_char_count=source_snapshot.source_normalized_char_count,
+        candidate_field_char_count=sum(
+            len(value) for _, value in _proposal_text_items(proposal)
+        ),
+        evidence_claim_count=evidence_claim_count,
+        unsupported_claim_count=unsupported_claim_count,
+        validator_version=SCREENSHOT_VALIDATOR_VERSION,
+        source_snapshot_digest=source_snapshot.digest,
+        prompt_source_digest=source_snapshot.digest,
+        validation_source_digest=source_snapshot.digest,
+    )
+
+
+def _split_claims(value: str) -> List[str]:
+    return [claim.strip() for claim in _CLAIM_SEPARATOR_PATTERN.split(value) if claim.strip()]
 
 
 def validate_screenshot_proposal_with_title_fallback(
     *,
     proposal: "SupplementProposalSchema",
     source_text: str,
+    source_snapshot: Optional[ScreenshotSourceSnapshot] = None,
 ) -> ScreenshotProposalValidationResult:
     """Validate a screenshot proposal and repair only a grounded title failure.
 
@@ -542,31 +711,35 @@ def validate_screenshot_proposal_with_title_fallback(
         SupplementProposalValidationError,
     )
 
+    source_snapshot = source_snapshot or build_screenshot_source_snapshot(source_text)
     try:
+        validated, diagnostics = _validate_screenshot_proposal(
+            proposal=proposal,
+            source_snapshot=source_snapshot,
+        )
         return ScreenshotProposalValidationResult(
-            proposal=validate_screenshot_proposal(
-                proposal=proposal,
-                source_text=source_text,
-            )
+            proposal=validated,
+            diagnostics=diagnostics,
         )
     except SupplementProposalValidationError as exc:
         if exc.field != "title" or not _has_partial_title_anchor(
             value=proposal.title,
-            source_text=source_text,
+            source_text=source_snapshot.text,
         ):
             raise
 
-        fallback_title = build_screenshot_fallback_title(source_text)
+        fallback_title = build_screenshot_fallback_title(source_snapshot.text)
         fallback_proposal = proposal.model_copy(
             update={"title": fallback_title}
         )
-        validated = validate_screenshot_proposal(
+        validated, diagnostics = _validate_screenshot_proposal(
             proposal=fallback_proposal,
-            source_text=source_text,
+            source_snapshot=source_snapshot,
         )
         return ScreenshotProposalValidationResult(
             proposal=validated,
             title_fallback_used=True,
+            diagnostics=diagnostics,
         )
 
 
@@ -617,6 +790,14 @@ def _normalize_title_text(value: str) -> str:
     normalized = re.sub(
         r"[^a-z0-9_+#./:\-\u3400-\u4dbf\u4e00-\u9fff]+",
         " ",
+        normalized,
+    )
+    # OCR frequently inserts spaces inside a CJK word (for example
+    # ``索 引`` or ``查 詢``). Keep Latin token boundaries intact while
+    # joining only whitespace surrounded by CJK characters.
+    normalized = re.sub(
+        r"(?<=[\u3400-\u4dbf\u4e00-\u9fff])\s+(?=[\u3400-\u4dbf\u4e00-\u9fff])",
+        "",
         normalized,
     )
     return re.sub(r"\s+", " ", normalized).strip()
@@ -855,11 +1036,22 @@ def _has_source_evidence(*, value: str, source_normalized: str) -> bool:
         # paraphrases merely because another source token is present.
         return False
 
-    ascii_anchor = bool(set(content_tokens) & source_tokens)
+    exact_ascii_anchors = set(content_tokens) & source_tokens
+    ascii_anchor = bool(exact_ascii_anchors)
     cjk_anchor = _has_cjk_anchor(
         value=normalized_value,
         source=normalized_source,
     )
+    # Mixed Traditional Chinese/English claims often add neutral reporting
+    # words around two or more preserved technical/source terms. Requiring two
+    # exact anchors for that shape allows faithful paraphrase without accepting
+    # a new domain noun that merely sits beside one familiar term.
+    if _CJK_PATTERN.search(normalized_value) and _CJK_PATTERN.search(normalized_source):
+        return cjk_anchor or (
+            bool(exact_ascii_anchors) and len(exact_ascii_anchors) >= 2
+        )
+    if ascii_anchor and len(exact_ascii_anchors) >= 2:
+        return True
     return ascii_anchor or cjk_anchor
 
 

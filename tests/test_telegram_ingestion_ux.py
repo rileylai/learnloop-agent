@@ -61,9 +61,12 @@ class _PDFParser(PDFParserClient):
 
 
 class _OCRParser(ImageOCRParserClient):
+    def __init__(self, *, raw_text: str | None = None) -> None:
+        self._raw_text = raw_text
+
     def parse_images(self, *, images: list[OCRImageInput]) -> ParsedImageOCR:
         return ParsedImageOCR(
-            raw_text=(
+            raw_text=self._raw_text or (
                 "Target selection and source preview are shown before human review.\n"
                 + "\n".join(image.file_name for image in images)
             ),
@@ -163,6 +166,41 @@ class _InvalidTargetProposalProvider(LLMProvider):
         )
 
 
+class _GroundingFailureProposalProvider(LLMProvider):
+    def __init__(self) -> None:
+        self.requests: list[LLMRequest] = []
+
+    @property
+    def name(self) -> str:
+        return "openai"
+
+    async def generate(self, request: LLMRequest) -> LLMResponse:
+        self.requests.append(request)
+        return LLMResponse(
+            provider="openai",
+            model="gpt-4o-mini",
+            output_text=json.dumps(
+                {
+                    "title": "MySQL EXPLAIN 與索引查詢",
+                    "target_path": "Knowledge/Parent/Child/AI Supplement Zone",
+                    "source": {
+                        "source_type": "screenshot",
+                        "source_display_name": "Screenshot batch (1 images)",
+                    },
+                    "summary": "MySQL EXPLAIN 會改善查詢效能。",
+                    "concepts": ["MySQL", "EXPLAIN", "索引"],
+                    "notes": [
+                        "MySQL EXPLAIN 顯示查詢的執行計畫。",
+                        "索引可協助查詢條件過濾。",
+                        "畫面列出 type、key、rows 欄位。",
+                    ],
+                }
+            ),
+            token_input=120,
+            token_output=90,
+        )
+
+
 class _CallbackAckTimeoutTelegramClient(InMemoryTelegramBotClient):
     def __init__(self) -> None:
         super().__init__()
@@ -247,13 +285,17 @@ def _configure_app(
     telegram_client: InMemoryTelegramBotClient,
     session_store: TelegramSessionStore,
     source_type: str,
+    ocr_parser: ImageOCRParserClient | None = None,
+    proposal_provider: LLMProvider | None = None,
 ) -> None:
     registry = ToolRegistry()
     registry.register_tool(TelegramBotTool(telegram_client))
     registry.register_tool(PDFParserTool(_PDFParser()))
-    registry.register_tool(ImageOCRTool(_OCRParser()))
+    registry.register_tool(ImageOCRTool(ocr_parser or _OCRParser()))
     router = ProviderRouter()
-    router.register_provider(_ProposalProvider(source_type=source_type))
+    router.register_provider(
+        proposal_provider or _ProposalProvider(source_type=source_type)
+    )
 
     def db_override():
         session = session_factory()
@@ -984,6 +1026,107 @@ def test_invalid_target_callback_reports_redacted_failure_without_retry_duplicat
         app.dependency_overrides.clear()
 
 
+def test_grounding_failure_metadata_reaches_outer_telegram_workflow() -> None:
+    session_factory = _session_factory()
+    _seed_pages(session_factory)
+    telegram_client = InMemoryTelegramBotClient()
+    telegram_client.add_file(
+        file_id="grounding-failure-image",
+        file_bytes=b"telegram-image-bytes",
+        file_name="mysql.png",
+    )
+    proposal_provider = _GroundingFailureProposalProvider()
+    _configure_app(
+        session_factory=session_factory,
+        telegram_client=telegram_client,
+        session_store=InMemoryTelegramSessionStore(),
+        source_type="screenshot",
+        ocr_parser=_OCRParser(
+            raw_text=(
+                "MySQL EXPLAIN 會顯示查詢的執行計畫。"
+                "索引可協助查詢條件過濾。"
+                "畫面列出 type、key、rows 欄位。"
+            )
+        ),
+        proposal_provider=proposal_provider,
+    )
+
+    try:
+        client = TestClient(app)
+        upload_response = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 9700,
+                "message": {
+                    "message_id": 70,
+                    "chat": {"id": 566},
+                    "from": {"id": 786},
+                    "caption": "/ingest",
+                    "photo": [
+                        {
+                            "file_id": "grounding-failure-image",
+                            "file_unique_id": "grounding-failure-image-unique",
+                            "width": 1200,
+                            "height": 800,
+                            "file_size": 100,
+                        }
+                    ],
+                },
+            },
+        )
+        assert upload_response.status_code == 200
+        callback_data = _page_callback_data(telegram_client, button_index=1)
+
+        callback_response = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 9701,
+                "callback_query": {
+                    "id": "grounding-failure-callback",
+                    "from": {"id": 786},
+                    "data": callback_data,
+                    "message": {"message_id": 71, "chat": {"id": 566}},
+                },
+            },
+        )
+        assert callback_response.status_code == 502
+        detail = callback_response.json()["detail"]
+        assert detail["error_code"] == "LLM_OUTPUT_INVALID"
+        assert detail["failure_reason"] == "LLM_OUTPUT_INVALID"
+        workflow_id = detail["workflow_run_id"]
+
+        session = session_factory()
+        try:
+            workflow = session.get(WorkflowRun, workflow_id)
+            assert workflow is not None
+            metadata = json.loads(workflow.metadata_json or "{}")
+            assert metadata["failure_stage"] == "proposal_validation"
+            assert metadata["validation_field"] == "summary"
+            assert metadata["validator_version"] == "screenshot_grounding_v2"
+            assert metadata["source_document_id"] == 1
+            assert metadata["source_attachment_count"] == 1
+            assert metadata["session_retry_available"] is True
+            assert metadata["llm_ms"] >= 0
+            assert metadata["source_normalized_char_count"] > 0
+            assert metadata["candidate_field_char_count"] > 0
+            assert metadata["evidence_claim_count"] >= 1
+            assert metadata["unsupported_claim_count"] >= 1
+            assert metadata["prompt_source_digest"] == metadata["validation_source_digest"]
+            assert metadata["source_snapshot_digest"] == metadata["prompt_source_digest"]
+            assert len(metadata["source_snapshot_digest"]) == 64
+            assert "改善查詢效能" not in workflow.metadata_json
+            assert len(proposal_provider.requests) == 1
+            prompt_source = proposal_provider.requests[0].messages[1].content
+            assert "MySQL EXPLAIN 會顯示查詢的執行計畫。" in prompt_source
+            assert "畫面列出 type、key、rows 欄位。" in prompt_source
+            assert session.query(ChangeRequest).count() == 0
+            assert session.query(SourceDocument).count() == 1
+        finally:
+            session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_caption_command_and_duplicate_update_id_do_not_duplicate_upload_or_preview() -> None:
     session_factory = _session_factory()
     _seed_pages(session_factory)
@@ -1165,7 +1308,9 @@ def test_media_group_store_is_idempotent_and_concurrency_safe() -> None:
         ],
         command_text=None,
     )
-    assert store.claim_settle(session_id="group-1", chat_id="1", user_id="2") is False
+    # A later update refreshes the debounce version instead of being ignored
+    # merely because the first delayed settle job was already scheduled.
+    assert store.claim_settle(session_id="group-1", chat_id="1", user_id="2") is True
     assert store.claim_settled(
         session_id="group-1",
         chat_id="1",
@@ -1177,13 +1322,13 @@ def test_media_group_store_is_idempotent_and_concurrency_safe() -> None:
         chat_id="1",
         user_id="2",
         settle_version=1,
-    ) is True
+    ) is False
     assert store.claim_settled(
         session_id="group-1",
         chat_id="1",
         user_id="2",
-        settle_version=1,
-    ) is False
+        settle_version=2,
+    ) is True
     assert store.claim_picker(session_id="group-1", chat_id="1", user_id="2") is True
     assert store.claim_picker(session_id="group-1", chat_id="1", user_id="2") is False
     session = store.get_upload(session_id="group-1", chat_id="1", user_id="2")
@@ -1357,6 +1502,10 @@ def test_three_media_group_updates_use_one_picker_and_one_business_batch(
         session = session_factory()
         try:
             assert session.query(SourceDocument).count() == 1
+            source_document = session.query(SourceDocument).one()
+            raw_text = source_document.raw_text
+            assert raw_text.index("image-10.png") < raw_text.index("image-20.png")
+            assert raw_text.index("image-20.png") < raw_text.index("image-30.png")
             assert session.query(ChangeRequest).count() == 1
             assert proposal_provider.calls == 1
         finally:

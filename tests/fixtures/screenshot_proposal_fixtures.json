@@ -1,5 +1,54 @@
 [
   {
+    "id": "public_safe_mysql_four_image_batch",
+    "images": [
+      {
+        "message_id": 40,
+        "ocr": "[Image 40]\n摘要：來源說明 MySQL 查 詢 優 化 需搭配 EXPLAIN 與索 引資訊。"
+      },
+      {
+        "message_id": 10,
+        "ocr": "Back\nhttps://example.invalid/mysql\n[Image 10]\nMySQL EXPLAIN 會顯示查 詢 的執 行 計 畫。"
+      },
+      {
+        "message_id": 30,
+        "ocr": "[Image 30]\nEXPLAIN 的 key 欄位可用來觀察索 引 是否被使用。"
+      },
+      {
+        "message_id": 20,
+        "ocr": "[Image 20]\n索 引 可 協助 查 詢 條件 過 濾，並列出 type、key、rows 欄位。"
+      }
+    ],
+    "proposal": {
+      "title": "MySQL EXPLAIN 與索引查詢資訊",
+      "target_path": "Knowledge/Database/AI Supplement Zone",
+      "source": {
+        "source_type": "screenshot",
+        "source_display_name": "Screenshot batch (4 images)"
+      },
+      "summary": "這組截圖整理 MySQL EXPLAIN 與索引在查詢執行計畫中的資訊，並提到 key、rows 等欄位。",
+      "concepts": [
+        "MySQL",
+        "EXPLAIN",
+        "索引",
+        "查詢執行計畫",
+        "key 與 rows 欄位"
+      ],
+      "notes": [
+        "EXPLAIN 會顯示查詢的執行計畫。",
+        "索引可協助查詢條件過濾。",
+        "key 與 rows 是畫面列出的欄位。",
+        "來源提到 EXPLAIN 與索引資訊。"
+      ]
+    },
+    "expected_cleaned_order": [
+      "MySQL EXPLAIN",
+      "索引可協助",
+      "EXPLAIN 的 key",
+      "來源說明 MySQL"
+    ]
+  },
+  {
     "id": "continuous_multi_image_batch",
     "images": [
       {

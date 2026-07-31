@@ -10,6 +10,7 @@ from src.orchestrators import (
     SupplementProposalValidationError,
 )
 from src.services.screenshot_quality import (
+    build_screenshot_source_snapshot,
     detect_screenshot_language,
     preprocess_screenshot_ocr_text,
     validate_screenshot_proposal,
@@ -45,6 +46,36 @@ def test_continuous_multi_image_fixture_is_one_grounded_batch() -> None:
     assert source_text.index("Kubernetes Deployment") < source_text.index("PyTorch batch normalization")
     assert 3 <= len(validated.concepts) <= 30
     assert 3 <= len(validated.notes) <= 6
+
+
+def test_public_safe_four_image_mysql_batch_uses_one_snapshot_and_all_claims() -> None:
+    fixture = next(
+        item
+        for item in _load_fixtures()
+        if item["id"] == "public_safe_mysql_four_image_batch"
+    )
+    source_text = _merge_images(fixture["images"])
+    snapshot = build_screenshot_source_snapshot(source_text)
+    result = validate_screenshot_proposal_with_title_fallback(
+        proposal=SupplementProposalSchema.model_validate(fixture["proposal"]),
+        source_text=snapshot.text,
+        source_snapshot=snapshot,
+    )
+
+    assert result.diagnostics is not None
+    diagnostics = result.diagnostics
+    assert diagnostics.evidence_claim_count >= 9
+    assert diagnostics.unsupported_claim_count == 0
+    assert diagnostics.source_normalized_char_count > 0
+    assert diagnostics.candidate_field_char_count > 0
+    assert diagnostics.source_snapshot_digest == diagnostics.prompt_source_digest
+    assert diagnostics.prompt_source_digest == diagnostics.validation_source_digest
+    assert "https://example.invalid/mysql" not in snapshot.text
+    for expected_anchor in fixture["expected_cleaned_order"]:
+        assert expected_anchor in snapshot.text
+    assert snapshot.text.index("MySQL EXPLAIN") < snapshot.text.index("索引可協助")
+    assert snapshot.text.index("索引可協助") < snapshot.text.index("EXPLAIN 的 key")
+    assert snapshot.text.index("EXPLAIN 的 key") < snapshot.text.index("來源說明 MySQL")
 
 
 def test_browser_ui_fixture_is_removed_before_proposal_grounding() -> None:
@@ -174,6 +205,13 @@ def test_mixed_technical_title_normalizes_unicode_brackets_and_simplified_text()
     validate_screenshot_proposal(proposal=proposal, source_text=source_text)
 
 
+def test_title_normalizes_ocr_spaces_inside_cjk_terms() -> None:
+    source_text = "MySQL 索 引、EXPLAIN 與 SQL 查 詢 優 化。"
+    proposal = _mysql_sql_proposal(title="MySQL 索引與查詢優化")
+
+    validate_screenshot_proposal(proposal=proposal, source_text=source_text)
+
+
 def test_unrelated_title_still_fails_closed() -> None:
     source_text = "SQL 查詢優化與索引策略。"
     proposal = _mysql_sql_proposal(title="AI 招募")
@@ -227,6 +265,29 @@ def test_unsupported_advice_is_rejected_even_with_a_grounded_anchor() -> None:
         match="unsupported advice",
     ):
         validate_screenshot_proposal(proposal=proposal, source_text=source_text)
+
+
+def test_descriptive_use_is_not_misclassified_as_new_advice() -> None:
+    source_text = "The screenshot shows how to use Redis for delayed jobs."
+    proposal = SupplementProposalSchema.model_validate(
+        {
+            "title": "Redis delayed jobs",
+            "target_path": "Knowledge/Engineering/AI Supplement Zone",
+            "source": {
+                "source_type": "screenshot",
+                "source_display_name": "Descriptive use fixture",
+            },
+            "summary": "The screenshot shows how to use Redis for delayed jobs.",
+            "concepts": ["Redis", "delayed jobs", "use"],
+            "notes": [
+                "The screenshot shows Redis.",
+                "The screenshot shows delayed jobs.",
+                "The screenshot shows how to use Redis.",
+            ],
+        }
+    )
+
+    validate_screenshot_proposal(proposal=proposal, source_text=source_text)
 
 
 @pytest.mark.parametrize(

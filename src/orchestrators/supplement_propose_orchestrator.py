@@ -44,6 +44,8 @@ from src.services import (
 )
 from src.services.latency_evidence import LatencyEvidence, elapsed_ms
 from src.services.screenshot_quality import (
+    ScreenshotSourceSnapshot,
+    build_screenshot_source_snapshot,
     detect_screenshot_language,
     validate_screenshot_proposal_with_title_fallback,
 )
@@ -81,6 +83,7 @@ class SupplementProposeError(Exception):
         http_status_code: int,
         failure_reason: str = "UNKNOWN_ERROR",
         workflow_run_id: Optional[int] = None,
+        metadata: Optional[dict[str, object]] = None,
     ) -> None:
         super().__init__(message)
         self.error_code = error_code
@@ -88,6 +91,7 @@ class SupplementProposeError(Exception):
         self.http_status_code = http_status_code
         self.failure_reason = failure_reason
         self.workflow_run_id = workflow_run_id
+        self.metadata = dict(metadata or {})
 
 
 class SupplementProposeOrchestrator:
@@ -179,6 +183,8 @@ class SupplementProposeOrchestrator:
         latency = LatencyEvidence()
         target_page_path: Optional[str] = None
         allowed_target_path: Optional[str] = None
+        source_snapshot: Optional[ScreenshotSourceSnapshot] = None
+        validation_diagnostics: Optional[dict[str, object]] = None
         try:
             prompt_bundle = self._prompt_template_loader.load_bundle(prompt_id)
             prompt_version = prompt_bundle.version
@@ -193,6 +199,10 @@ class SupplementProposeOrchestrator:
                         f"source_document_id={source_document_id}"
                     ),
                     http_status_code=HTTPStatus.NOT_FOUND,
+                )
+            if source_document.source_type == "screenshot":
+                source_snapshot = build_screenshot_source_snapshot(
+                    source_document.raw_text
                 )
 
             target_page_db_id: Optional[int] = None
@@ -244,10 +254,16 @@ class SupplementProposeOrchestrator:
                         ),
                         "source_text": format_untrusted_prompt_block(
                             label="SOURCE_TEXT",
-                            value=source_document.raw_text,
+                            value=(
+                                source_snapshot.text
+                                if source_snapshot is not None
+                                else source_document.raw_text
+                            ),
                         ),
                         "source_language": detect_screenshot_language(
-                            source_document.raw_text
+                            source_snapshot.text
+                            if source_snapshot is not None
+                            else source_document.raw_text
                         ).instruction
                         if source_document.source_type == "screenshot"
                         else "the main language of the source text",
@@ -303,10 +319,20 @@ class SupplementProposeOrchestrator:
                 if source_document.source_type == "screenshot":
                     validation_result = validate_screenshot_proposal_with_title_fallback(
                         proposal=proposal,
-                        source_text=source_document.raw_text,
+                        source_text=(
+                            source_snapshot.text
+                            if source_snapshot is not None
+                            else source_document.raw_text
+                        ),
+                        source_snapshot=source_snapshot,
                     )
                     proposal = validation_result.proposal
                     title_fallback_used = validation_result.title_fallback_used
+                    validation_diagnostics = (
+                        validation_result.diagnostics.as_dict()
+                        if validation_result.diagnostics is not None
+                        else None
+                    )
                 duplicate_match = self._check_duplicate(
                     self._build_duplicate_candidate_from_proposal(proposal)
                 )
@@ -361,6 +387,7 @@ class SupplementProposeOrchestrator:
                         "token_output": token_output,
                         "estimated_cost": estimated_cost,
                         "title_fallback_used": title_fallback_used,
+                        **(validation_diagnostics or {}),
                         **latency.as_dict(),
                     },
                     sort_keys=True,
@@ -407,12 +434,18 @@ class SupplementProposeOrchestrator:
                 http_status_code=exc.http_status_code,
                 failure_reason=exc.failure_reason,
                 workflow_run_id=workflow_run.id,
+                metadata=exc.metadata,
             ) from exc
         except SupplementProposalValidationError as exc:
             self._mark_failed_workflow(
                 workflow_run_id=workflow_run.id,
                 failure_reason="LLM_OUTPUT_INVALID",
                 error_code="LLM_OUTPUT_INVALID",
+                source_document_id=source_document_id,
+                failure_stage="proposal_validation",
+                validation_field=exc.field,
+                latency_metadata=latency.as_dict(),
+                validation_diagnostics=exc.diagnostics,
                 provider_name=normalized_provider_name,
                 model=normalized_model,
                 prompt_id=prompt_id,
@@ -427,6 +460,14 @@ class SupplementProposeOrchestrator:
                 http_status_code=HTTPStatus.BAD_GATEWAY,
                 failure_reason=exc.failure_reason,
                 workflow_run_id=workflow_run.id,
+                metadata={
+                    "source_document_id": source_document_id,
+                    **exc.diagnostics,
+                    "proposal_workflow_run_id": workflow_run.id,
+                    "failure_stage": "proposal_validation",
+                    "validation_field": exc.field,
+                    **latency.as_dict(),
+                },
             ) from exc
         except ProviderNotFoundError as exc:
             self._mark_failed_workflow(
@@ -619,6 +660,11 @@ class SupplementProposeOrchestrator:
         workflow_run_id: int,
         failure_reason: str,
         error_code: str,
+        source_document_id: Optional[int] = None,
+        failure_stage: Optional[str] = None,
+        validation_field: Optional[str] = None,
+        latency_metadata: Optional[dict[str, float]] = None,
+        validation_diagnostics: Optional[dict[str, object]] = None,
         provider_name: str,
         model: str,
         prompt_id: str,
@@ -634,6 +680,9 @@ class SupplementProposeOrchestrator:
                 {
                     "operation": "propose_change_request",
                     "error_code": error_code,
+                    "source_document_id": source_document_id,
+                    "failure_stage": failure_stage,
+                    "validation_field": validation_field,
                     "provider_name": provider_name,
                     "model": model,
                     "prompt_id": prompt_id,
@@ -642,6 +691,8 @@ class SupplementProposeOrchestrator:
                     "token_input": token_input,
                     "token_output": token_output,
                     "estimated_cost": estimated_cost,
+                    **(validation_diagnostics or {}),
+                    **(latency_metadata or {}),
                 },
                 sort_keys=True,
             ),

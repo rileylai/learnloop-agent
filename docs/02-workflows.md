@@ -388,8 +388,24 @@ Rules:
   conclusions. Grounding allows only bounded reporting-language/synonym
   paraphrase; new products, numbers, URLs, commands, technical atoms, and
   unsupported claim words fail closed without a second LLM judge.
+- Before screenshot proposal generation, the backend builds one cleaned OCR
+  source snapshot from the persisted `source_documents.raw_text`. The prompt
+  source and grounding validator receive that same snapshot; there is no
+  second page selection, truncation, cleanup, or CJK whitespace normalization
+  path. Their source digests must be identical.
+- Grounding evaluates each title, concept, and summary/note sentence as a
+  claim. A claim can pass through bounded reporting-language paraphrase when
+  it retains source anchors, while new numbers, commands, URLs, technical
+  atoms, advice, conclusions, or unsupported domain content still fail closed.
+- Proposal validation metadata is deterministic and redacted: normalized
+  source/candidate character counts, supported/unsupported claim counts,
+  validator version, source/prompt/validation digests, and the failing field.
+  The outer Telegram workflow preserves these fields together with
+  `failure_stage=proposal_validation`, source id/attachment count, and
+  `llm_ms`; it never stores OCR or proposal text.
 - Screenshot titles use normalized source anchors rather than exact OCR
-  sentence matching. Unicode, case, punctuation/whitespace, full-width and
+  sentence matching. Unicode, case, punctuation/whitespace, OCR-inserted
+  spaces inside CJK words, full-width and
   mixed Chinese/English brackets, common Simplified/Traditional pairs, CJK
   phrases, and English technical terms are normalized before scoring. A
   grounded title needs multiple topic anchors; an unrelated title still fails.
@@ -467,7 +483,15 @@ Rules:
 - Upload sessions carry a monotonic settle version. The settle job atomically
   promotes `collecting` to `settled`, sorts attachments by Telegram
   `message_id`, and stale/duplicate versions skip before picker or business
-  work. Duplicate `file_unique_id` values are ignored in the session store.
+  work. Every update in the same `media_group_id` refreshes the debounce
+  version, so a first delayed job cannot settle before later Telegram updates
+  are collected. Duplicate `file_unique_id` values are ignored in the session
+  store.
+- If proposal validation fails after a source document is persisted,
+  `LLM_OUTPUT_INVALID` keeps the screenshot source identity, target,
+  attachments, and session retry state. `/retry-proposal` and an old screenshot
+  picker callback may retry proposal generation from that source only; neither
+  path downloads or OCRs the attachments again.
 - Preview delivery is post-commit. A failed `send_message` records
   `TELEGRAM_PREVIEW_DELIVERY_FAILED`, preserves the pending change request, and
   emits a short recovery message. Recovery may resend the existing preview but

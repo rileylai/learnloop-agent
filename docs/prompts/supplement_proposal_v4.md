@@ -27,6 +27,8 @@ Language contract:
 
 Grounding contract:
 - Every title, summary, concept, and note must be directly supported by OCR.
+- Treat each summary or note sentence as a separate source-supported claim;
+  combine claims only when every part remains faithful to the OCR.
 - A screenshot title may be a concise combination of multiple OCR anchors and
   a faithful paraphrase; it does not need to exactly copy an OCR sentence.
   Preserve source technical terms such as `MySQL`, `EXPLAIN`, and `SQL`.
@@ -34,6 +36,9 @@ Grounding contract:
   next steps.
 - Notes may restate source facts, but must not add advice unless that advice is
   explicitly stated in the OCR text.
+- Use descriptive reporting language for source facts. Do not turn a source
+  fact into an instruction: avoid imperative phrases such as `should`, `use`,
+  `consider`, or `you can` unless the OCR itself explicitly gives that advice.
 
 ## User
 Create one supplement proposal JSON with exactly these fields:

@@ -179,7 +179,12 @@ class TelegramSessionStore(ABC):
         target_notion_page_id: str,
         target_notion_path: str,
     ) -> tuple[str, Optional[TelegramUploadSession]]:
-        """Atomically claim target processing and return new/already/in_progress."""
+        """Atomically claim target processing.
+
+        ``retry`` is returned for a failed proposal whose source document is
+        already persisted.  That path must reuse the source instead of
+        downloading and OCR-ing the attachments again.
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -383,11 +388,18 @@ class InMemoryTelegramSessionStore(TelegramSessionStore):
             if session.state not in {"collecting", "settling"}:
                 return session
             known = {item.file_unique_id or item.file_id for item in session.attachments}
+            added_attachment = False
             for attachment in kwargs["attachments"]:
                 identity = attachment.file_unique_id or attachment.file_id
                 if identity not in known:
                     session.attachments.append(attachment)
                     known.add(identity)
+                    added_attachment = True
+            if added_attachment:
+                # A new Telegram update reopens the debounce claim. The
+                # previous delayed job remains queued but its version becomes
+                # stale once the gateway claims the refreshed settle.
+                session.settle_scheduled = False
             if kwargs.get("command_text"):
                 session.command_text = kwargs["command_text"]
             session.updated_at = time.time()
@@ -427,6 +439,9 @@ class InMemoryTelegramSessionStore(TelegramSessionStore):
                 or session.settle_scheduled
             ):
                 return False
+            # Every media-group update refreshes the debounce version. Older
+            # delayed jobs become stale and skip; only the last quiet-period
+            # job can promote the complete batch.
             session.settle_scheduled = True
             session.settle_version += 1
             session.updated_at = time.time()
@@ -496,6 +511,18 @@ class InMemoryTelegramSessionStore(TelegramSessionStore):
                 return "already", session
             if session.state == "processing":
                 return "in_progress", session
+            if (
+                session.state == "failed"
+                and session.failure_reason == "LLM_OUTPUT_INVALID"
+                and session.source_document_id is not None
+                and session.source_type == "screenshot"
+            ):
+                session.state = "processing"
+                session.failure_reason = None
+                session.target_notion_page_id = kwargs["target_notion_page_id"]
+                session.target_notion_path = kwargs["target_notion_path"]
+                session.updated_at = time.time()
+                return "retry", session
             if session.state != "awaiting_target":
                 return "invalid", session
             session.state = "processing"
@@ -678,11 +705,17 @@ class RedisTelegramSessionStore(TelegramSessionStore):
             if session.state not in {"collecting", "settling"}:
                 return session
             known = {item.file_unique_id or item.file_id for item in session.attachments}
+            added_attachment = False
             for attachment in kwargs["attachments"]:
                 identity = attachment.file_unique_id or attachment.file_id
                 if identity not in known:
                     session.attachments.append(attachment)
                     known.add(identity)
+                    added_attachment = True
+            if added_attachment:
+                # Refresh debounce only for a genuinely new attachment. A
+                # duplicate Telegram delivery stays idempotent.
+                session.settle_scheduled = False
             if kwargs.get("command_text"):
                 session.command_text = kwargs["command_text"]
             session.updated_at = time.time()
@@ -742,6 +775,9 @@ class RedisTelegramSessionStore(TelegramSessionStore):
                 or session.settle_scheduled
             ):
                 return False
+            # Refresh the debounce version for every update in the same
+            # media_group_id.  Previously the first scheduled job won even
+            # when later Telegram updates had already appended attachments.
             session.settle_scheduled = True
             session.settle_version += 1
             session.updated_at = time.time()
@@ -827,6 +863,19 @@ class RedisTelegramSessionStore(TelegramSessionStore):
                 return "already", session
             if session.state == "processing":
                 return "in_progress", session
+            if (
+                session.state == "failed"
+                and session.failure_reason == "LLM_OUTPUT_INVALID"
+                and session.source_document_id is not None
+                and session.source_type == "screenshot"
+            ):
+                session.state = "processing"
+                session.failure_reason = None
+                session.target_notion_page_id = kwargs["target_notion_page_id"]
+                session.target_notion_path = kwargs["target_notion_path"]
+                session.updated_at = time.time()
+                self._redis.setex(key, self._ttl_seconds, _session_to_json(session))
+                return "retry", session
             if session.state != "awaiting_target":
                 return "invalid", session
             session.state = "processing"
