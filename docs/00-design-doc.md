@@ -5,6 +5,32 @@ LearnLoop Agent is a local-first Notion knowledge agent.
 It indexes existing Notion notes as read-only knowledge, generates AI supplement proposals from new learning sources, and supports RAG QA with Notion path citation.
 The agent can write only accepted content into `AI Supplement Zone`.
 
+### Current Implementation Status
+
+This document uses these evidence labels:
+
+| Label | Meaning |
+|---|---|
+| Implemented | Runtime code and wiring exist in this repository. |
+| Deterministic test verified | Tests pass with controlled data, fakes, injected transports, SQLite, or fakeredis. |
+| Adapter integration verified | A real adapter or library is exercised against a controlled fixture or transport. |
+| Opt-in live dependency verified | A bounded operator-run check reached a real external dependency. |
+| Live E2E verified | The complete user workflow reached every configured live dependency. |
+| Release gap / not verified | Implementation or verification is still needed before release. |
+
+Current evidence is deliberately narrower than production readiness:
+
+| Area | Current status | Evidence boundary |
+|---|---|---|
+| FastAPI routes, orchestrators, repositories, migrations, idempotency, and deterministic guardrails | Implemented; deterministic test verified | The default suite uses controlled dependencies and skips opt-in PostgreSQL tests when no live database is configured. |
+| PDF, URL, and OCR adapters | Adapter integration verified | The 2026-08-01 `pypdf`, trafilatura, and Tesseract fixture checks passed. |
+| YouTube, Telegram, LLM, and embedding adapters | Implemented; deterministic test verified | Their opt-in live checks were not run in the current audit. |
+| Notion read/index/QA | Opt-in live dependency verified | Step 82 passed a bounded, read-only sandbox canary. It is not workspace-wide production verification. |
+| Human-approved Notion append | Opt-in live dependency verified | Step 83 passed a bounded append-only sandbox canary with explicit approval. |
+| PostgreSQL cleanup and release gate | Opt-in live dependency verified | Step 87 passed against the configured live PostgreSQL target. |
+| Telegram upload through accept, Notion append, and re-index | Release gap / not verified | The complete live E2E chain has not been recorded. Step 88 remains `doing`. |
+| Cloud deployment and always-on sync | Not implemented in MVP | The current deployment is local-only. |
+
 ## 2. Core Harness Engineering Principles
 - Read-only by default.
 - No direct overwrite.
@@ -84,8 +110,8 @@ Path A: Agent accepted append
 Change Request
 -> Human Accept
 -> Append to AI Supplement Zone
--> Immediate page re-index job
 -> Verify the append is visible by its durable change-request identity
+-> Prepare the current page re-index snapshot
 -> In one DB transaction, lock and revalidate `pending`, persist the page
    re-index mutation set, and set the change request to `accepted`
 -> New accepted supplement becomes available in production RAG
@@ -169,7 +195,7 @@ Sync statements:
 | FR-012 | Generate supplement proposal | Generate proposal in note style with source grounding. |
 | FR-013 | Human review gate | Require human accept/reject before write. |
 | FR-014 | Append accepted supplement only | Write path must be `Change Request -> Human Accept -> Append to AI Supplement Zone`. |
-| FR-015 | Auto re-index after accept | Accepted append triggers immediate page re-index job. |
+| FR-015 | Auto re-index after accept | Accepted append synchronously re-indexes the target page in the accept workflow. |
 | FR-016 | No direct overwrite | Never overwrite original notes directly. |
 | FR-017 | QA with citation | RAG QA returns Notion path citation. |
 | FR-018 | Scope query support | Support note-scoped Telegram QA with explicit `/ask --page` and `/ask --section` flags. |
@@ -194,76 +220,35 @@ Sync statements:
 | Simple docs standard | Repo docs and comments use simple English. |
 
 ## 10. Architecture Overview
-```text
-Telegram Bot
-  ↓
-Agent Gateway
-  - auth
-  - Telegram webhook secret and allowed-chat policy
-  - request parsing
-  - source type detection
-  - idempotency key
-  ↓
-Orchestrators
-  - Indexing Orchestrator
-  - Ingestion Orchestrator
-  - Supplement Orchestrator
-  - QA Orchestrator
-  ↓
-Provider Router
-  - OpenAI Provider Adapter first
-  - Claude Provider Adapter later
-  - Gemini Provider Adapter later
-  ↓
-Tool Registry
-  - Local Tool Adapters in MVP
-  - Future MCP Client after tool contracts stabilize
-  ↓
-Tools / Services / Repositories
-  - Notion Reader Tool
-  - Notion Writer Tool
-  - PDF Parser Tool
-  - OCR Tool
-  - Web Article Tool
-  - YouTube Transcript Tool
-  - Vector Search Tool
-  - Guardrails
-  - Repositories for PostgreSQL/pgvector
-  - QueueClient for Redis/RQ
-  ↓
-Storage (derived state + workflow state)
-  - PostgreSQL
-  - pgvector
-  - Redis
-  - Local File Storage
-  ↓
-Notion (source of truth)
-  - Existing notes: read-only for direct agent editing
-  - AI Supplement Zone: append-only path after human accept
 
-Sync behavior in MVP:
-  - Manual sync for user manual Notion edits: /api/notion/index/incremental
-  - Auto page re-index after accepted append
-  - No always-on cloud sync
+```mermaid
+flowchart LR
+    Route["FastAPI Route"] --> Orchestrator["Orchestrator"]
+    Orchestrator --> Service["Service"]
+    Orchestrator --> Router["ProviderRouter"]
+    Orchestrator --> Registry["ToolRegistry"]
+    Service --> Repository["Repository"]
+    Router --> Provider["Provider Adapter"]
+    Registry --> Tool["Local Tool Adapter"]
+    Repository --> PostgreSQL["PostgreSQL + pgvector"]
+    Service --> Queue["QueueClient"]
+    Queue --> Redis["Redis + RQ"]
+    Provider --> OpenAI["OpenAI"]
+    Tool --> External["Notion / Telegram / Source APIs"]
+```
 
 Telegram queue behavior:
-  - With `REDIS_URL` configured, the webhook claims update idempotency and
-    enqueues long work through `QueueClient` before returning `202`.
-  - `scripts/run_worker.py` consumes the RQ `telegram` queue with RQ's
-    embedded scheduler enabled (`with_scheduler=True`). Delayed settle jobs
-    and interval-based retries therefore return to the queue when due.
-  - The worker derives the repository root from its own file path, then
-    fail-fast validates that RQ resolves the canonical module-level callable
-    `src.worker.telegram.process_telegram_webhook_job` before consuming jobs.
-  - The worker-class policy selects RQ `SpawnWorker` on Darwin/macOS and the
-    standard RQ `Worker` on Linux by default. An explicit `--worker-class`
-    override is supported, but the fork-based `Worker` is rejected on macOS.
-  - Telegram jobs use bounded retries; expected domain failures are terminal
-    ledger outcomes and unexpected worker crashes can retry while an update is
-    still `running`.
-  - Local compatibility without `REDIS_URL` retains synchronous Telegram
-    handling, but local readiness remains unavailable until Redis is configured.
-```
+
+- With `REDIS_URL`, the webhook claims the persistent update ledger, enqueues
+  work through `QueueClient`, and normally returns `202`.
+- `scripts/run_worker.py` consumes the `telegram` queue with the RQ scheduler
+  enabled. It validates the canonical callable
+  `src.worker.telegram.process_telegram_webhook_job` before consuming jobs.
+- The default worker is `SpawnWorker` on macOS and `Worker` on Linux. Telegram
+  jobs use bounded retries; expected domain failures become terminal ledger
+  outcomes, while unexpected crashes remain eligible for RQ retry.
+- Without `REDIS_URL`, Telegram uses the synchronous compatibility path. Local
+  readiness still reports the queue dependency as missing.
 
 Boundary rules:
 - API routes and orchestrators must not import OpenAI, Claude, Gemini, Notion, Redis, PostgreSQL, or external API SDKs directly.
@@ -287,9 +272,9 @@ Run full indexing
 -> Save index run status
 ```
 Checklist:
-- [ ] Full index covers required page/block structure.
-- [ ] Citation metadata includes Notion path.
-- [ ] Successful indexing writes both live `embedding` and transitional
+- [x] Deterministic tests cover the implemented page/block indexing structure.
+- [x] Stored chunk metadata includes the Notion path used for citations.
+- [x] Successful indexing writes both live `embedding` and transitional
   `embedding_text` during rollout.
 
 ### 11.2 Manual Incremental Sync
@@ -303,23 +288,24 @@ User edits Notion manually
 -> Re-index current page content
 ```
 Checklist:
-- [ ] Manual edits/deletes/merges are reconciled.
-- [ ] Rebuilt page reflects current Notion truth.
+- [x] Deterministic tests verify page-level replacement for manual reconciliation.
+- [x] The rebuilt page snapshot reflects content returned by the Notion reader.
 
 ### 11.3 Agent Accepted Append with Auto Re-index
 ```text
 Change Request
 -> Human Accept
 -> Append to AI Supplement Zone
--> Trigger immediate page re-index through the shared embedding flow
+-> Verify the durable append identity
+-> Synchronously re-index through the shared embedding flow
 -> Accepted content becomes searchable in production RAG
 ```
 If the final workflow audit update fails after business work commits, the
 business result is not rolled back or retried. The workflow remains `running`
 for explicit stale-running reconciliation.
 Checklist:
-- [ ] Write path is append-only.
-- [ ] Auto re-index job starts immediately after accept.
+- [x] Deterministic tests and the bounded Step 83 canary verify append-only writes.
+- [x] The accept workflow performs the target-page re-index before completion.
 
 ### 11.4 Manual Merge/Delete Reconciliation
 ```text
@@ -330,8 +316,8 @@ User merges/deletes AI supplement blocks
 -> Rebuild page index from current Notion
 ```
 Checklist:
-- [ ] Manual merge is treated as valid.
-- [ ] Manual delete is treated as valid.
+- [x] Manual merge is reconciled from current Notion content.
+- [x] Manual delete is reconciled from current Notion content.
 
 ### 11.5 QA Workflow
 ```text
@@ -343,12 +329,12 @@ User asks question
 -> Return answer with Notion path citation
 ```
 Checklist:
-- [ ] `pending` and `rejected` proposals are excluded.
-- [ ] Missing citations are handled safely.
-- [ ] Retrieved context is treated as untrusted data; embedded instructions
+- [x] `pending` and `rejected` proposals are excluded.
+- [x] Missing citations are handled safely.
+- [x] Retrieved context is treated as untrusted data; embedded instructions
   cannot change write, target, or citation policy.
-- [ ] Query-time vector failures degrade to deterministic lexical fallback instead of failing the whole QA workflow.
-- [ ] Workflow metadata records provider name, model name, prompt id, and prompt version.
+- [x] Query-time vector failures degrade to deterministic lexical fallback instead of failing the whole QA workflow.
+- [x] Workflow metadata records provider name, model name, prompt id, and prompt version.
 
 ### 11.6 New Source Ingestion
 ```text
@@ -359,22 +345,22 @@ Receive source (PDF/URL/YouTube/OCR/chat)
 -> Wait for human review
 ```
 Checklist:
-- [ ] Source display format follows source type rule.
-- [ ] Chat text length limit is enforced.
-- [ ] PDF and OCR upload limits are enforced before parser work, with parser
+- [x] Source display format follows source type rule.
+- [x] Chat text length limit is enforced.
+- [x] PDF and OCR upload limits are enforced before parser work, with parser
   output limits revalidated after extraction.
-- [ ] PDF page, image pixel, MIME, file-count, byte, and extracted-text limits
+- [x] PDF page, image pixel, MIME, file-count, byte, and extracted-text limits
   fail closed with deterministic failure reasons.
-- [ ] Telegram screenshot media groups deduplicate attachments, sort by
+- [x] Telegram screenshot media groups deduplicate attachments, sort by
   Telegram `message_id`, merge one OCR batch, and make one proposal LLM call.
-- [ ] Screenshot OCR removes only high-confidence browser UI noise before
+- [x] Screenshot OCR removes only high-confidence browser UI noise before
   persistence; proposal language follows the source, with Traditional Chinese
   for Chinese sources, and deterministic grounding/shape checks enforce
   concrete title, 1-2 sentence summary, 3-30 concepts, and 3-6 notes.
-- [ ] For a selected indexed page, the backend derives the one allowed target
+- [x] For a selected indexed page, the backend derives the one allowed target
   exactly as `<canonical notion_path>/AI Supplement Zone`; proposal output may
   only use safe formatting normalization before exact validation.
-- [ ] Supplement proposal workflow metadata records provider name, model name,
+- [x] Supplement proposal workflow metadata records provider name, model name,
   prompt id, prompt version, and redacted screenshot latency fields when
   applicable.
 
@@ -408,8 +394,8 @@ Open change request
 -> Trigger follow-up workflow
 ```
 Checklist:
-- [ ] No write before accept.
-- [ ] Reject records are preserved for audit/eval only.
+- [x] No write occurs before accept.
+- [x] Rejected records are retained but excluded from production RAG.
 
 ### 11.9 Human-approved Notion Append Canary
 ```text
@@ -437,119 +423,107 @@ Design notes:
 - PostgreSQL and pgvector store derived state from Notion plus workflow state.
 - Notion remains the source of truth for note content.
 - For changed pages, reconciliation uses page-level replacement.
-- Live vector rollout starts with a nullable `embedding` column and keeps
-  legacy `embedding_text` during the transition. No startup-wide automatic
-  backfill is allowed.
+- The schema below matches the SQLAlchemy models and current Alembic head
+  `8a4d1f0c2b3e`.
+- Primary keys are integer `BIGINT` values, except Telegram `update_id`, which
+  is the externally supplied primary key.
+- `embedding` is nullable `vector(1536)`. Legacy `embedding_text` remains for
+  compatibility; there is no automatic startup backfill.
 
 ### 12.1 notion_pages
 | Column | Type | Description |
 |---|---|---|
-| id | UUID (PK) | Internal primary key. |
-| notion_page_id | TEXT (UNIQUE) | Notion page identifier. |
-| title | TEXT | Current page title snapshot. |
-| path | TEXT | Page path used for citation. |
-| last_edited_time | TIMESTAMPTZ | Last Notion edit time. |
-| indexed_at | TIMESTAMPTZ | Last indexing time. |
+| id | BIGINT (PK) | Internal primary key. |
+| notion_page_id | VARCHAR(128) (UNIQUE) | External Notion page identifier. |
+| title | VARCHAR(512) | Current page title snapshot. |
+| notion_path | TEXT | Page path used for citation. |
+| last_edited_time | TIMESTAMPTZ NULL | Last Notion edit time. |
 | created_at | TIMESTAMPTZ | Created time. |
 | updated_at | TIMESTAMPTZ | Updated time. |
 
 ### 12.2 notion_blocks
 | Column | Type | Description |
 |---|---|---|
-| id | UUID (PK) | Internal primary key. |
-| notion_block_id | TEXT (UNIQUE) | Notion block identifier. |
-| notion_page_id | TEXT | Parent page id. |
-| parent_block_id | TEXT NULL | Parent block id. |
-| block_type | TEXT | Block type. |
-| content_text | TEXT | Normalized text content. |
-| block_path | TEXT | Block path snapshot. |
-| last_edited_time | TIMESTAMPTZ | Last Notion edit time. |
+| id | BIGINT (PK) | Internal primary key. |
+| notion_block_id | VARCHAR(128) (UNIQUE) | External Notion block identifier. |
+| notion_page_id | BIGINT (FK) | Internal parent page id. |
+| parent_block_id | BIGINT (FK) NULL | Internal parent block id. |
+| block_type | VARCHAR(64) | Block type. |
+| content_text | TEXT NULL | Normalized text content. |
+| block_path | TEXT NULL | Block path snapshot. |
+| block_order | INT | Stable order within the snapshot. |
 | created_at | TIMESTAMPTZ | Created time. |
 | updated_at | TIMESTAMPTZ | Updated time. |
 
 ### 12.3 source_documents
 | Column | Type | Description |
 |---|---|---|
-| id | UUID (PK) | Source document primary key. |
-| source_type | TEXT | `pdf` / `url` / `youtube` / `screenshot` / `chat_text`. |
-| source_display_name | TEXT | Display name based on source rule. |
-| source_url | TEXT NULL | Full URL when applicable. |
-| file_path | TEXT NULL | Local file path for upload handling. |
-| content_hash | TEXT | Hash for dedup. |
+| id | BIGINT (PK) | Source document primary key. |
+| source_type | VARCHAR(64) | `pdf` / `url` / `youtube` / `screenshot` / `chat_text`. |
+| source_display_name | VARCHAR(512) | Display name based on source rule. |
+| content_hash | VARCHAR(128) | Hash used for duplicate detection. |
 | raw_text | TEXT | Parsed raw text. |
-| status | TEXT | `received` / `parsed` / `failed`. |
-| failure_reason | TEXT NULL | Failure taxonomy value. |
 | created_at | TIMESTAMPTZ | Created time. |
 | updated_at | TIMESTAMPTZ | Updated time. |
 
 ### 12.4 knowledge_chunks
 | Column | Type | Description |
 |---|---|---|
-| id | UUID (PK) | Chunk primary key. |
-| source_kind | TEXT | `notion` or `source_document`. |
-| source_ref_id | UUID/TEXT | Source reference id. |
+| id | BIGINT (PK) | Chunk primary key. |
+| source_document_id | BIGINT (FK) NULL | Optional source-document owner. |
+| notion_block_id | BIGINT (FK) NULL | Optional Notion-block owner. |
+| chunk_index | INT | Chunk order within its source. |
 | chunk_text | TEXT | Chunk text. |
-| chunk_order | INT | Chunk order. |
 | notion_path | TEXT NULL | Notion path metadata. |
-| citation_meta | JSONB | Citation metadata. |
-| embedding | VECTOR | pgvector embedding. |
+| embedding | VECTOR(1536) NULL | pgvector embedding. |
 | embedding_text | TEXT NULL | Transitional legacy serialized embedding during rollout. |
-| is_production | BOOLEAN | Production RAG eligibility flag. |
+| source_kind | VARCHAR(32) | Source classification; production QA filters to safe Notion chunks. |
 | created_at | TIMESTAMPTZ | Created time. |
 | updated_at | TIMESTAMPTZ | Updated time. |
 
 Rollout note:
-- Step 49 migration foundation adds supporting filter indexes on
+- The current migration foundation adds supporting filter indexes on
   `knowledge_chunks.source_kind`, `knowledge_chunks.notion_block_id`,
   `knowledge_chunks.notion_path`, and `notion_blocks.notion_page_id`.
 - PostgreSQL also gets a partial HNSW cosine index on non-null
   `knowledge_chunks.embedding`.
-- Step 50 writes both live `embedding` and transitional `embedding_text`
+- The shared indexing path writes both live `embedding` and transitional `embedding_text`
   through the shared indexing path on every successful page re-index.
 
 ### 12.5 change_requests
 | Column | Type | Description |
 |---|---|---|
-| id | UUID (PK) | Change request id. |
-| target_notion_page_id | TEXT | Target page id. |
-| target_section_path | TEXT | Target section path. |
-| proposal_text | TEXT | AI proposal text. |
-| status | TEXT | `pending` / `accepted` / `rejected`. |
-| reviewer | TEXT NULL | Reviewer id or name. |
-| reviewed_at | TIMESTAMPTZ NULL | Review timestamp. |
-| reject_reason | TEXT NULL | Reject reason. |
-| source_document_id | UUID | Linked source document id. |
+| id | BIGINT (PK) | Change request id. |
+| source_document_id | BIGINT (FK) NULL | Linked source document. |
+| target_notion_page_id | BIGINT (FK) NULL | Internal target page id. |
+| status | VARCHAR(32) | `pending` / `accepted` / `rejected`. |
+| proposal_json | TEXT | Validated proposal JSON. |
+| failure_reason | VARCHAR(128) NULL | Deterministic failure reason when present. |
 | created_at | TIMESTAMPTZ | Created time. |
 | updated_at | TIMESTAMPTZ | Updated time. |
 
 ### 12.6 audit_logs
 | Column | Type | Description |
 |---|---|---|
-| id | UUID (PK) | Audit event id. |
-| workflow_id | UUID | Workflow run id. |
-| event | TEXT | Event name. |
-| actor | TEXT | `system` / `user` / `reviewer`. |
-| entity_type | TEXT | Entity type. |
-| entity_id | TEXT | Entity id. |
-| payload | JSONB | Structured event payload. |
+| id | BIGINT (PK) | Audit event id. |
+| workflow_run_id | BIGINT (FK) NULL | Optional workflow run id. |
+| event | VARCHAR(128) | Event name. |
+| details_json | TEXT NULL | Serialized event details. |
 | created_at | TIMESTAMPTZ | Event timestamp. |
+
+Current runtime auditing is implemented through `workflow_runs`, structured
+logs, and workflow metadata. The `audit_logs` table exists in the schema but
+has no current repository/service write path; its existence is not evidence of
+a separate event-audit subsystem.
 
 ### 12.7 workflow_runs
 | Column | Type | Description |
 |---|---|---|
-| id | UUID (PK) | Workflow run id. |
-| workflow_type | TEXT | `indexing` / `ingestion` / `supplement` / `qa`. |
-| status | TEXT | `running` / `succeeded` / `failed`. |
-| source_type | TEXT NULL | Source type for this run. |
-| source_display_name | TEXT NULL | Source display name. |
-| sync_mode | TEXT NULL | `manual` / `auto_after_accept`. |
-| reconciliation_strategy | TEXT NULL | `page_level_replacement`. |
-| source_of_truth | TEXT NULL | `notion`. |
-| duration_ms | INT NULL | Duration in ms. |
-| token_input | INT NULL | Input token count. |
-| token_output | INT NULL | Output token count. |
-| estimated_cost | NUMERIC NULL | Estimated cost. |
-| failure_reason | TEXT NULL | Failure taxonomy value. |
+| id | BIGINT (PK) | Workflow run id. |
+| workflow_type | VARCHAR(64) | Workflow type. |
+| status | VARCHAR(32) | `running` / `succeeded` / `failed`. |
+| failure_reason | VARCHAR(128) NULL | Failure taxonomy value. |
+| metadata_json | TEXT NULL | Redacted workflow, timing, provider, retrieval, and cost metadata. |
 | started_at | TIMESTAMPTZ | Start time. |
 | finished_at | TIMESTAMPTZ NULL | Finish time. |
 
@@ -557,10 +531,10 @@ Rollout note:
 | Column | Type | Description |
 |---|---|---|
 | update_id | BIGINT (PK) | Telegram update id and idempotency key. |
-| status | TEXT | `running` / `succeeded` / `failed`. |
-| workflow_run_id | BIGINT NULL | Linked Telegram workflow run when available. |
-| result_json | JSON/TEXT NULL | Deterministic successful response for replay. |
-| failure_json | JSON/TEXT NULL | Deterministic failure response for replay. |
+| status | VARCHAR(32) | `running` / `succeeded` / `failed`. |
+| workflow_run_id | BIGINT (FK) NULL | Linked Telegram workflow run when available. |
+| result_json | TEXT NULL | Deterministic successful response for replay. |
+| failure_json | TEXT NULL | Deterministic failure response for replay. |
 | created_at | TIMESTAMPTZ | Claim time. |
 | updated_at | TIMESTAMPTZ | Last ledger transition time. |
 
@@ -586,10 +560,10 @@ recovery command may resend only the stored proposal preview.
 | request_scope | VARCHAR(256) | HTTP method and mutation path. |
 | idempotency_key | VARCHAR(255) | Caller-provided `Idempotency-Key`. |
 | request_fingerprint | VARCHAR(64) | SHA-256 of the canonical request payload. |
-| status | TEXT | `running` / `succeeded` / `failed`. |
+| status | VARCHAR(32) | `running` / `succeeded` / `failed`. |
 | response_status_code | INT NULL | Persisted response status for replay. |
 | response_body | TEXT NULL | Persisted JSON response body for replay. |
-| response_headers_json | JSON/TEXT NULL | Safe replay headers only. |
+| response_headers_json | TEXT NULL | Safe replay headers only. |
 | created_at | TIMESTAMPTZ | Claim time. |
 | updated_at | TIMESTAMPTZ | Last record transition time. |
 
@@ -637,7 +611,7 @@ Metadata note:
 | POST | `/api/supplement/propose` | Create supplement change request. |
 | GET | `/api/supplement/pending` | List pending proposals with review content, citations, and target metadata. |
 | GET | `/api/supplement/{change_request_id}` | Read one reviewable proposal detail. |
-| POST | `/api/supplement/accept` | Accept change request, append to `AI Supplement Zone`, and trigger immediate page re-index. |
+| POST | `/api/supplement/accept` | Accept change request, append to `AI Supplement Zone`, verify identity, and synchronously re-index the page. |
 | POST | `/api/supplement/reject` | Reject change request and keep audit/eval record. |
 | POST | `/api/supplement/edit-later` | Keep change request in pending state for later review. |
 
@@ -660,7 +634,7 @@ Metadata note:
 ### 13.6 Telegram APIs
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/api/telegram/webhook` | Handle Telegram webhook update for `/help`, `/health`, `/pages`, target-aware `/ingest`, scoped `/ask` QA, and command-based accept/reject review. |
+| POST | `/api/telegram/webhook` | Handle Telegram webhook updates for `/help`, `/health`, `/pages`, target-aware `/ingest`, `/retry-proposal`, scoped `/ask`, and text or callback review. |
 
 Telegram ingestion UX contract:
 - Uploads are acknowledged first, then a page picker shows each indexed parent
@@ -713,17 +687,17 @@ Proposal target invariant:
 | Database | PostgreSQL |
 | Vector DB | pgvector |
 | Queue | Redis + RQ behind QueueClient interface |
-| Cache/session/idempotency | Redis |
+| Queue/session coordination | Redis; durable idempotency records remain in PostgreSQL |
 | LLM | OpenAI first behind Provider Router and provider interface |
 | Embedding | OpenAI embedding first behind provider interface |
 | Tool access | Local Tool Registry first; future MCP Client after contracts stabilize |
 | Notion | Official Notion API |
-| PDF parsing | PyMuPDF or pdfplumber |
-| OCR | Tesseract first, PaddleOCR optional later |
+| PDF parsing | pypdf |
+| OCR | Tesseract |
 | URL extraction | trafilatura |
 | YouTube transcript | youtube-transcript-api |
 | Logging | structured JSON logs |
-| Deployment | local-first Docker Compose |
+| Deployment | Local API/worker processes with Docker Compose for PostgreSQL and Redis |
 
 Decision notes:
 - No standalone MCP server in MVP.
@@ -742,7 +716,7 @@ Decision notes:
 | No per-page writable original notes | Never enable per-page writable original-note mode in MVP. |
 | Append-only path only | `Change Request -> Human Accept -> Append to AI Supplement Zone`. |
 | Manual sync after manual edits | Manual Notion edits/deletes/merges require `/api/notion/index/incremental`. |
-| Auto re-index after accepted append | Accepted append must trigger immediate page re-index. |
+| Auto re-index after accepted append | Accepted append must synchronously re-index the target page before completion. |
 | Pending/rejected exclusion | `pending` and `rejected` are excluded from production RAG. |
 | Notion source of truth | Notion content is authoritative for reconciliation. |
 | Secrets management | Never log secrets or private raw source content. |
@@ -777,7 +751,7 @@ checks:
 ```
 
 ## 17. Observability Plan
-Required structured fields:
+Supported structured fields, emitted when applicable to the workflow:
 - `workflow_id`
 - `workflow_type`
 - `event`
@@ -816,46 +790,17 @@ Operator surfaces:
 - Notion/DB divergence recovery is read-first and identity-aware. Durable
   append identity is verified before page re-index or workflow reconciliation;
   unresolved identity stops retries.
+- Metrics are computed from current workflow rows when scraped. The repository
+  does not provide a tracing backend, dashboard, durable log backend, log
+  rotation, or a separate time-series metrics store.
 
 Failure taxonomy:
-- `NOTION_AUTH_FAILED`
-- `NOTION_PAGE_NOT_FOUND`
-- `NOTION_BLOCK_FETCH_FAILED`
-- `OCR_FAILED`
-- `PDF_PARSE_FAILED`
-- `URL_FETCH_FAILED`
-- `URL_SSRF_BLOCKED`
-- `URL_DNS_RESOLUTION_FAILED`
-- `URL_REDIRECT_LIMIT_EXCEEDED`
-- `URL_RESPONSE_TYPE_UNSUPPORTED`
-- `URL_RESPONSE_TOO_LARGE`
-- `YOUTUBE_TRANSCRIPT_NOT_FOUND`
-- `PROVIDER_NOT_FOUND`
-- `LLM_PROVIDER_ERROR`
-- `LLM_OUTPUT_INVALID`
-- `VECTOR_UPSERT_FAILED`
-- `CHANGE_REQUEST_NOT_FOUND`
-- `WRITE_POLICY_VIOLATION`
-- `DUPLICATE_SOURCE`
-- `SYNTHETIC_DATA_NOT_ALLOWED`
-- `TELEGRAM_NOT_CONFIGURED`
-- `TELEGRAM_SEND_FAILED`
-- `TELEGRAM_FILE_DOWNLOAD_FAILED`
-- `INVALID_UPLOAD_TYPE`
-- `INVALID_UPLOAD_MIME`
-- `EMPTY_UPLOAD`
-- `UPLOAD_LIMIT_EXCEEDED`
-- `UPLOAD_TOO_LARGE`
-- `PDF_PAGE_LIMIT_EXCEEDED`
-- `IMAGE_PIXEL_LIMIT_EXCEEDED`
-- `INVALID_IMAGE`
-- `EXTRACTED_TEXT_LIMIT_EXCEEDED`
-- `INVALID_ARGUMENT`
-- `INVALID_CALLBACK`
-- `UPLOAD_MEDIA_MISSING`
-- `UPLOAD_SESSION_EXPIRED`
-- `UPLOAD_SESSION_INVALID`
-- `UNKNOWN_ERROR`
+
+- Workflow failures are restricted by
+  `src.services.workflow_run_service.STANDARD_FAILURE_REASONS`; the current
+  documented inventory is in `docs/08-observability.md`.
+- Readiness reasons, retrieval fallback reasons, and recovery CLI result codes
+  are separate surfaces and must not be reported as terminal workflow reasons.
 
 ## Step 87 Synthetic Data Hygiene
 

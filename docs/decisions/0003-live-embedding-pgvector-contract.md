@@ -6,6 +6,17 @@ Accepted
 ## Date
 2026-06-19
 
+## Current Implementation Note (2026-08-01)
+
+This ADR's Context section records the state when the decision was made. The
+current repository has since implemented the Step 49-53 contract: nullable
+`vector(1536)` storage, shared indexing-time embeddings, repository-owned
+pgvector cosine top-k, query-embedding-first QA, and deterministic lexical
+fallback. Current runtime metadata emits `pgvector_exact_cosine` or
+`lexical_fallback`; the HNSW migration index exists as an acceleration option,
+not a separately reported retrieval mode. The decision and historical context
+below remain unchanged.
+
 ## Context
 LearnLoop already has an embedding client abstraction and a retriever abstraction,
 but the live vector path is not wired yet.

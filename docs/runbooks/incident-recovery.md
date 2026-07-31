@@ -74,6 +74,30 @@ appending Notion blocks.
 4. If the business outcome is unknown, leave the workflow unresolved and
    escalate for human review.
 
+### Telegram business committed but preview delivery failed
+
+Do not upload again and do not rerun OCR, LLM generation, source persistence,
+or proposal creation. Inspect the existing committed outcome first:
+
+```bash
+uv run --no-env-file --frozen python \
+  scripts/reconcile_telegram_outcome.py \
+  --update-id <id> \
+  --workflow-id <id> \
+  --source-document-id <id> \
+  --change-request-id <id> \
+  --action resend-preview \
+  --json
+```
+
+The command is dry-run unless `--apply` is supplied. Apply only after the
+inspection proves that the ledger, Telegram workflow, existing source row,
+pending change request, source link, and target page describe the same
+recoverable outcome. `resend-preview` may send only the already stored proposal
+preview. If delivery already occurred, use `--action reconcile-success` with
+`--delivery-confirmed`; that action sends no Telegram message. If any identity
+or outcome check is uncertain, stop and leave the rows unchanged.
+
 ## Resume criteria
 
 Resume mutations only after all of these are true:

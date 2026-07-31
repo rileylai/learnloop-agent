@@ -13,8 +13,9 @@ Before applying a migration:
 2. Take a backup using [the backup and restore runbook](backup-restore.md).
 3. Run the PostgreSQL restore drill when the migration changes data shape,
    indexes, extensions, or vector columns.
-4. Inspect the migration with `uv run alembic history` and record the current
-   revision with `uv run alembic current`.
+4. Inspect the migration with `uv run --no-env-file --frozen alembic history`
+   and record the current revision with
+   `uv run --no-env-file --frozen alembic current`.
 
 ## Apply and verify
 

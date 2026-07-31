@@ -6,6 +6,14 @@ This document defines chunking, embeddings, metadata filters, citation behavior,
 ## Status
 Draft
 
+### Current Implementation Status
+
+Chunking, page replacement, embedding generation, pgvector cosine retrieval,
+lexical fallback, citation construction, and synthetic-data filtering are
+implemented and deterministic test verified. Step 82 provides bounded live
+Notion read/index/QA evidence. Live OpenAI plus PostgreSQL vector smoke remains
+opt-in and was not run in the latest audit; a full live E2E is not verified.
+
 ## Citation Path Builder (Step 12)
 
 File:
@@ -189,17 +197,16 @@ Forbidden behavior:
 - Do not mix partial page replacement with failed vector generation.
 
 Retrieval behavior during rollout:
-- Before Step 53, default production QA remains lexical-only because the QA
-  orchestrator does not generate query embeddings yet.
-- Mixed vector state is therefore safe in the current rollout stage: chunks
-  with vectors and chunks without vectors remain searchable through the same
-  deterministic lexical retrieval path.
+- Current QA generates one query embedding when an embedding provider is
+  configured and prefers repository-owned pgvector cosine retrieval.
+- Mixed vector state remains safe: missing or unusable vectors in the eligible
+  scope trigger a request-level lexical fallback over that same scope.
 - When a page is re-indexed successfully, all notion chunks for that page must
   leave the shared indexing flow with both live `embedding` and transitional
   `embedding_text`.
-- Later vector-first QA steps must treat unusable or missing vectors in the
-  filtered retrieval scope as a request-level lexical fallback condition, not
-  as permission to silently skip unsupported rows.
+- Unusable or missing vectors in the filtered retrieval scope are a
+  request-level lexical fallback condition, not permission to silently skip
+  unsupported rows.
 
 ## Repository-Owned pgvector Top-k Retrieval (Step 52)
 
@@ -223,8 +230,8 @@ Rules:
   trying to rank them in Python.
 - Order semantic results by cosine distance ascending, then by stable chunk id
   for deterministic tie breaking.
-- Current QA remains lexical-only until Step 53 starts generating query
-  embeddings. Step 52 only moves the semantic query path into the repository.
+- The QA orchestrator supplies query embeddings when configured. If the vector
+  path is unavailable or unusable, it explicitly invokes lexical fallback.
 
 ## Production Chunk Retrieval (Step 17)
 
@@ -256,7 +263,7 @@ Production-RAG rules in this step:
 - Non-production chunk kinds are excluded.
 - No reranker is used in MVP.
 
-## Current State After Step 50
+## Current Retrieval State
 
 Audited code paths:
 - `src/db/models.py`
@@ -296,7 +303,8 @@ Contract summary:
 Retrieval rules:
 - Page, section, source-kind, and production-safety filters must apply before semantic top-k.
 - Citations may come only from rows actually returned by retrieval.
-- Step 53 should not merge vector results and lexical results when the vector path succeeds. The vector path becomes the primary ranking path.
+- QA does not merge vector results and lexical results when the vector path
+  succeeds. The vector path is the primary ranking path.
 - Repository-owned exact cosine search remains the fallback SQL shape when filter-first correctness is clearer or safer than using the ANN index.
 
 Fallback policy:
@@ -311,8 +319,10 @@ Deterministic vector degradation cases:
 - pgvector query failure -> lexical fallback.
 - Eligible chunks exist but no usable stored vectors are available yet -> lexical fallback.
 
-Indexing-side rule for later steps:
-- Once Step 50 wires live embeddings into indexing, embedding generation failures must fail closed. The system must not silently commit partial page replacements with mixed vector state.
+Indexing-side rule:
+- Embedding generation failures fail closed before page replacement. The
+  system does not silently commit partial page snapshots with mixed vector
+  state.
 
 ## RAG QA Endpoint (Step 19)
 
@@ -365,6 +375,9 @@ Rules:
   `retrieval_fallback_reason`, `embedding_provider`,
   `embedding_model`, `embedding_dimensions`, and
   `vector_distance_metric`.
+- Current runtime retrieval modes are `pgvector_exact_cosine` and
+  `lexical_fallback`. The migration includes an HNSW index as an acceleration
+  option, but the application does not emit a separate HNSW retrieval mode.
 
 ## Same-page Snapshot Safety (Step 62)
 

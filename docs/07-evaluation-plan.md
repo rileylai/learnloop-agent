@@ -13,12 +13,17 @@ Evaluation evidence must state its dependency level:
 | Level | Meaning | Current examples |
 |---|---|---|
 | `deterministic` | Fake/in-memory adapters and synthetic public-safe data. | Golden retrieval, citation, vector fallback, write safety, manual sync, mock demo. |
-| `adapter_integration` | Real parser/client library against controlled fixtures or mocked HTTP transport. | Partial coverage only; several parser and Telegram implementations still rely on fake clients in API tests. |
-| `live_dependency` | Real credential or service for one bounded dependency. | PostgreSQL/pgvector repository coverage exists; OpenAI vector smoke is opt-in and was not run in the latest audit. |
+| `adapter_integration` | Real parser/client library against controlled fixtures or an injected HTTP transport. | `pypdf`, trafilatura, Notion REST, Telegram HTTP, OpenAI transport mapping, and conditional Tesseract adapter coverage. |
+| `live_dependency` | Real credential or service for one bounded dependency. | Step 82 Notion read/index/QA, Step 83 approved sandbox append, and Step 87 PostgreSQL cleanup/release gate passed within their stated scopes. |
 | `live_e2e` | Real user flow across all required external systems. | None currently. |
 
 Passing deterministic tests must not be reported as proof of real Notion,
 OpenAI generation, Telegram, URL, YouTube, or OCR E2E readiness.
+
+Current audit baseline on 2026-08-01: the full deterministic suite completed
+with `399 passed, 3 skipped`. The skipped cases are opt-in live PostgreSQL
+repository tests and are not passing live evidence. The test-profile preflight
+passed with warnings for unconfigured live dependencies.
 
 ## Golden Question Set
 
@@ -58,10 +63,10 @@ duplicate ids, invalid scopes, and ownership-model path mismatches.
 Run the standalone validation command:
 
 ```bash
-uv run python tests/evals/golden_questions.py
+uv run --no-env-file --frozen python tests/evals/golden_questions.py
 ```
 
-## Planned Deterministic Metrics
+## Deterministic Metrics
 
 - Retrieval hit rate: expected path appears in top-k retrieved paths.
 - Citation accuracy: returned citation path matches an expected source path.
@@ -97,7 +102,7 @@ Matching rules:
 Run:
 
 ```bash
-uv run python tests/evals/retrieval_eval.py
+uv run --no-env-file --frozen python tests/evals/retrieval_eval.py
 ```
 
 Expected output includes:
@@ -129,7 +134,7 @@ Matching rules:
 Run:
 
 ```bash
-uv run python tests/evals/citation_accuracy_eval.py
+uv run --no-env-file --frozen python tests/evals/citation_accuracy_eval.py
 ```
 
 Expected output includes:
@@ -165,7 +170,7 @@ Checks:
 Run:
 
 ```bash
-uv run python tests/evals/vector_retrieval_eval.py
+uv run --no-env-file --frozen python tests/evals/vector_retrieval_eval.py
 ```
 
 Expected output includes:
@@ -218,7 +223,7 @@ Run:
 ```bash
 LEARNLOOP_RUN_LIVE_VECTOR_SMOKE=1 \
 OPENAI_API_KEY=... \
-uv run python tests/evals/live_vector_smoke.py
+uv run --no-env-file --frozen python tests/evals/live_vector_smoke.py
 ```
 
 Optional:
@@ -226,7 +231,7 @@ Optional:
 ```bash
 LEARNLOOP_RUN_LIVE_VECTOR_SMOKE=1 \
 OPENAI_API_KEY=... \
-uv run python tests/evals/live_vector_smoke.py --keep-database-on-failure
+uv run --no-env-file --frozen python tests/evals/live_vector_smoke.py --keep-database-on-failure
 ```
 
 If local PostgreSQL is not on the default docker-compose URL, set
@@ -257,7 +262,7 @@ Checks:
 Run:
 
 ```bash
-uv run python tests/evals/write_safety_eval.py
+uv run --no-env-file --frozen python tests/evals/write_safety_eval.py
 ```
 
 Expected output includes:
@@ -289,7 +294,7 @@ Checks:
 Run:
 
 ```bash
-uv run python tests/evals/manual_sync_eval.py
+uv run --no-env-file --frozen python tests/evals/manual_sync_eval.py
 ```
 
 Expected output includes:
@@ -316,7 +321,7 @@ Checks include:
 Run:
 
 ```bash
-uv run python tests/evals/prompt_injection_eval.py
+uv run --no-env-file --frozen python tests/evals/prompt_injection_eval.py
 ```
 
 The evaluation reports `prompt_injection: pass (5/5)` when all deterministic
@@ -375,7 +380,7 @@ The fixtures cover:
 Run:
 
 ```bash
-uv run --frozen pytest -q tests/evals/test_screenshot_proposal_eval.py
+uv run --no-env-file --frozen pytest -q tests/evals/test_screenshot_proposal_eval.py
 ```
 
 ## Real-Library Adapter Smoke Matrix (Step 81)
@@ -395,6 +400,10 @@ uv run --no-env-file --frozen python tests/evals/adapter_smoke_matrix.py --json
 The report contains only check id, dependency level, status, and fixed safe
 messages. It never includes API keys, URLs, exception bodies, or extracted
 source text. The default matrix is not evidence of live service connectivity.
+
+Current 2026-08-01 result: the `pypdf`, Tesseract, and trafilatura fixture
+checks passed. YouTube, OpenAI, PostgreSQL, and Telegram live checks were
+skipped because live mode was disabled.
 
 Opt-in live checks require `--live` or
 `LEARNLOOP_RUN_ADAPTER_SMOKE_LIVE=1`. The YouTube check requires
@@ -438,6 +447,28 @@ bodies.
 This is read/index/QA evidence only; the human-approved append canary is Step
 83.
 
+Recorded Step 82 evidence: `2` indexed pages, `11` blocks, `4` chunks, `1`
+incremental page, `1` citation, `9` read-only Notion requests, and `0` write
+attempts. This is bounded sandbox evidence, not a current workspace-wide test.
+
+## Human-approved Notion Append Canary (Step 83)
+
+`tests/evals/notion_append_canary.py` reuses the existing human accept
+orchestrator with a real Notion reader/writer and ephemeral SQLite derived
+state. It requires both live opt-in and explicit approval:
+
+```bash
+uv run --no-env-file --frozen python \
+  tests/evals/notion_append_canary.py --live --approve --json
+```
+
+The transport permits page/block reads and append-only
+`PATCH /v1/blocks/{id}/children`. Passing requires `pending -> accepted`, a
+visible `change-request-<id>` identity, target-page re-index, and a scoped QA
+citation. A human-confirmed dedicated sandbox run passed during Step 83. It is
+opt-in live dependency evidence only; it does not prove Telegram delivery,
+OpenAI behavior, arbitrary workspace permissions, or full live E2E.
+
 ## Synthetic Data Hygiene Gate (Step 87)
 
 `tests/test_synthetic_data_hygiene.py` verifies the fixed allowlist, dry-run
@@ -454,3 +485,22 @@ The default mock fixtures are test/demo inputs, not release evidence. A live
 release requires a successful gate against the intended PostgreSQL database;
 an unavailable database is a failed inspection and must not be interpreted as
 clean.
+
+Recorded Step 87 evidence: the fixed-allowlist cleanup inspection and release
+gate passed against the configured live PostgreSQL target. This proves only
+the inspected database state at that run; it does not replace a new release
+gate execution for a later release candidate.
+
+## Current Release Verification Gaps
+
+- No complete Telegram update -> HTTPS webhook -> API -> Redis/RQ worker ->
+  PostgreSQL -> OpenAI -> Notion -> Telegram reply E2E has passed.
+- The latest audit did not run live OpenAI vector smoke, YouTube transcript,
+  Telegram send, or adapter live checks.
+- The current host passes the `eng`, `chi_tra`, and `chi_sim` OCR preflight and
+  real-adapter fixture. A live retest with real user screenshots has not been
+  run, so recognition quality and Telegram upload behavior remain unverified.
+- Step 82/83 cover dedicated Notion canaries, not formal behavior across the
+  user's full workspace.
+- The PostgreSQL restore drill has deterministic coverage, but no recorded
+  live disposable restore drill.

@@ -15,13 +15,13 @@ Do not weaken these rules without updating the design docs and recording a decis
 
 ## Current Verification Boundary
 
-These invariants are confirmed by deterministic backend tests, in-memory
-Notion writer evaluations, fake-transport tests for the read-only live Notion
-reader and append-only live Notion writer, and guarded Step 82/83 canary
-contracts. Step 83 requires separate live opt-in and human approval before a
-sandbox append. Live integration work must preserve every invariant below and
-add redacted contract evidence; it must not replace deterministic policy with
-prompt behavior.
+These invariants are deterministic test verified with controlled clients and
+injected transports. Step 82 passed a bounded live read/index/QA canary, and
+Step 83 passed a separately approved append-only sandbox canary with durable
+identity verification and re-index. Those are opt-in live dependency results,
+not arbitrary workspace or complete Telegram live E2E evidence. Future live
+verification must preserve every invariant below and must not replace
+deterministic policy with prompt behavior.
 
 ## Safety Invariants
 | Guardrail | Rule |
@@ -35,7 +35,7 @@ prompt behavior.
 | Production-RAG exclusion | `pending` and `rejected` change requests must not be used in production RAG. |
 | Notion source of truth | Notion is the source of truth for note content and reconciliation. |
 | Manual sync after manual edits | User manual Notion edits, deletes, and merges require `/api/notion/index/incremental`. |
-| Auto re-index after accept | Accepted agent appends must trigger immediate page re-index. |
+| Auto re-index after accept | Accepted agent appends must synchronously re-index the target page before workflow completion. |
 | No secret or raw private content logs | Never log secrets, API keys, or private raw source content. |
 | Caller trust boundaries | Enforce configured API bearer, Telegram webhook secret, and allowed-chat policy in deterministic backend code before business work. |
 | Upload resource limits | Enforce deterministic file-count, byte, MIME, PDF-page, image-pixel, and extracted-text limits before expensive parser or OCR work. |
@@ -48,13 +48,15 @@ The only allowed AI write path is:
 Change Request
 -> Human Accept
 -> Append to AI Supplement Zone
--> Immediate page re-index
+-> Read-after-write identity verification
+-> Synchronous target-page re-index
 -> Accepted content becomes available in production RAG
 ```
 
 Rules:
-- Proposal review APIs may expose pending content and target metadata, but they
-  must not invoke a Notion write operation.
+- Proposal query APIs may expose pending content and target metadata, but they
+  must not invoke a Notion write operation. Only the explicit accept mutation
+  can enter the append workflow.
 - Proposal generation does not write to Notion.
 - `pending` change requests stay in workflow state only and are excluded from production RAG.
 - `rejected` change requests stay available for audit and evaluation only and are excluded from production RAG.
@@ -87,8 +89,9 @@ Telegram review policy:
 - `/pages` and proposal preview are read-only operations.
 - `/ingest --page <external_page_id>` may create only a `pending` change
   request; it must not append to Notion.
-- Telegram `/accept` remains the human acceptance event and may append only
-  after the existing target and pending-state checks pass.
+- Telegram text `/accept` and inline Accept callbacks are human acceptance
+  events. Both delegate to the same review orchestrator and may append only
+  after target, authorization, and pending-state checks pass.
 
 Telegram ingestion session policy:
 - The primary upload flow never asks the user to type a Notion UUID. It stores
@@ -208,6 +211,9 @@ Use this checklist before demos and release-style local runs.
 | Production RAG | Development docs, `pending`, and `rejected` change requests remain excluded from production retrieval. |
 
 ## Step 83 Canary Boundary
+
+Recorded status: opt-in live dependency verified for one dedicated sandbox
+page. This status does not promote the complete user workflow to live E2E.
 
 - The canary uses ephemeral SQLite for the pending proposal and derived index;
   it does not write proposal state to the production database.

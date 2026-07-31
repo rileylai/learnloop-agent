@@ -1,10 +1,18 @@
 # 01 Architecture
 
 ## Purpose
-This document defines system architecture, component boundaries, and future diagrams.
+This document defines the implemented system architecture and component boundaries.
 
 ## Status
 Draft
+
+### Current Implementation Status
+
+The route, orchestrator, provider, tool, queue, repository, and adapter
+boundaries below are implemented and deterministic test verified. Real Notion
+read/index/QA and append have bounded opt-in live evidence from Steps 82 and
+83. PostgreSQL cleanup/release gating has bounded Step 87 live evidence. A
+complete Telegram-to-Notion live E2E is not verified.
 
 What belongs here:
 - Layer boundaries and dependency rules.
@@ -14,12 +22,20 @@ What belongs here:
 ## Core Layering
 Primary request flow:
 
-```text
-API Route
--> Orchestrator
--> Service / Tool / Provider
--> Repository / Adapter
--> External System
+```mermaid
+flowchart LR
+    Route["API Route"] --> Orchestrator["Orchestrator"]
+    Orchestrator --> Service["Service"]
+    Orchestrator --> Router["ProviderRouter"]
+    Orchestrator --> Registry["ToolRegistry"]
+    Service --> Repository["Repository"]
+    Router --> Provider["Provider Adapter"]
+    Registry --> Tool["Local Tool Adapter or future MCP Client"]
+    Repository --> Database["PostgreSQL + pgvector"]
+    Service --> Queue["QueueClient"]
+    Queue --> Redis["Redis + RQ"]
+    Provider --> ProviderAPI["OpenAI"]
+    Tool --> External["Notion / Telegram / Source APIs"]
 ```
 
 Provider flow:
@@ -120,8 +136,10 @@ boundaries and the target MVP integration shape. Current runtime wiring is:
 - Real OpenAI LLM and embedding adapters are registered only when
   `OPENAI_API_KEY` is present. Shared page indexing requires the embedding
   adapter and fails closed when it is absent.
-- PostgreSQL/pgvector repository paths and migrations exist. Their opt-in live
-  verification is separate from the default deterministic suite.
+- PostgreSQL/pgvector repository paths and migrations are implemented. The
+  Step 87 cleanup/release gate reached a live PostgreSQL target; the default
+  suite still skips opt-in pgvector repository tests without a configured live
+  database.
 - `/health` remains a shallow liveness route. `/ready` calls the deterministic
   readiness service, which uses a database readiness probe for connectivity,
   Alembic revision, and pgvector extension checks plus mode-specific provider
@@ -136,8 +154,11 @@ boundaries and the target MVP integration shape. Current runtime wiring is:
   requests support a configured secret-token boundary and optional allowed-chat
   policy. Local/test compatibility remains available when these optional
   settings are absent; preflight reports the missing protections.
-- Parser and Telegram HTTP adapters exist, but external-service E2E remains
-  live verification work.
+- `pypdf`, trafilatura, Tesseract, YouTube transcript, Telegram HTTP, Notion
+  REST, and OpenAI adapters exist. Adapter-fixture tests do not prove the live
+  services. The current host passes the Tesseract `eng`, `chi_tra`, and
+  `chi_sim` preflight and adapter fixture, but a real user-screenshot live
+  retest and full Telegram live E2E remain release work.
 
 These gaps are tracked in the `Real-World Usability + Release Hardening` phase
 of `dev_state/PROJECT_ROADMAP.md`. They must be closed through the existing
@@ -158,6 +179,10 @@ reads, block-child reads, and page discovery search. Any other operation is
 blocked before network dispatch. Full index, incremental index, and QA still
 run through the existing tool, orchestrator, repository, and provider
 interfaces against ephemeral SQLite state.
+
+Step 82 passed its bounded read-only live canary, and Step 83 separately passed
+an explicitly approved append-only sandbox canary. These are opt-in live
+dependency results, not production-workspace or complete Telegram E2E proof.
 
 ## Future MCP Server Boundary (Post-MVP)
 Tools that may be extracted into MCP servers later:
@@ -205,6 +230,9 @@ Logic that must stay deterministic backend code (not MCP-owned):
   receive the bounded prompt, while target resolution, citation construction,
   output validation, and Notion write policy remain deterministic backend
   responsibilities.
+- The current schema contains `audit_logs`, but runtime workflow auditing uses
+  `workflow_runs`, safe metadata, metrics, and structured logs. No repository
+  or service currently writes the `audit_logs` table.
 
 ## Synthetic Data Boundary (Step 87)
 

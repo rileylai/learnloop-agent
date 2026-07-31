@@ -6,8 +6,6 @@ This document defines local Docker Compose runtime and future V2 cloud deploymen
 ## Status
 Draft
 
-This document will be expanded in later steps.
-
 What belongs here:
 - Local runtime setup.
 - Service dependency model.
@@ -15,7 +13,9 @@ What belongs here:
 
 ## Current Deployment Readiness
 
-The repository is demo-ready, not local-user-ready or release-ready.
+The repository has a working local architecture and a green deterministic
+suite, but it is not release-ready. Roadmap Step 88 is `doing`; the complete
+guarded Telegram live E2E and final pre-release verification are still missing.
 
 - Docker Compose starts PostgreSQL/pgvector and Redis only. It does not define
   the FastAPI app or worker service; start the latter with
@@ -64,8 +64,9 @@ The repository is demo-ready, not local-user-ready or release-ready.
   worker on macOS is rejected. Jobs use two bounded retries after the initial
   attempt;
   expected Telegram/domain failures are persisted as terminal ledger outcomes.
-- Tesseract is required for OCR. Useful non-English OCR also requires matching
-  language data installed on the host.
+- Tesseract OCR requires all three traineddata languages `eng`, `chi_tra`, and
+  `chi_sim`. The current host passes this preflight and the real-adapter
+  fixture. A live retest with real user screenshots is still not verified.
 - Upload limits are enforced in API routes, orchestrators, and parser adapters;
   changing them requires updating the shared `upload_limits` policy and its
   deterministic tests. The limits bound parser/OCR memory and CPU exposure but
@@ -80,9 +81,47 @@ The repository is demo-ready, not local-user-ready or release-ready.
   `TELEGRAM_ALLOWED_CHAT_IDS` policy. Telegram and API mutation idempotency
   require applying the latest Alembic migration before starting the API.
 
-Release-style local startup must remain blocked until portable preflight,
-live Notion wiring, authentication, worker, and recovery steps in
-the `Real-World Usability + Release Hardening` phase are complete.
+Portable preflight, live Notion wiring, authentication, worker, recovery, and
+synthetic-data gate implementations exist. Release sign-off remains blocked on
+Step 88 live E2E evidence, a passing release-time dependency/gate run, and any
+environment-specific OCR or restore evidence required by the operator.
+
+### Current Verification Boundary
+
+| Evidence | Recorded result | Limit |
+|---|---|---|
+| Deterministic suite | `399 passed, 3 skipped` on 2026-08-01 | The skipped tests require opt-in live PostgreSQL; the suite is not external E2E evidence. |
+| Step 82 Notion canary | Passed | Dedicated read-only sandbox; deterministic embedding/answer and ephemeral SQLite. |
+| Step 83 Notion append canary | Passed | Dedicated approved sandbox append; deterministic embedding/answer and ephemeral SQLite. |
+| Step 87 PostgreSQL gate | Passed | Bounded inspection of the configured database at that run. |
+| OCR host preflight and adapter fixture | Passed | All three required languages are available; real user screenshots were not tested. |
+| Telegram live E2E | Not verified | No complete live upload-to-accept chain is recorded. |
+| Live restore drill | Not verified | Only deterministic dry-run/test coverage is recorded. |
+
+Docker Compose remains local infrastructure only and starts PostgreSQL and
+Redis, not the API or worker. There is no implemented cloud deployment or
+always-on Notion synchronization service.
+
+## Local Startup
+
+From the repository root, export the required process environment without
+printing secret values, then run:
+
+```bash
+docker compose up -d postgres redis
+uv run --no-env-file --frozen alembic upgrade head
+./scripts/run_live.sh
+```
+
+Run the Telegram worker in a separate terminal with the same environment:
+
+```bash
+uv run --no-env-file --frozen python scripts/run_worker.py
+```
+
+The API and worker do not load `.env`. A successful process start is not
+readiness evidence; check `/ready`, queue/scheduler state, and the release gate
+for the intended database.
 
 ## Liveness and Readiness
 
@@ -203,8 +242,8 @@ counts and operation classes.
 
 This evidence confirms the bounded sandbox append contract only. It is not a
 complete production Notion workspace E2E or the complete Telegram-to-Notion
-`live_e2e` chain. Step 88 remains the next planned verification and is not
-run by default.
+`live_e2e` chain. Step 88 is currently `doing`; its guarded live verification
+is not run by default.
 
 ## Local Secret Handling
 
@@ -218,19 +257,16 @@ run by default.
 
 - The first live vector rollout uses OpenAI `text-embedding-3-small` with
   explicit `dimensions=1536`.
-- Local PostgreSQL must have the `vector` extension available before Step 49
-  migrations run.
+- Local PostgreSQL must have the `vector` extension available before the
+  current migrations are applied.
 - The rollout database shape is a nullable pgvector `vector(1536)` column plus
   transitional legacy `embedding_text` while old rows are being migrated.
 - Exact cosine search on the filtered subset is the correctness baseline. A
   cosine HNSW index is the approved acceleration path. IVFFlat is not part of
   the MVP rollout contract.
-- Step 49 migration foundation enables `CREATE EXTENSION IF NOT EXISTS vector`
-  on PostgreSQL and adds the nullable `embedding` column before any live
-  backfill or shared indexing changes.
-- Step 49 also adds supporting B-tree indexes for planned filter-first
-  retrieval and a PostgreSQL-only partial HNSW cosine index on non-null
-  vectors.
+- The current migration foundation enables `CREATE EXTENSION IF NOT EXISTS
+  vector`, adds the nullable `embedding` column, supporting B-tree indexes,
+  and a PostgreSQL-only partial HNSW cosine index on non-null vectors.
 - Do not run whole-database vector backfill automatically during app startup.
 - During rollout, existing NULL-vector rows should be repaired through
   page-scoped re-index, usually by the manual incremental sync path for known
@@ -238,9 +274,9 @@ run by default.
 - If a future maintenance command backfills vectors, it must reuse the shared
   page indexing orchestrator page by page instead of issuing raw SQL updates
   or startup-wide scans.
-- If OpenAI embedding access or pgvector retrieval is unavailable during
-  rollout, QA may fall back to deterministic lexical retrieval until later
-  rollout steps are complete.
+- If OpenAI embedding access or pgvector retrieval is unavailable, QA records
+  the deterministic fallback reason and uses lexical retrieval over the same
+  production-safe scope.
 - Downgrade removes the rollout column and indexes but intentionally leaves the
   `vector` extension installed, since extension state may be shared by other
   DB objects in the same PostgreSQL database.
@@ -249,13 +285,14 @@ run by default.
 
 - The Step 55 smoke run is opt-in only. It must not be added to the default
   unit suite or app startup path.
-- The smoke command is `uv run python tests/evals/live_vector_smoke.py`.
+- The smoke command is
+  `uv run --no-env-file --frozen python tests/evals/live_vector_smoke.py`.
 - Required env:
   `LEARNLOOP_RUN_LIVE_VECTOR_SMOKE=1` and `OPENAI_API_KEY`.
 - The command creates a temporary PostgreSQL database from
-  `LEARNLOOP_PGVECTOR_ADMIN_DATABASE_URL` when set, or from the default local
-  docker-compose admin URL:
-  `postgresql+psycopg://learnloop:learnloop@localhost:5432/postgres`.
+  `LEARNLOOP_PGVECTOR_ADMIN_DATABASE_URL` when set, or from the configured
+  local Docker Compose administration target. Do not put a credential-bearing
+  database URL in documentation, shell history, or release evidence.
 - After creating the temporary database, the smoke flow applies the project's
   real Alembic migrations to `head` before any indexing or retrieval checks.
 - The temporary database is created only for the smoke run and is dropped at

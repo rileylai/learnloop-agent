@@ -8,16 +8,21 @@ Draft
 
 ## Current Verification Boundary
 
-The workflows below define implemented orchestration contracts, but most
-external boundaries are currently verified with fake or in-memory adapters.
-The runtime selects mock/in-memory Notion clients by default, or the live
-reader and append-only writer adapters when `NOTION_BACKEND=live` and
-`NOTION_TOKEN` are configured. Telegram long work is queued through
-`QueueClient`/RQ when `REDIS_URL` is configured; live Telegram delivery and
-worker execution remain opt-in.
+The workflows below are implemented and deterministic test verified. The
+runtime selects mock Notion clients by default, or the live read-only and
+append-only REST adapters when `NOTION_BACKEND=live` and `NOTION_TOKEN` are
+configured. Step 82 passed a bounded live read/index/QA canary, and Step 83
+passed a separately approved append-only sandbox canary. These results do not
+verify an arbitrary production workspace or the complete Telegram live E2E.
+
+Telegram long work is queued through `QueueClient`/RQ when `REDIS_URL` is
+configured; without Redis, the webhook uses a synchronous compatibility path.
+The worker, scheduler, callbacks, target picker, media-group settle flow, and
+recovery command are deterministic test verified. Live Telegram delivery from
+upload through Notion append and re-index remains a Step 88 release gap.
 
 The deterministic write policy, state-transition, transaction, RAG-exclusion,
-and retry rules remain mandatory when live adapters are added.
+and retry rules remain mandatory for every configured adapter.
 
 Worker import boundary (Step 88):
 - API enqueue and the worker share the canonical module-level callable
@@ -47,8 +52,6 @@ Prompt safety boundary (Step 80):
   trims whitespace, removes duplicate slashes, and normalizes trailing slashes;
   it rejects a different page or a child target. The accept writer still
   derives the actual append path from the backend page and change request.
-
-This document will be expanded in later steps.
 
 ## Reviewable Proposal Workflow (Step 72)
 
@@ -127,7 +130,8 @@ Legal transitions:
 
 Rules:
 - Reject stores decision reason in workflow metadata and keeps Notion unchanged.
-- Review endpoints do not call Notion write adapters in Step 29.
+- Reject and edit-later do not call Notion write adapters. Accept continues
+  through the append/re-index workflow below.
 
 ## Safe Append Tooling Workflow (Step 30)
 
@@ -180,6 +184,9 @@ Rules:
 - Accept path must follow `Change Request -> Human Accept -> Append to AI Supplement Zone`.
 - Accepted status is committed only after append visibility is verified and
   the page re-index mutation set commits in the same business transaction.
+- The Notion append and PostgreSQL commit are not one cross-system atomic
+  transaction. Recovery must read the durable identity before deciding whether
+  a retry is safe.
 - Concurrent accept attempts revalidate `pending` while holding the row lock;
   only one attempt may commit `accepted`.
 - Reject and edit-later paths keep Step 29 behavior and do not call Notion write adapters.
@@ -229,6 +236,10 @@ Rules:
 - A retry is safe because the writer's durable identity lookup detects the
   existing supplement before another append.
 
+Recorded evidence: Step 83 passed this bounded live dependency check against a
+dedicated sandbox page. It is not full Telegram or production-workspace E2E
+evidence.
+
 ## Operator Observability and Reconciliation (Step 84)
 
 ```text
@@ -270,7 +281,8 @@ Failure path:
 Rules:
 - API route calls orchestrator only.
 - Route and orchestrator do not call Telegram API SDK/client directly.
-- Bot gateway keeps no ingestion/QA/review business logic in Step 32.
+- The API route contains no ingestion/QA/review business logic. The gateway
+  delegates those operations to their existing orchestrators.
 - Secret and allowed-chat checks happen before a Telegram workflow starts; a
   rejected caller does not create a workflow run or send a reply.
 
@@ -689,7 +701,9 @@ Rules:
 - Reject never calls Notion writer or page re-index.
 - Telegram gateway metadata records review action/status/workflow id only, not
   the reject reason.
-- Inline review buttons remain deferred.
+- Inline Accept, Reject, and Change-target callbacks are implemented. They use
+  opaque Redis tokens and delegate business state changes to the existing
+  review orchestrator; text commands remain supported.
 
 ## Same-page Snapshot Safety (Step 62)
 

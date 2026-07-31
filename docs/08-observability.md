@@ -6,8 +6,6 @@ This document defines logs, metrics, traces, cost tracking, and failure_reason t
 ## Status
 Draft
 
-This document will be expanded in later steps.
-
 What belongs here:
 - Structured logging schema.
 - Metrics definitions.
@@ -26,10 +24,15 @@ Confirmed:
 - API ingestion and supplement mutation idempotency persists only a request
   scope, payload digest, status, and safe response replay fields. It records
   `running`, `succeeded`, and `failed` outcomes without raw request content.
+- `workflow_runs` is the current persisted audit/status source. Although the
+  schema includes `audit_logs`, no current repository or service writes it.
+- `/metrics` computes current aggregates from workflow rows at scrape time; it
+  is not a persistent time-series subsystem.
 
 Missing from the current operator surface:
 
-- Log persistence/rotation, tracing backend, and recovery dashboards.
+- Log persistence/rotation, a tracing backend, dashboards, and a persistent
+  time-series metrics store.
 
 Implemented in Step 84:
 
@@ -229,9 +232,17 @@ Telegram ingestion observability:
 ## Step 88 Telegram Outcome Recovery
 
 - For a committed Telegram callback outcome, first run a dry-run inspection:
-  `uv run python scripts/reconcile_telegram_outcome.py --update-id <id>
-  --workflow-id <id> --source-document-id <id> --change-request-id <id>
-  --action resend-preview --json`.
+
+  ```bash
+  uv run --no-env-file --frozen python \
+    scripts/reconcile_telegram_outcome.py \
+    --update-id <id> \
+    --workflow-id <id> \
+    --source-document-id <id> \
+    --change-request-id <id> \
+    --action resend-preview \
+    --json
+  ```
 - The inspector verifies the workflow/ledger, source row, pending change
   request, source link, and target page. Apply mode only resends the existing
   preview or reconciles an already-delivered result; it never invokes OCR, an
@@ -272,8 +283,10 @@ Telegram ingestion observability:
 
 ## Vector Retrieval Metadata
 
-- Step 53 QA workflows record `retrieval_mode`:
-  `pgvector_exact_cosine`, `pgvector_hnsw_cosine`, or `lexical_fallback`.
+- Step 53 QA workflows record `retrieval_mode` as
+  `pgvector_exact_cosine` or `lexical_fallback`.
+- The migration includes an HNSW cosine index, but current runtime code does
+  not emit a separate HNSW retrieval-mode value.
 - QA workflows that fall back to lexical retrieval record nullable
   `retrieval_fallback_reason`.
 - QA workflows also record `embedding_provider`, `embedding_model`,
@@ -364,6 +377,15 @@ append evidence.
 - Current business-rule and workflow reasons:
   `CHANGE_REQUEST_NOT_FOUND`, `WRITE_POLICY_VIOLATION`,
   `DUPLICATE_SOURCE`, `SYNTHETIC_DATA_NOT_ALLOWED`, and `UNKNOWN_ERROR`.
+- Readiness failures are a separate surface. Its current reasons are
+  `DATABASE_UNAVAILABLE`, `MIGRATION_NOT_CURRENT`,
+  `VECTOR_EXTENSION_UNAVAILABLE`, `OPENAI_API_KEY_NOT_CONFIGURED`,
+  `REDIS_URL_NOT_CONFIGURED`, `REDIS_UNAVAILABLE`, and
+  `RQ_SCHEDULER_NOT_RUNNING`. They must not be presented as completed workflow
+  outcomes.
+- Telegram recovery CLI eligibility/storage codes are operator-command results,
+  not additions to `STANDARD_FAILURE_REASONS`. The CLI reports them in a
+  redacted result and does not rewrite the business failure taxonomy.
 
 ## Synthetic Data Hygiene Evidence (Step 87)
 

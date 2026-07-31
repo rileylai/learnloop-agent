@@ -15,9 +15,8 @@ Notion is the source of truth for note content.
 
 ## Current Verification Boundary
 
-The permission model is enforced in deterministic tests with mock/in-memory
-Notion clients, the read-only live reader adapter's fake-transport tests, and
-the append-only live writer adapter's HTTP contract tests. Runtime dependency
+The permission model is deterministic test verified with controlled Notion
+clients and injected HTTP transports. Runtime dependency
 wiring defaults to mock clients and selects live clients only when
 `NOTION_BACKEND=live` has a configured `NOTION_TOKEN`; it fails closed instead
 of falling back when live configuration is incomplete. Step 83 additionally
@@ -27,9 +26,9 @@ That is bounded sandbox evidence, not arbitrary production-workspace or full
 Telegram `live_e2e` evidence. The live writer exposes append-only operations
 and must not add update, delete, move, or original-note write capabilities.
 
-Step 82 adds a separate guarded read/index/QA canary. Its recording transport
+Step 82 passed a separate guarded read/index/QA canary. Its recording transport
 allows only page discovery and page/block reads, blocks all write-shaped
-requests before dispatch, and uses ephemeral derived state. Step 83 adds a
+requests before dispatch, and uses ephemeral derived state. Step 83 passed a
 separate append canary that requires live opt-in plus explicit human approval,
 uses ephemeral derived state, and allows only append-only block-child PATCH
 requests. Neither canary exposes credentials, page ids, or source content in
@@ -52,7 +51,7 @@ its report.
 | Original user notes | Yes | No | No | Yes, after indexing | Read-only knowledge source. |
 | Manual user blocks | Yes | No | No | Yes, after manual incremental sync | Manual user edits require `/api/notion/index/incremental`. |
 | Old AI supplement blocks | Yes | No | No | Yes, if present in current Notion index | Old AI blocks are immutable to the agent. |
-| Current append target under `AI Supplement Zone` | Yes | Append only after human accept | No | Yes, after append and immediate page re-index | Only `Change Request -> Human Accept -> Append to AI Supplement Zone` is allowed. |
+| Current append target under `AI Supplement Zone` | Yes | Append only after human accept | No | Yes, after append and synchronous page re-index | Only `Change Request -> Human Accept -> Append to AI Supplement Zone` is allowed. |
 | Pending change requests | Yes, in workflow state | No Notion write | No Notion delete | No | Excluded from production RAG. |
 | Rejected change requests | Yes, for audit and evaluation | No Notion write | No Notion delete | No | Excluded from production RAG. |
 | Accepted change requests | Yes, in workflow state | Append to `AI Supplement Zone` only | No Notion delete | Yes, only after append and re-index | Append success triggers immediate page re-index. |
@@ -84,14 +83,15 @@ The agent may create Notion blocks only when all conditions are true:
 - The change request is accepted by a human.
 - The target location is under `AI Supplement Zone`.
 - The operation is append-only.
-- The workflow can trigger immediate page re-index after append.
+- The workflow can synchronously re-index the page after append.
 - The appended entry includes a visible deterministic change-request identity
   so retries can be reconciled against Notion as source of truth.
 
-Proposal review endpoints are read-only. They may show pending proposal
-content, citations, and an external target page id, but they never create or
-modify Notion blocks. Target selection is resolved against indexed Notion page
-ids before a change request is persisted.
+Proposal query endpoints are read-only. They may show pending proposal content,
+citations, and an external target page id, but they never create or modify
+Notion blocks. Only explicit accept enters the append workflow. Target
+selection is resolved against indexed Notion page ids before a change request
+is persisted.
 
 The agent must not:
 - Edit original user notes.
@@ -139,7 +139,9 @@ API Route
 -> External System
 ```
 
-The Notion writer tool may perform an append call later, but backend policy must decide whether the append is allowed before the tool is invoked.
+The Notion writer tool implements append-only block creation. Backend policy
+decides whether the append is allowed before the tool is invoked; the adapter
+does not expose update, delete, move, or original-note write operations.
 
 ## MVP Non-Goals
 The MVP does not support:

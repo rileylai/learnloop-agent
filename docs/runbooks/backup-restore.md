@@ -6,6 +6,9 @@ This runbook covers local PostgreSQL/pgvector backups, disposable restore
 verification, and the handoff back to the application. PostgreSQL is derived
 application state; current Notion content remains the source of truth.
 
+The drill implementation and deterministic tests are verified. A live
+disposable restore drill has not been recorded in the current release evidence.
+
 Never restore over the active database as a first test. Use a newly created
 database name, verify it, and only switch the local `DATABASE_URL` after the
 operator has reviewed the evidence.
@@ -100,8 +103,8 @@ names and that no application process is connected.
 
    The migration command must use the restored database URL in the process
    environment. Never run it against an unspecified default by accident.
-4. Verify `uv run alembic current`, database connectivity, pgvector, and
-   `/ready` before switching application traffic.
+4. Verify `uv run --no-env-file --frozen alembic current`, database
+   connectivity, pgvector, and `/ready` before switching application traffic.
 5. Rebuild from Notion source of truth. A restored database may be incomplete,
    so use `POST /api/notion/index/full`; use
    `POST /api/notion/index/incremental` only when the affected page set is

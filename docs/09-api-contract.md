@@ -2,7 +2,7 @@
 
 ## Purpose
 This document defines implemented API contracts, request/response examples,
-and explicit planned gaps.
+and explicit release gaps.
 
 ## Status
 Implemented routes with release-readiness gaps.
@@ -27,6 +27,8 @@ Current contract gaps:
 - Notion index routes use the bundled mock reader in default runtime wiring;
   setting `NOTION_BACKEND=live` selects the read-only Notion REST adapter and
   append-only writer together, and requires `NOTION_TOKEN` without fallback.
+  Step 82 verified a bounded live read/index/QA canary and Step 83 verified a
+  separate approved sandbox append. Neither is complete live E2E evidence.
 - API routes and the Telegram webhook have optional configured trust boundaries:
   API bearer authentication, Telegram webhook secret validation, and an
   allowed-chat policy. Missing optional settings preserve local/test
@@ -51,6 +53,8 @@ Current contract gaps:
   `error_code=IDEMPOTENCY_KEY_CONFLICT`; a concurrent owner returns `202` with
   `error_code=IDEMPOTENCY_IN_PROGRESS`. Requests without the header keep the
   existing behavior.
+- No complete live Telegram upload, queued processing, OpenAI proposal,
+  human accept, Notion append/re-index, and Telegram reply chain has passed.
 
 The queued Telegram job uses the canonical module-level callable
 `src.worker.telegram.process_telegram_webhook_job`. The worker validates that
@@ -172,7 +176,8 @@ Ready response `200`:
     "database": {"status": "ok", "detail": "database connection is available", "failure_reason": null},
     "migration": {"status": "ok", "detail": "database migration is current", "failure_reason": null},
     "vector": {"status": "ok", "detail": "pgvector extension is available", "failure_reason": null},
-    "mode": {"status": "ok", "detail": "OpenAI embedding configuration is present", "failure_reason": null}
+    "mode": {"status": "ok", "detail": "OpenAI embedding configuration is present", "failure_reason": null},
+    "queue": {"status": "ok", "detail": "Redis queue and RQ scheduler are available", "failure_reason": null}
   }
 }
 ```
@@ -180,7 +185,9 @@ Ready response `200`:
 Not-ready response `503` keeps the same body shape with `status` set to
 `not_ready`. Deterministic `failure_reason` values include
 `DATABASE_UNAVAILABLE`, `MIGRATION_NOT_CURRENT`,
-`VECTOR_EXTENSION_UNAVAILABLE`, and `OPENAI_API_KEY_NOT_CONFIGURED`.
+`VECTOR_EXTENSION_UNAVAILABLE`, `OPENAI_API_KEY_NOT_CONFIGURED`,
+`REDIS_URL_NOT_CONFIGURED`, `REDIS_UNAVAILABLE`, and
+`RQ_SCHEDULER_NOT_RUNNING`.
 Exception text, URLs, credentials, and private content are not returned.
 
 ## Notion Index APIs
@@ -441,6 +448,7 @@ Failure response example `422` (parse failed):
 Notes:
 - Route must call orchestrator only.
 - Orchestrator must call `ToolRegistry` -> `PDFParserTool`.
+- The production adapter uses `pypdf`.
 - This endpoint does not perform Notion write operations.
 - Source display name is the uploaded filename.
 - Upload limits are deterministic: PDF size is at most 10 MiB, page count is
@@ -493,9 +501,9 @@ Notes:
 - Source display name preserves the full URL string.
 - The URL tool rejects embedded credentials, localhost, and non-public IPv4 or
   IPv6 DNS results; redirect targets are checked independently and the
-  redirect chain is bounded.
-- URL responses are limited to article text content types and 5 MiB of body
-  bytes. Deterministic failures use `URL_SSRF_BLOCKED`,
+  redirect chain is limited to five redirects.
+- URL responses are limited to HTML, XHTML, or plain text and 5 MiB of body
+  bytes; extraction uses trafilatura. Deterministic failures use `URL_SSRF_BLOCKED`,
   `URL_DNS_RESOLUTION_FAILED`, `URL_REDIRECT_LIMIT_EXCEEDED`,
   `URL_RESPONSE_TYPE_UNSUPPORTED`, or `URL_RESPONSE_TOO_LARGE` as applicable.
 
@@ -540,7 +548,10 @@ Notes:
 - Route must call orchestrator only.
 - Orchestrator must call `ToolRegistry` -> `YouTubeTranscriptTool`.
 - This endpoint does not perform Notion write operations.
-- MVP is transcript-only; no speech-to-text fallback for videos without transcript.
+- The current adapter requests an English transcript through
+  `youtube-transcript-api`.
+- MVP is transcript-only; there is no speech-to-text fallback or current live
+  evidence for videos without an available English transcript.
 
 ### POST `/api/ingest/chat-text`
 Ingest pasted chat text and create one source document.
@@ -633,6 +644,9 @@ Notes:
   extracted OCR text is limited to 200,000 characters. Limit failures return
   deterministic `failure_reason` values such as `UPLOAD_TOO_LARGE`,
   `IMAGE_PIXEL_LIMIT_EXCEEDED`, and `EXTRACTED_TEXT_LIMIT_EXCEEDED`.
+- Production OCR preflights and uses exactly `eng+chi_tra+chi_sim`. Missing any
+  traineddata language fails before processing and does not fall back to
+  English-only OCR.
 
 ## Supplement Proposal API
 
@@ -944,7 +958,13 @@ Notes:
 
 ### POST `/api/telegram/webhook`
 Handle one Telegram webhook update for `/help`, `/health`, `/pages`, `/ingest`,
-`/ask`, `/accept`, and `/reject`.
+`/retry-proposal`, `/ask`, `/accept`, and `/reject`, plus target-picker and
+review callbacks.
+
+The `200` examples below are the synchronous compatibility behavior used when
+`REDIS_URL` is not configured. With Redis configured, the first valid update
+is queued and normally returns `202` with `status=running` and
+`skipped_reason=QUEUED`; the worker stores the terminal response for replay.
 
 Request example (`/help`):
 
@@ -969,7 +989,7 @@ Success response `200`:
   "status": "succeeded",
   "handled": true,
   "command": "help",
-  "reply_text": "LearnLoop Agent commands: /start or /help, /pages, /ingest, /ask, /accept, /reject, /health",
+  "reply_text": "LearnLoop Agent commands include /start or /help, /pages, /ingest, /retry-proposal, /ask, /accept, /reject, and /health",
   "telegram_message_id": 1,
   "skipped_reason": null,
   "source_document_id": null,
@@ -1323,7 +1343,8 @@ Notes:
 - Scope flags can be repeated. Inline forms such as `--page=page-id` and
   `--section=Knowledge/NLP/Week5` are also accepted.
 - `/accept <change_request_id>` delegates to the existing accept workflow and
-  replies only after append to `AI Supplement Zone` and immediate page re-index.
+  replies only after append to `AI Supplement Zone`, identity verification,
+  and synchronous page re-index.
 - `/reject <change_request_id> <reason>` delegates to the existing reject
   workflow and performs no Notion write or page re-index.
 - Telegram chat id becomes the deterministic reviewer identity.
