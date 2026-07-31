@@ -940,7 +940,11 @@ def test_invalid_target_callback_reports_redacted_failure_without_retry_duplicat
             {"callback_query_id": "invalid-target-callback", "text": None}
         ]
         assert any(
-            message.text == "Proposal validation failed. Please upload the file again."
+            message.text
+            == (
+                "Proposal validation failed for the existing source. "
+                "Use /retry-proposal to retry the proposal only; upload and OCR will not be repeated."
+            )
             for message in telegram_client.list_sent_messages()
         )
 

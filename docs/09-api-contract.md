@@ -1307,6 +1307,9 @@ Notes:
   accepted for backward compatibility without deduplication.
 - `/pages` lists indexed external Notion page ids, titles, and paths for target selection.
 - `/ingest --page <page_id>` creates a pending proposal targeted to that external page and returns a deterministic proposal preview with citations and `/accept` usage.
+- `/retry-proposal` retries proposal generation from the latest failed Telegram
+  proposal session's existing `source_document_id` and target. It does not
+  download files, rerun OCR, create a source document, or append to Notion.
 - A selected page proposal stores exactly
   `<indexed canonical notion_path>/AI Supplement Zone` as `proposal.target_path`.
   `LLM_OUTPUT_INVALID` is returned when the model selects another page,
@@ -1342,8 +1345,9 @@ Notes:
   not repeat OCR, LLM proposal generation, source-document creation, or
   change-request creation. Preview recovery is an explicit operation on the
   existing pending proposal.
-- `LLM_OUTPUT_INVALID` Telegram callbacks receive the fixed short message
-  `Proposal validation failed. Please upload the file again.`; model output
-  and canonical paths are not sent to the user.
+- `LLM_OUTPUT_INVALID` Telegram failures for an existing source receive the
+  safe message `Proposal validation failed for the existing source. Use
+  /retry-proposal to retry the proposal only; upload and OCR will not be
+  repeated.` Model output and canonical paths are not sent to the user.
 - `/ingest` creates `pending` change requests only; Notion append remains in accept workflow.
 - Telegram QA uses production Notion chunks only; pending and rejected proposals remain excluded.

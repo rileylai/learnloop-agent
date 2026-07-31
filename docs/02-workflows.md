@@ -388,6 +388,15 @@ Rules:
   conclusions. Grounding allows only bounded reporting-language/synonym
   paraphrase; new products, numbers, URLs, commands, technical atoms, and
   unsupported claim words fail closed without a second LLM judge.
+- Screenshot titles use normalized source anchors rather than exact OCR
+  sentence matching. Unicode, case, punctuation/whitespace, full-width and
+  mixed Chinese/English brackets, common Simplified/Traditional pairs, CJK
+  phrases, and English technical terms are normalized before scoring. A
+  grounded title needs multiple topic anchors; an unrelated title still fails.
+- If only title grounding fails while the title has a partial source anchor,
+  the backend creates a deterministic fallback from an OCR heading/keywords
+  after the one LLM response. It does not rerun OCR or the LLM. If the title
+  has no source anchor, the proposal remains invalid.
 - Step 33 still follows safe write policy: create `pending` change request only; no Notion append in this workflow.
 - `/ingest --page <external_page_id>` resolves the target against indexed
   Notion pages; the target is optional for backward compatibility, but accept

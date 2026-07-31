@@ -27,6 +27,9 @@ Language contract:
 
 Grounding contract:
 - Every title, summary, concept, and note must be directly supported by OCR.
+- A screenshot title may be a concise combination of multiple OCR anchors and
+  a faithful paraphrase; it does not need to exactly copy an OCR sentence.
+  Preserve source technical terms such as `MySQL`, `EXPLAIN`, and `SQL`.
 - Do not infer missing context, causes, benefits, outcomes, recommendations, or
   next steps.
 - Notes may restate source facts, but must not add advice unless that advice is

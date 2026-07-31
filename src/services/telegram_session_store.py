@@ -198,6 +198,32 @@ class TelegramSessionStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def record_source_document(
+        self,
+        *,
+        session_id: str,
+        chat_id: str,
+        user_id: str,
+        source_document_id: int,
+        source_type: str,
+        target_notion_page_id: Optional[str] = None,
+        target_notion_path: Optional[str] = None,
+    ) -> Optional[TelegramUploadSession]:
+        """Persist source identity before proposal generation starts."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def claim_retry(
+        self,
+        *,
+        session_id: str,
+        chat_id: str,
+        user_id: str,
+    ) -> tuple[str, Optional[TelegramUploadSession]]:
+        """Claim a failed proposal retry without re-ingesting its source."""
+        raise NotImplementedError
+
+    @abstractmethod
     def claim_preview(
         self,
         *,
@@ -496,6 +522,50 @@ class InMemoryTelegramSessionStore(TelegramSessionStore):
             session.updated_at = time.time()
             return session
 
+    def record_source_document(self, **kwargs):
+        with self._lock:
+            session = self._get_unlocked(
+                session_id=kwargs["session_id"],
+                chat_id=kwargs["chat_id"],
+                user_id=kwargs["user_id"],
+            )
+            if session is None:
+                return None
+            session.source_document_id = int(kwargs["source_document_id"])
+            session.source_type = str(kwargs["source_type"])
+            if kwargs.get("target_notion_page_id"):
+                session.target_notion_page_id = kwargs["target_notion_page_id"]
+            if kwargs.get("target_notion_path"):
+                session.target_notion_path = kwargs["target_notion_path"]
+            session.updated_at = time.time()
+            return session
+
+    def claim_retry(self, **kwargs):
+        with self._lock:
+            session = self._get_unlocked(
+                session_id=kwargs["session_id"],
+                chat_id=kwargs["chat_id"],
+                user_id=kwargs["user_id"],
+            )
+            if session is None:
+                return "missing", None
+            if session.state == "proposal_created":
+                return "already", session
+            if session.state == "processing":
+                return "in_progress", session
+            if (
+                session.state != "failed"
+                or session.failure_reason != "LLM_OUTPUT_INVALID"
+                or session.source_document_id is None
+                or session.target_notion_page_id is None
+                or session.target_notion_path is None
+            ):
+                return "invalid", session
+            session.state = "processing"
+            session.failure_reason = None
+            session.updated_at = time.time()
+            return "new", session
+
     def claim_preview(self, **kwargs) -> bool:
         with self._lock:
             session = self._get_unlocked(**kwargs)
@@ -785,6 +855,54 @@ class RedisTelegramSessionStore(TelegramSessionStore):
             session.updated_at = time.time()
             self._redis.setex(key, self._ttl_seconds, _session_to_json(session))
             return session
+
+    def record_source_document(self, **kwargs):
+        key = _session_key(kwargs["chat_id"], kwargs["user_id"], kwargs["session_id"])
+        with self._locked(key):
+            session = self._get(
+                session_id=kwargs["session_id"],
+                chat_id=kwargs["chat_id"],
+                user_id=kwargs["user_id"],
+            )
+            if session is None:
+                return None
+            session.source_document_id = int(kwargs["source_document_id"])
+            session.source_type = str(kwargs["source_type"])
+            if kwargs.get("target_notion_page_id"):
+                session.target_notion_page_id = kwargs["target_notion_page_id"]
+            if kwargs.get("target_notion_path"):
+                session.target_notion_path = kwargs["target_notion_path"]
+            session.updated_at = time.time()
+            self._redis.setex(key, self._ttl_seconds, _session_to_json(session))
+            return session
+
+    def claim_retry(self, **kwargs):
+        key = _session_key(kwargs["chat_id"], kwargs["user_id"], kwargs["session_id"])
+        with self._locked(key):
+            session = self._get(
+                session_id=kwargs["session_id"],
+                chat_id=kwargs["chat_id"],
+                user_id=kwargs["user_id"],
+            )
+            if session is None:
+                return "missing", None
+            if session.state == "proposal_created":
+                return "already", session
+            if session.state == "processing":
+                return "in_progress", session
+            if (
+                session.state != "failed"
+                or session.failure_reason != "LLM_OUTPUT_INVALID"
+                or session.source_document_id is None
+                or session.target_notion_page_id is None
+                or session.target_notion_path is None
+            ):
+                return "invalid", session
+            session.state = "processing"
+            session.failure_reason = None
+            session.updated_at = time.time()
+            self._redis.setex(key, self._ttl_seconds, _session_to_json(session))
+            return "new", session
 
     def claim_preview(self, **kwargs) -> bool:
         key = _session_key(kwargs["chat_id"], kwargs["user_id"], kwargs["session_id"])

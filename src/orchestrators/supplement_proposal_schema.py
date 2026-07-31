@@ -20,11 +20,12 @@ _JSON_CODE_BLOCK_PATTERN = re.compile(
 
 
 class SupplementProposalValidationError(Exception):
-    def __init__(self, message: str) -> None:
+    def __init__(self, message: str, *, field: Optional[str] = None) -> None:
         super().__init__(message)
         self.error_code = "LLM_OUTPUT_INVALID"
         self.failure_reason = "LLM_OUTPUT_INVALID"
         self.message = message
+        self.field = field
 
 
 class SupplementProposalSourceSchema(BaseModel):

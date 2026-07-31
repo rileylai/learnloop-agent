@@ -5,7 +5,7 @@ import binascii
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from time import perf_counter
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from src.orchestrators.document_ingestion_orchestrator import (
     DocumentIngestionError,
@@ -382,6 +382,15 @@ class TelegramIngestionOrchestrator:
                 photos=photos,
                 request_workflow_id=request_workflow_id,
                 target_notion_page_id=target_notion_page_id,
+                on_source_created=lambda source_document_id, source_type: self._session_store.record_source_document(
+                    session_id=session_id,
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    source_document_id=source_document_id,
+                    source_type=source_type,
+                    target_notion_page_id=target_notion_page_id,
+                    target_notion_path=target_notion_path,
+                ),
             )
         except TelegramIngestionError as exc:
             self._session_store.fail_upload(
@@ -421,6 +430,125 @@ class TelegramIngestionOrchestrator:
             latency_metadata=result.latency_metadata,
         )
 
+    async def retry_existing_proposal(
+        self,
+        *,
+        session_id: str,
+        chat_id: str,
+        user_id: str,
+        request_workflow_id: str,
+    ) -> TelegramIngestionCommandResult:
+        """Retry proposal generation from an existing persisted source only."""
+
+        claim_status, session = self._session_store.claim_retry(
+            session_id=session_id,
+            chat_id=chat_id,
+            user_id=user_id,
+        )
+        if session is None:
+            raise TelegramIngestionError(
+                error_code="UPLOAD_SESSION_EXPIRED",
+                message="No failed proposal session is available. Use /ingest to start a new upload.",
+                http_status_code=HTTPStatus.GONE,
+                failure_reason="UPLOAD_SESSION_EXPIRED",
+            )
+        if claim_status == "in_progress":
+            return TelegramIngestionCommandResult(
+                reply_text="This proposal is already being retried. Please wait for its preview.",
+                source_document_id=session.source_document_id,
+                change_request_id=session.change_request_id,
+                source_type=session.source_type,
+                target_notion_page_id=session.target_notion_page_id,
+                target_notion_path=session.target_notion_path,
+                session_id=session.session_id,
+                already_processed=True,
+            )
+        if claim_status == "already":
+            preview = self._build_proposal_preview(
+                change_request_id=int(session.change_request_id or 0),
+                target_notion_page_id=session.target_notion_page_id,
+                target_notion_path=session.target_notion_path,
+                source_type=session.source_type or "unknown",
+                source_document_id=int(session.source_document_id or 0),
+                source_count=len(session.attachments),
+            )
+            return TelegramIngestionCommandResult(
+                reply_text=preview or "Proposal is already ready for review.",
+                source_document_id=session.source_document_id,
+                change_request_id=session.change_request_id,
+                source_type=session.source_type,
+                target_notion_page_id=session.target_notion_page_id,
+                target_notion_path=session.target_notion_path,
+                session_id=session.session_id,
+                already_processed=True,
+            )
+        if claim_status != "new":
+            raise TelegramIngestionError(
+                error_code="UPLOAD_SESSION_INVALID",
+                message="Only a failed proposal can be retried. Upload and OCR are not repeated by this command.",
+                http_status_code=HTTPStatus.CONFLICT,
+                failure_reason="UPLOAD_SESSION_INVALID",
+            )
+        if session.source_document_id is None or session.target_notion_page_id is None:
+            raise TelegramIngestionError(
+                error_code="UPLOAD_SESSION_INVALID",
+                message="The existing source is missing a safe proposal retry target.",
+                http_status_code=HTTPStatus.CONFLICT,
+                failure_reason="UPLOAD_SESSION_INVALID",
+            )
+
+        try:
+            result = await self._supplement_propose_orchestrator.propose_change_request(
+                source_document_id=int(session.source_document_id),
+                provider_name=DEFAULT_SUPPLEMENT_PROVIDER_NAME,
+                model=DEFAULT_SUPPLEMENT_MODEL,
+                request_workflow_id=request_workflow_id,
+                target_notion_page_id=session.target_notion_page_id,
+            )
+        except SupplementProposeError as exc:
+            self._session_store.fail_upload(
+                session_id=session_id,
+                chat_id=chat_id,
+                user_id=user_id,
+                failure_reason=exc.failure_reason,
+            )
+            raise TelegramIngestionError(
+                error_code=exc.error_code,
+                message=exc.message,
+                http_status_code=exc.http_status_code,
+                failure_reason=self._normalize_failure_reason(exc.failure_reason),
+                workflow_run_id=exc.workflow_run_id,
+            ) from exc
+
+        self._session_store.record_proposal(
+            session_id=session_id,
+            chat_id=chat_id,
+            user_id=user_id,
+            source_document_id=int(result.source_document_id),
+            change_request_id=int(result.change_request_id),
+            source_type=session.source_type or "screenshot",
+            target_notion_page_id=session.target_notion_page_id,
+            target_notion_path=session.target_notion_path or "",
+        )
+        preview = self._build_proposal_preview(
+            change_request_id=int(result.change_request_id),
+            target_notion_page_id=session.target_notion_page_id,
+            target_notion_path=session.target_notion_path,
+            source_type=session.source_type or "screenshot",
+            source_document_id=int(result.source_document_id),
+            source_count=len(session.attachments),
+        )
+        return TelegramIngestionCommandResult(
+            reply_text=preview or "Proposal retry succeeded; it is ready for review.",
+            source_document_id=result.source_document_id,
+            change_request_id=result.change_request_id,
+            source_type=session.source_type or "screenshot",
+            target_notion_page_id=session.target_notion_page_id,
+            target_notion_path=session.target_notion_path,
+            session_id=session_id,
+            latency_metadata=result.latency_metadata,
+        )
+
     async def handle_ingest_command(
         self,
         *,
@@ -429,6 +557,7 @@ class TelegramIngestionOrchestrator:
         photos: List[TelegramPhotoAttachment],
         request_workflow_id: str,
         target_notion_page_id: Optional[str] = None,
+        on_source_created: Optional[Callable[[int, str], None]] = None,
     ) -> TelegramIngestionCommandResult:
         _ = chat_id
         business_started = perf_counter()
@@ -459,6 +588,11 @@ class TelegramIngestionOrchestrator:
                 )
                 source_count = len(normalized_photos)
             latency.add(download_ms=download_ms)
+            if on_source_created is not None:
+                on_source_created(
+                    int(source_result.source_document_id),
+                    str(source_result.source_type),
+                )
             self._merge_stage_latency(
                 latency,
                 getattr(source_result, "latency_metadata", {}),

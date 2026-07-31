@@ -115,6 +115,8 @@ Telegram ingestion observability:
   `download_ms`, `ocr_ms`, `llm_ms`, `persist_ms`, `preview_delivery_ms`, and
   `total_business_ms`. These are numeric stage timings only; OCR text, proposal
   fields, file bytes, callback tokens, URLs, and secrets are excluded.
+- Screenshot proposal metadata may record the boolean `title_fallback_used`;
+  fallback generation is deterministic and does not add an OCR or LLM stage.
 - Upload sessions carry a monotonic settle version. The settle job atomically
   promotes `collecting` to `settled`, sorts attachments by Telegram
   `message_id`, and stale/duplicate versions skip before picker or business

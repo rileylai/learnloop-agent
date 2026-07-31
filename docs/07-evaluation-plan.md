@@ -336,6 +336,8 @@ The fixtures cover:
 - browser tab/address/navigation noise removal;
 - Traditional Chinese language selection with original technical terms;
 - reasonable English and Traditional Chinese paraphrase acceptance;
+- MySQL/索引/EXPLAIN/SQL title anchors, mixed technical punctuation, and
+  deterministic title fallback without another OCR/provider call;
 - deterministic rejection of unsupported concepts, advice, conclusions, and
   browser-noise evidence without a second LLM judge.
 

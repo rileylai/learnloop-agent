@@ -13,6 +13,7 @@ from src.services.screenshot_quality import (
     detect_screenshot_language,
     preprocess_screenshot_ocr_text,
     validate_screenshot_proposal,
+    validate_screenshot_proposal_with_title_fallback,
 )
 
 
@@ -137,6 +138,65 @@ def test_reasonable_english_paraphrase_passes_grounding() -> None:
     )
 
     validate_screenshot_proposal(proposal=proposal, source_text=source_text)
+
+
+def _mysql_sql_proposal(*, title: str) -> SupplementProposalSchema:
+    return SupplementProposalSchema.model_validate(
+        {
+            "title": title,
+            "target_path": "Knowledge/Engineering/AI Supplement Zone",
+            "source": {
+                "source_type": "screenshot",
+                "source_display_name": "MySQL SQL fixture",
+            },
+            "summary": "來源說明 MySQL 索引、EXPLAIN 與 SQL 查詢優化。",
+            "concepts": ["MySQL", "索引", "EXPLAIN", "SQL"],
+            "notes": [
+                "MySQL 使用索引。",
+                "EXPLAIN 協助檢查 SQL 查詢。",
+                "來源提到查詢優化。",
+            ],
+        }
+    )
+
+
+def test_chinese_sql_title_uses_multiple_source_anchors() -> None:
+    source_text = "MySQL 索引、EXPLAIN 與 SQL 查詢優化。"
+    proposal = _mysql_sql_proposal(title="MySQL 索引與查詢優化")
+
+    validate_screenshot_proposal(proposal=proposal, source_text=source_text)
+
+
+def test_mixed_technical_title_normalizes_unicode_brackets_and_simplified_text() -> None:
+    source_text = "MySQL（索引）EXPLAIN SQL 查询优化。"
+    proposal = _mysql_sql_proposal(title="MySQL (索引) 與 SQL 查詢優化")
+
+    validate_screenshot_proposal(proposal=proposal, source_text=source_text)
+
+
+def test_unrelated_title_still_fails_closed() -> None:
+    source_text = "SQL 查詢優化與索引策略。"
+    proposal = _mysql_sql_proposal(title="AI 招募")
+
+    with pytest.raises(
+        SupplementProposalValidationError,
+        match="title is not supported by OCR source",
+    ):
+        validate_screenshot_proposal(proposal=proposal, source_text=source_text)
+
+
+def test_grounded_title_fallback_does_not_call_ocr_or_llm() -> None:
+    source_text = "MySQL 索引、EXPLAIN 與 SQL 查詢優化。"
+    proposal = _mysql_sql_proposal(title="MySQL 主題")
+
+    result = validate_screenshot_proposal_with_title_fallback(
+        proposal=proposal,
+        source_text=source_text,
+    )
+
+    assert result.title_fallback_used is True
+    assert result.proposal.title != "MySQL 主題"
+    assert "MySQL" in result.proposal.title
 
 
 def test_unsupported_advice_is_rejected_even_with_a_grounded_anchor() -> None:

@@ -98,6 +98,93 @@ _GENERIC_SCREENSHOT_TITLES = frozenset(
     }
 )
 
+_SIMPLIFIED_TO_TRADITIONAL = str.maketrans(
+    {
+        "后": "後",
+        "简": "簡",
+        "体": "體",
+        "与": "與",
+        "查": "查",
+        "询": "詢",
+        "优": "優",
+        "化": "化",
+        "数": "數",
+        "据": "據",
+        "处": "處",
+        "迟": "遲",
+        "启": "啟",
+        "动": "動",
+        "执": "執",
+        "务": "務",
+        "统": "統",
+        "会": "會",
+        "页": "頁",
+        "浏": "瀏",
+        "览": "覽",
+        "器": "器",
+        "学": "學",
+        "习": "習",
+        "总": "總",
+        "结": "結",
+        "实": "實",
+        "践": "踐",
+        "议": "議",
+        "资": "資",
+        "库": "庫",
+        "检": "檢",
+        "索": "索",
+        "编": "編",
+        "辑": "輯",
+        "调": "調",
+        "务": "務",
+        "导": "導",
+        "致": "致",
+        "这": "這",
+        "种": "種",
+        "开": "開",
+        "发": "發",
+        "现": "現",
+        "线": "線",
+        "别": "別",
+    }
+)
+_TITLE_CJK_ALIAS_GROUPS = {
+    "index": ("索引",),
+    "query": ("查詢",),
+    "optimization": ("優化", "調校"),
+    "tuning": ("調校", "優化"),
+    "performance": ("效能", "性能"),
+    "database": ("資料庫", "數據庫"),
+    "recruitment": ("招募", "招聘"),
+}
+_TITLE_SAFE_TOKENS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "for",
+        "from",
+        "in",
+        "of",
+        "on",
+        "the",
+        "to",
+        "with",
+        "via",
+        "about",
+        "guide",
+        "notes",
+        "overview",
+        "summary",
+        "topic",
+        "key",
+        "main",
+        "based",
+        "startup",
+    }
+)
+_TITLE_CONNECTIVE_CJK = frozenset("與的和及之、")
+
 # These words describe the relationship between a proposal and its source.
 # They are intentionally limited to reporting/structural language. Content
 # words still need a source token or an explicitly supported synonym.
@@ -167,9 +254,6 @@ _SYNONYM_GROUPS = (
         "shown",
         "state",
         "states",
-        "explain",
-        "explains",
-        "explained",
         "indicate",
         "indicates",
         "mention",
@@ -233,6 +317,7 @@ _SAFE_PARAPHRASE_TOKENS = frozenset(
         "contains",
         "document",
         "efficient",
+        "explains",
         "first",
         "follows",
         "gradual",
@@ -284,6 +369,12 @@ _CONCLUSION_PATTERN = re.compile(
 class ScreenshotLanguage:
     code: str
     instruction: str
+
+
+@dataclass(frozen=True)
+class ScreenshotProposalValidationResult:
+    proposal: "SupplementProposalSchema"
+    title_fallback_used: bool = False
 
 
 def detect_screenshot_language(text: str) -> ScreenshotLanguage:
@@ -373,9 +464,10 @@ def validate_screenshot_proposal(
         raise SupplementProposalValidationError(
             "screenshot proposal notes must contain 3 to 6 items"
         )
-    if _normalize_for_grounding(proposal.title) in _GENERIC_SCREENSHOT_TITLES:
+    if _normalize_title_text(proposal.title) in _GENERIC_SCREENSHOT_TITLES:
         raise SupplementProposalValidationError(
-            "screenshot proposal title must be concrete and specific"
+            "screenshot proposal title must be concrete and specific",
+            field="title",
         )
     sentence_count = len(_SENTENCE_PATTERN.findall(proposal.summary))
     if sentence_count == 0:
@@ -394,9 +486,13 @@ def validate_screenshot_proposal(
         preprocess_screenshot_ocr_text(source_text)
     )
     for label, value in _proposal_text_items(proposal):
-        has_source_evidence = _has_source_evidence(
-            value=value,
-            source_normalized=source_normalized,
+        has_source_evidence = (
+            _has_title_source_anchor(value=value, source_text=source_text)
+            if label == "title"
+            else _has_source_evidence(
+                value=value,
+                source_normalized=source_normalized,
+            )
         )
         if not has_source_evidence:
             # Keep unsupported-advice diagnostics useful even when the advice
@@ -409,7 +505,8 @@ def validate_screenshot_proposal(
                     f"screenshot proposal {label} introduces unsupported advice"
                 )
             raise SupplementProposalValidationError(
-                f"screenshot proposal {label} is not supported by OCR source"
+                f"screenshot proposal {label} is not supported by OCR source",
+                field=label,
             )
         if _introduces_new_advice(
             value=value,
@@ -426,6 +523,51 @@ def validate_screenshot_proposal(
                 f"screenshot proposal {label} introduces unsupported conclusion"
             )
     return proposal
+
+
+def validate_screenshot_proposal_with_title_fallback(
+    *,
+    proposal: "SupplementProposalSchema",
+    source_text: str,
+) -> ScreenshotProposalValidationResult:
+    """Validate a screenshot proposal and repair only a grounded title failure.
+
+    The fallback is intentionally after LLM parsing and before persistence. It
+    never calls OCR or a provider. An unrelated title has no source anchor and
+    still fails closed; only a title with enough source evidence to identify
+    the topic may be replaced by the deterministic source-keyword title.
+    """
+
+    from src.orchestrators.supplement_proposal_schema import (
+        SupplementProposalValidationError,
+    )
+
+    try:
+        return ScreenshotProposalValidationResult(
+            proposal=validate_screenshot_proposal(
+                proposal=proposal,
+                source_text=source_text,
+            )
+        )
+    except SupplementProposalValidationError as exc:
+        if exc.field != "title" or not _has_partial_title_anchor(
+            value=proposal.title,
+            source_text=source_text,
+        ):
+            raise
+
+        fallback_title = build_screenshot_fallback_title(source_text)
+        fallback_proposal = proposal.model_copy(
+            update={"title": fallback_title}
+        )
+        validated = validate_screenshot_proposal(
+            proposal=fallback_proposal,
+            source_text=source_text,
+        )
+        return ScreenshotProposalValidationResult(
+            proposal=validated,
+            title_fallback_used=True,
+        )
 
 
 def _proposal_text_items(proposal: SupplementProposalSchema) -> Iterable[tuple[str, str]]:
@@ -452,6 +594,206 @@ def _is_browser_chrome_line(line: str) -> bool:
 
 def _normalize_for_grounding(value: str) -> str:
     return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", value).casefold()).strip()
+
+
+def _normalize_title_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value).translate(
+        _SIMPLIFIED_TO_TRADITIONAL
+    ).casefold()
+    normalized = normalized.translate(
+        str.maketrans(
+            {
+                "（": "(",
+                "）": ")",
+                "【": "[",
+                "】": "]",
+                "「": "\"",
+                "」": "\"",
+                "『": "\"",
+                "』": "\"",
+            }
+        )
+    )
+    normalized = re.sub(
+        r"[^a-z0-9_+#./:\-\u3400-\u4dbf\u4e00-\u9fff]+",
+        " ",
+        normalized,
+    )
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _title_cjk_ngrams(value: str) -> set[str]:
+    normalized = _normalize_title_text(value)
+    return {
+        run[index : index + 2]
+        for run in _CJK_RUN_PATTERN.findall(normalized)
+        for index in range(len(run) - 1)
+    }
+
+
+def _title_aliases_present(value: str) -> set[str]:
+    normalized = _normalize_title_text(value)
+    return {
+        canonical
+        for canonical, aliases in _TITLE_CJK_ALIAS_GROUPS.items()
+        if any(_normalize_title_text(alias) in normalized for alias in aliases)
+    }
+
+
+def _title_anchor_details(
+    *,
+    value: str,
+    source_text: str,
+) -> tuple[set[str], set[str], set[str], set[str]]:
+    normalized_value = _normalize_title_text(value)
+    normalized_source = _normalize_title_text(
+        preprocess_screenshot_ocr_text(source_text)
+    )
+    source_tokens = _canonical_token_set(normalized_source)
+    value_tokens = _canonical_tokens(normalized_value)
+    value_aliases = _title_aliases_present(normalized_value)
+    source_aliases = _title_aliases_present(normalized_source)
+    for canonical, aliases in _TITLE_CJK_ALIAS_GROUPS.items():
+        if canonical in source_tokens:
+            source_aliases.add(canonical)
+        if any(_normalize_title_text(alias) in normalized_source for alias in aliases):
+            source_aliases.add(canonical)
+
+    source_anchor_tokens = source_tokens | source_aliases
+    allowed_tokens = {
+        _canonical_token(token) for token in _TITLE_SAFE_TOKENS
+    }
+    allowed_tokens.update(source_aliases)
+    unknown_tokens = {
+        token
+        for token in value_tokens
+        if token not in source_anchor_tokens and token not in allowed_tokens
+    }
+    exact_or_alias = {
+        token
+        for token in value_tokens
+        if token in source_anchor_tokens and token not in allowed_tokens
+    }
+    alias_overlap = value_aliases & source_aliases
+    cjk_overlap = _title_cjk_ngrams(normalized_value) & _title_cjk_ngrams(
+        normalized_source
+    )
+    return unknown_tokens, exact_or_alias, alias_overlap, cjk_overlap
+
+
+def _has_title_source_anchor(*, value: str, source_text: str) -> bool:
+    normalized_value = _normalize_title_text(value)
+    normalized_source = _normalize_title_text(
+        preprocess_screenshot_ocr_text(source_text)
+    )
+    if not normalized_value:
+        return False
+    if not set(_NUMBER_PATTERN.findall(normalized_value)).issubset(
+        set(_NUMBER_PATTERN.findall(normalized_source))
+    ):
+        return False
+    if not _technical_atoms(normalized_value).issubset(
+        _technical_atoms(normalized_source)
+    ):
+        return False
+
+    unknown_tokens, exact_or_alias, alias_overlap, cjk_overlap = _title_anchor_details(
+        value=normalized_value,
+        source_text=normalized_source,
+    )
+    if unknown_tokens:
+        return False
+
+    has_cjk = any(
+        character not in _TITLE_CONNECTIVE_CJK
+        for character in _CJK_PATTERN.findall(normalized_value)
+    )
+    if has_cjk and not cjk_overlap and not alias_overlap:
+        return False
+    anchor_count = len(exact_or_alias) + len(alias_overlap) + len(cjk_overlap)
+    if anchor_count < 2:
+        return False
+    return bool(exact_or_alias or alias_overlap or cjk_overlap)
+
+
+def _has_partial_title_anchor(*, value: str, source_text: str) -> bool:
+    """Allow fallback only when the failed title is still on the source topic."""
+
+    normalized_value = _normalize_title_text(value)
+    normalized_source = _normalize_title_text(
+        preprocess_screenshot_ocr_text(source_text)
+    )
+    unknown_tokens, exact_or_alias, alias_overlap, cjk_overlap = _title_anchor_details(
+        value=normalized_value,
+        source_text=normalized_source,
+    )
+    if unknown_tokens:
+        return False
+    if not set(_NUMBER_PATTERN.findall(normalized_value)).issubset(
+        set(_NUMBER_PATTERN.findall(normalized_source))
+    ):
+        return False
+    if not _technical_atoms(normalized_value).issubset(
+        _technical_atoms(normalized_source)
+    ):
+        return False
+    return bool(exact_or_alias or alias_overlap or cjk_overlap)
+
+
+def build_screenshot_fallback_title(source_text: str) -> str:
+    """Build a grounded title from OCR headings/keywords without an LLM."""
+
+    cleaned_source = preprocess_screenshot_ocr_text(source_text)
+    for raw_line in cleaned_source.splitlines():
+        candidate = re.sub(r"\s+", " ", raw_line).strip(" -–—:;|")
+        if not candidate or re.match(r"^\[image\s+\d+\]$", candidate, re.I):
+            continue
+        if len(candidate) > 100 or re.search(r"[.!?。！？]$", candidate):
+            continue
+        if _has_title_source_anchor(value=candidate, source_text=cleaned_source):
+            return candidate
+
+    source_lines = [line for line in cleaned_source.splitlines() if line.strip()]
+    technical_terms: list[str] = []
+    content_terms: list[str] = []
+    cjk_terms: list[str] = []
+    frame_tokens = {
+        _canonical_token(token) for token in _PROPOSAL_FRAME_TOKENS
+    }
+    safe_tokens = {
+        _canonical_token(token) for token in _SAFE_PARAPHRASE_TOKENS
+    }
+    for line in source_lines:
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9_+#./:-]*", line):
+            display_token = token.strip(".,!?;:")
+            canonical = _canonical_token(token)
+            if canonical in {
+                _canonical_token(item) for item in technical_terms + content_terms
+            }:
+                continue
+            if canonical not in frame_tokens and canonical not in safe_tokens:
+                content_terms.append(display_token)
+            if (
+                any(character.isupper() for character in token[1:])
+                or token.isupper()
+                or any(symbol in token for symbol in ("#", "+", ".", "/", "-"))
+            ):
+                technical_terms.append(display_token)
+        for run in _CJK_RUN_PATTERN.findall(line):
+            if len(run) >= 2 and run not in cjk_terms:
+                cjk_terms.append(run[:24])
+
+    candidates: list[str] = []
+    seen_candidates: set[str] = set()
+    for candidate in technical_terms[:4] + content_terms[:4] + cjk_terms[:4]:
+        candidate_key = _normalize_title_text(candidate)
+        if candidate_key and candidate_key not in seen_candidates:
+            seen_candidates.add(candidate_key)
+            candidates.append(candidate)
+    fallback = "、".join(candidates)
+    if fallback:
+        return fallback
+    return "Screenshot source proposal"
 
 
 def _meaningful_tokens(value: str) -> List[str]:

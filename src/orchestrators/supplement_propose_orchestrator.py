@@ -45,7 +45,7 @@ from src.services import (
 from src.services.latency_evidence import LatencyEvidence, elapsed_ms
 from src.services.screenshot_quality import (
     detect_screenshot_language,
-    validate_screenshot_proposal,
+    validate_screenshot_proposal_with_title_fallback,
 )
 
 CHANGE_REQUEST_STATUS_PENDING = "pending"
@@ -69,6 +69,7 @@ class SupplementProposeResult:
     token_input: Optional[int]
     token_output: Optional[int]
     latency_metadata: dict[str, float]
+    title_fallback_used: bool = False
 
 
 class SupplementProposeError(Exception):
@@ -174,6 +175,7 @@ class SupplementProposeOrchestrator:
         token_input: Optional[int] = None
         token_output: Optional[int] = None
         estimated_cost: Optional[float] = None
+        title_fallback_used = False
         latency = LatencyEvidence()
         target_page_path: Optional[str] = None
         allowed_target_path: Optional[str] = None
@@ -299,10 +301,12 @@ class SupplementProposeOrchestrator:
                     target_page_path=target_page_path,
                 )
                 if source_document.source_type == "screenshot":
-                    proposal = validate_screenshot_proposal(
+                    validation_result = validate_screenshot_proposal_with_title_fallback(
                         proposal=proposal,
                         source_text=source_document.raw_text,
                     )
+                    proposal = validation_result.proposal
+                    title_fallback_used = validation_result.title_fallback_used
                 duplicate_match = self._check_duplicate(
                     self._build_duplicate_candidate_from_proposal(proposal)
                 )
@@ -356,6 +360,7 @@ class SupplementProposeOrchestrator:
                         "token_input": token_input,
                         "token_output": token_output,
                         "estimated_cost": estimated_cost,
+                        "title_fallback_used": title_fallback_used,
                         **latency.as_dict(),
                     },
                     sort_keys=True,
@@ -379,6 +384,7 @@ class SupplementProposeOrchestrator:
                 token_input=token_input,
                 token_output=token_output,
                 latency_metadata=latency.as_dict(),
+                title_fallback_used=title_fallback_used,
             )
         except WorkflowRunAuditUpdateError:
             raise

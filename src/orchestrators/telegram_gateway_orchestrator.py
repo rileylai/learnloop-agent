@@ -387,7 +387,8 @@ class TelegramGatewayOrchestrator:
             return
         user_messages = {
             "LLM_OUTPUT_INVALID": (
-                "Proposal validation failed. Please upload the file again."
+                "Proposal validation failed for the existing source. "
+                "Use /retry-proposal to retry the proposal only; upload and OCR will not be repeated."
             ),
             "TELEGRAM_PREVIEW_DELIVERY_FAILED": (
                 "Proposal was created, but preview delivery failed. "
@@ -826,6 +827,57 @@ class TelegramGatewayOrchestrator:
                 change_request_id = review_result.change_request_id
                 change_request_status = review_result.change_request_status
                 review_action = review_result.review_action
+            elif command == "retry-proposal":
+                if self._telegram_ingestion_orchestrator is None:
+                    raise TelegramGatewayError(
+                        error_code="TELEGRAM_INGESTION_NOT_CONFIGURED",
+                        message="Telegram ingestion orchestrator is not configured",
+                        http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                        failure_reason="UNKNOWN_ERROR",
+                    )
+                retry_session = self._telegram_ingestion_orchestrator.get_latest_upload(
+                    chat_id=normalized_chat_id,
+                    user_id=normalized_user_id,
+                )
+                if retry_session is None:
+                    raise TelegramGatewayError(
+                        error_code="UPLOAD_SESSION_EXPIRED",
+                        message="No failed proposal session is available. Use /ingest to start a new upload.",
+                        http_status_code=HTTPStatus.GONE,
+                        failure_reason="UPLOAD_SESSION_EXPIRED",
+                    )
+                ingestion_result = await self._telegram_ingestion_orchestrator.retry_existing_proposal(
+                    session_id=retry_session.session_id,
+                    chat_id=normalized_chat_id,
+                    user_id=normalized_user_id,
+                    request_workflow_id=request_workflow_id,
+                )
+                business_status = "succeeded"
+                source_document_id = ingestion_result.source_document_id
+                change_request_id = ingestion_result.change_request_id
+                source_type = ingestion_result.source_type
+                target_notion_page_id = ingestion_result.target_notion_page_id
+                target_notion_path = ingestion_result.target_notion_path
+                target_set = bool(target_notion_page_id)
+                reply_text = ingestion_result.reply_text
+                if (
+                    change_request_id is not None
+                    and target_set
+                    and ingestion_result.session_id
+                    and self._telegram_ingestion_orchestrator.claim_upload_preview(
+                        session_id=ingestion_result.session_id,
+                        chat_id=normalized_chat_id,
+                        user_id=normalized_user_id,
+                    )
+                ):
+                    reply_markup = self._build_review_markup(
+                        ingestion_result=ingestion_result,
+                        chat_id=normalized_chat_id,
+                        user_id=normalized_user_id,
+                    )
+                    preview_session_id = ingestion_result.session_id
+                    preview_delivery_required = True
+                    preview_delivery_status = "pending"
             elif command == "ingest" or (has_media and command == "unknown"):
                 if self._telegram_ingestion_orchestrator is None:
                     raise TelegramGatewayError(
@@ -1175,6 +1227,15 @@ class TelegramGatewayOrchestrator:
         except WorkflowRunAuditUpdateError:
             raise
         except TelegramIngestionError as exc:
+            failed_session = None
+            if self._telegram_ingestion_orchestrator is not None:
+                failed_session = self._telegram_ingestion_orchestrator.get_latest_upload(
+                    chat_id=normalized_chat_id,
+                    user_id=normalized_user_id,
+                )
+            failed_source_document_id = source_document_id or (
+                failed_session.source_document_id if failed_session is not None else None
+            )
             self._mark_failed_workflow(
                 workflow_run_id=workflow_run.id,
                 failure_reason=exc.failure_reason,
@@ -1183,6 +1244,7 @@ class TelegramGatewayOrchestrator:
                     "business_status": "failed",
                     "callback_ack_status": callback_ack_status,
                     "preview_delivery_status": preview_delivery_status,
+                    "source_document_id": failed_source_document_id,
                 },
             )
             raise TelegramGatewayError(
@@ -1195,6 +1257,7 @@ class TelegramGatewayOrchestrator:
                     "business_status": "failed",
                     "callback_ack_status": callback_ack_status,
                     "preview_delivery_status": preview_delivery_status,
+                    "source_document_id": failed_source_document_id,
                 },
             ) from exc
 
@@ -1866,6 +1929,7 @@ class TelegramGatewayOrchestrator:
                 "/pages — list indexed Notion pages with full hierarchy paths\n"
                 "/ingest — upload a PDF or image, then choose a target page button\n"
                 "/ingest --page <external_page_id> — text fallback for automation\n"
+                "/retry-proposal — retry proposal validation using the existing source\n"
                 "/ask <question> — ask about indexed notes; optional --page/--section scopes\n"
                 "/accept <proposal_id> — explicitly accept one pending proposal\n"
                 "/reject <proposal_id> <reason> — reject without a Notion write\n"
