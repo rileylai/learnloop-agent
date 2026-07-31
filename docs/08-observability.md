@@ -119,6 +119,12 @@ Telegram ingestion observability:
   `title_repair_succeeded`. A repair is one title-only LLM call using the same
   source snapshot; it never starts a second OCR or full-proposal generation
   stage.
+- Screenshot proposal metadata may also record
+  `summary_repair_attempted` and `summary_repair_succeeded`. This repair is
+  eligible only for a single summary field failure with no new number,
+  version, product, technical identifier, advice, comparison, or result. It
+  makes one summary-only LLM call against the same source snapshot and is
+  bounded to one retry.
 - Upload sessions carry a monotonic settle version. The settle job atomically
   promotes `collecting` to `settled`, sorts attachments by Telegram
   `message_id`, and stale/duplicate versions skip before picker or business
@@ -141,10 +147,15 @@ Telegram ingestion observability:
   `title_anchor_count`, `matched_title_anchor_count`,
   `unmatched_title_anchor_count`, `numeric_anchor_count`, and
   `unmatched_numeric_anchor_count`. `evidence_claim_count` applies only to
-  summary/concept/note claims. The prompt and validator digests are computed
-  from the same persisted-source snapshot and must match. Telegram outer
-  workflow metadata propagates these fields from the supplement workflow
-  through an allowlist, along with `source_attachment_count` and `llm_ms`.
+  summary/concept/note claims and is the backward-compatible alias for
+  `matched_claim_count`. Additional redacted claim diagnostics include
+  `extracted_claim_count`, `matched_claim_count`,
+  `first_unsupported_claim_index`, `first_unsupported_reason`,
+  `failed_field_count`, and `summary_repair_eligible`. The prompt and
+  validator digests are computed from the same persisted-source snapshot and
+  must match. Telegram outer workflow metadata propagates these fields from
+  the supplement workflow through an allowlist, along with
+  `source_attachment_count` and `llm_ms`.
 
 ## Workflow Metadata Notes
 

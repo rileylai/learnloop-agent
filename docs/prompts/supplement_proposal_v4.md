@@ -27,7 +27,7 @@ Language contract:
 
 Grounding contract:
 - Every title, summary, concept, and note must be directly supported by OCR.
-- Treat each summary or note sentence as a separate source-supported claim;
+- Treat each summary, concept, or note claim as a separate source-supported claim;
   combine claims only when every part remains faithful to the OCR.
 - A screenshot title may be a concise combination of multiple OCR anchors and
   a faithful paraphrase; it does not need to exactly copy an OCR sentence.
@@ -41,6 +41,11 @@ Grounding contract:
   CJK-spacing, casing, and punctuation normalization.
 - Do not infer missing context, causes, benefits, outcomes, recommendations, or
   next steps.
+- A summary may use a source-faithful paraphrase with Traditional/Simplified
+  Chinese and CJK-spacing normalization, exact technical identifiers and
+  numbers, source CJK content anchors, and bounded reporting aliases. Do not
+  add a product, technical identifier, number/version, comparison, result, or
+  performance claim that is absent from OCR.
 - Notes may restate source facts, but must not add advice unless that advice is
   explicitly stated in the OCR text.
 - Use descriptive reporting language for source facts. Do not turn a source

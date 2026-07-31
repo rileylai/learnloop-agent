@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from src.services import (
     PROMPT_ID_QA_ANSWER,
+    PROMPT_ID_SCREENSHOT_SUMMARY_REPAIR,
     PROMPT_ID_SCREENSHOT_TITLE_REPAIR,
     PROMPT_ID_SUPPLEMENT_PROPOSAL,
     PromptTemplateLoader,
@@ -65,4 +66,22 @@ def test_prompt_template_loader_loads_title_repair_prompt() -> None:
     assert bundle.prompt_id == PROMPT_ID_SCREENSHOT_TITLE_REPAIR
     assert bundle.version == "screenshot_title_repair_v1"
     assert "exactly one field" in system_message
+    assert "MySQL EXPLAIN" in user_message
+
+
+def test_prompt_template_loader_loads_summary_repair_prompt() -> None:
+    loader = PromptTemplateLoader()
+
+    bundle = loader.load_bundle(PROMPT_ID_SCREENSHOT_SUMMARY_REPAIR)
+    system_message, user_message = bundle.render_messages(
+        variables={
+            "source_language": "Traditional Chinese (繁體中文)",
+            "failed_summary": "[BEGIN UNTRUSTED FAILED_SUMMARY]\n資料庫查詢\n[END UNTRUSTED FAILED_SUMMARY]",
+            "source_text": "[BEGIN UNTRUSTED SOURCE_TEXT]\nMySQL EXPLAIN\n[END UNTRUSTED SOURCE_TEXT]",
+        }
+    )
+
+    assert bundle.prompt_id == PROMPT_ID_SCREENSHOT_SUMMARY_REPAIR
+    assert bundle.version == "screenshot_summary_repair_v1"
+    assert "only the summary" in system_message
     assert "MySQL EXPLAIN" in user_message

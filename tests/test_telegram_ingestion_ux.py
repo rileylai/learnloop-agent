@@ -1110,7 +1110,11 @@ def test_grounding_failure_metadata_reaches_outer_telegram_workflow() -> None:
             assert metadata["source_normalized_char_count"] > 0
             assert metadata["candidate_field_char_count"] > 0
             assert metadata["evidence_claim_count"] >= 1
+            assert metadata["extracted_claim_count"] >= metadata["matched_claim_count"] >= 1
             assert metadata["unsupported_claim_count"] >= 1
+            assert metadata["first_unsupported_claim_index"] is not None
+            assert metadata["first_unsupported_reason"] is not None
+            assert metadata["failed_field_count"] >= 1
             assert metadata["title_anchor_count"] >= 2
             assert metadata["matched_title_anchor_count"] == metadata["title_anchor_count"]
             assert metadata["unmatched_title_anchor_count"] == 0

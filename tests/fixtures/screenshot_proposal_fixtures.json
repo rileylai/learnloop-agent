@@ -30,7 +30,7 @@
         "source_type": "screenshot",
         "source_display_name": "Screenshot batch (5 images)"
       },
-      "summary": "這組截圖整理 MySQL EXPLAIN、SQL 與索引查詢資訊。",
+    "summary": "這組五張截圖整理 MySQL EXPLAIN 與 SQL 查詢的執行計畫資訊，包含畫面列出的 type、key、rows 欄位，也說明索引是否被使用；內容提到 SQL 查詢可搭配 EXPLAIN 觀察索引，並以索引協助查詢條件過濾。",
       "concepts": [
         "MySQL",
         "EXPLAIN",

@@ -14,6 +14,7 @@ from src.services.screenshot_quality import (
     detect_screenshot_language,
     preprocess_screenshot_ocr_text,
     validate_screenshot_proposal,
+    validate_screenshot_proposal_with_diagnostics,
     validate_screenshot_proposal_with_title_fallback,
 )
 
@@ -100,7 +101,11 @@ def test_live_shaped_five_image_title_contract_is_bounded_and_fail_closed() -> N
     assert diagnostics.unmatched_title_anchor_count == 0
     assert diagnostics.numeric_anchor_count == 0
     assert diagnostics.unmatched_numeric_anchor_count == 0
+    assert 100 <= len(fixture["proposal"]["summary"]) <= 180
     assert diagnostics.evidence_claim_count >= 9
+    assert diagnostics.extracted_claim_count == diagnostics.matched_claim_count
+    assert diagnostics.first_unsupported_claim_index is None
+    assert diagnostics.first_unsupported_reason is None
 
     for unsupported_title in (
         "MySQL EXPLAIN 與 Redis 索引",
@@ -119,6 +124,111 @@ def test_live_shaped_five_image_title_contract_is_bounded_and_fail_closed() -> N
         assert diagnostics["unmatched_title_anchor_count"] >= 1
     percentage_diagnostics = exc_info.value.diagnostics
     assert percentage_diagnostics["unmatched_numeric_anchor_count"] >= 1
+
+
+@pytest.mark.parametrize(
+    ("invalid_summary", "expected_reason"),
+    [
+        (
+            "這組截圖整理 MySQL EXPLAIN 與 SQL 查詢，另有 Redis。",
+            "NEW_TECHNICAL_IDENTIFIER",
+        ),
+        (
+            "這組截圖整理 MySQL EXPLAIN 與 SQL 查詢，索引可提升 30% 效能。",
+            "NEW_NUMBER_OR_VERSION",
+        ),
+        (
+            "這組截圖整理 MySQL EXPLAIN 與 SQL 查詢，並建議採用最佳實務進行分庫分表。",
+            "UNSUPPORTED_ADVICE",
+        ),
+    ],
+)
+def test_live_shaped_summary_contract_rejects_new_claim_content(
+    invalid_summary: str,
+    expected_reason: str,
+) -> None:
+    fixture = next(
+        item
+        for item in _load_fixtures()
+        if item["id"] == "live_shaped_mysql_five_image_batch"
+    )
+    source_text = _merge_images(fixture["images"])
+    proposal = SupplementProposalSchema.model_validate(fixture["proposal"]).model_copy(
+        update={"summary": invalid_summary}
+    )
+
+    with pytest.raises(SupplementProposalValidationError) as exc_info:
+        validate_screenshot_proposal_with_diagnostics(
+            proposal=proposal,
+            source_text=source_text,
+        )
+
+    diagnostics = exc_info.value.diagnostics
+    assert diagnostics["first_unsupported_reason"] == expected_reason
+    assert diagnostics["extracted_claim_count"] >= 1
+    assert diagnostics["unsupported_claim_count"] >= 1
+    assert diagnostics["first_unsupported_claim_index"] == 0
+    assert diagnostics["summary_repair_eligible"] is False
+    assert invalid_summary not in json.dumps(diagnostics, ensure_ascii=False)
+
+
+def test_summary_analysis_is_bounded_without_early_return_diagnostic_loss() -> None:
+    fixture = next(
+        item
+        for item in _load_fixtures()
+        if item["id"] == "live_shaped_mysql_five_image_batch"
+    )
+    source_text = _merge_images(fixture["images"])
+    proposal = SupplementProposalSchema.model_validate(fixture["proposal"]).model_copy(
+        update={
+            "summary": (
+                "這組截圖加入 Redis。"
+                "MySQL EXPLAIN 會顯示查詢的執行計畫。"
+            )
+        }
+    )
+
+    with pytest.raises(SupplementProposalValidationError) as exc_info:
+        validate_screenshot_proposal_with_diagnostics(
+            proposal=proposal,
+            source_text=source_text,
+        )
+
+    diagnostics = exc_info.value.diagnostics
+    assert diagnostics["extracted_claim_count"] >= 2
+    assert diagnostics["matched_claim_count"] >= 1
+    assert diagnostics["evidence_claim_count"] == diagnostics["matched_claim_count"]
+    assert diagnostics["unsupported_claim_count"] == 1
+    assert diagnostics["first_unsupported_claim_index"] == 0
+    assert diagnostics["first_unsupported_reason"] == "NEW_TECHNICAL_IDENTIFIER"
+
+
+def test_summary_claim_extraction_handles_mixed_cjk_punctuation_and_newlines() -> None:
+    fixture = next(
+        item
+        for item in _load_fixtures()
+        if item["id"] == "live_shaped_mysql_five_image_batch"
+    )
+    source_text = _merge_images(fixture["images"])
+    proposal = SupplementProposalSchema.model_validate(fixture["proposal"]).model_copy(
+        update={
+            "summary": (
+                "摘要：MySQL EXPLAIN（含 type、key、rows）；"
+                "SQL 查詢可搭配 EXPLAIN 觀察索引。\n"
+                "索引可協助查詢條件過濾。"
+            )
+        }
+    )
+
+    result = validate_screenshot_proposal_with_diagnostics(
+        proposal=proposal,
+        source_text=source_text,
+    )
+
+    assert result.diagnostics is not None
+    assert result.diagnostics.extracted_claim_count >= 12
+    assert result.diagnostics.extracted_claim_count == result.diagnostics.matched_claim_count
+    assert result.diagnostics.unsupported_claim_count == 0
 
 
 def test_browser_ui_fixture_is_removed_before_proposal_grounding() -> None:

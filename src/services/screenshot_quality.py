@@ -31,8 +31,9 @@ _TECHNICAL_ATOM_PATTERN = re.compile(
     r"(?<!\w)[A-Za-z][A-Za-z0-9_]*(?:[./:#][A-Za-z0-9_./:#-]+)(?!\w)",
     re.IGNORECASE,
 )
-_CLAIM_SEPARATOR_PATTERN = re.compile(
-    r"\n+|(?<=[.!?。！？；;])(?:\s+|$)"
+_CLAIM_BOUNDARY_PATTERN = re.compile(
+    r"\n+|(?<=[。！？；;])(?=\s*\S|$)|"
+    r"(?<=[.!?])(?:\s+|$)|(?<=[：:])(?=\s+)"
 )
 _IMAGE_SECTION_MARKER_PATTERN = re.compile(
     r"\[image\s+\d+(?::[^\]]+)?\]",
@@ -432,6 +433,12 @@ _SAFE_PARAPHRASE_TOKENS = frozenset(
         "finally",
     }
 )
+_CJK_HIGH_SIGNAL_TECHNICAL_PHRASES = frozenset(
+    {
+        "分庫分表",
+        "分库分表",
+    }
+)
 
 _ADVICE_PATTERN = re.compile(
     # Do not treat the ordinary verb "use" as advice by itself.  A
@@ -442,7 +449,7 @@ _ADVICE_PATTERN = re.compile(
     r"avoid|you can)\b|"
     r"(?:^|[.!?。！？]\s*)(?:use|try|avoid|consider)\b|"
     r"(?:建議|建议|應該|应该|請|请|必須|必须|務必|务必|需要|避免|推薦|推荐|"
-    r"你可以|您可以)"
+    r"你可以|您可以|最佳實務|最佳实践|best practice)"
 )
 _CONCLUSION_PATTERN = re.compile(
     r"\b(?:improv(?:e|es|ed|ement)|enhanc(?:e|es|ed|ement)|"
@@ -452,6 +459,26 @@ _CONCLUSION_PATTERN = re.compile(
     r"therefore|thus|faster|better|more efficient|important|benefit|advantage)\b|"
     r"(?:提升|改善|降低|增加|減少|减少|確保|确保|保證|保证|導致|导致|因此|所以|"
     r"更快|更有效率|重要|優點|优点|好處|好处)"
+)
+_COMPARISON_PATTERN = re.compile(
+    r"\b(?:compare|comparison|versus|vs\.?)\b|"
+    r"(?:比較|对比|對比|相較|相较|優於|优于|勝過|胜过)"
+)
+
+SUMMARY_GROUNDING_REASON_NO_CLAIM_EXTRACTED = "NO_CLAIM_EXTRACTED"
+SUMMARY_GROUNDING_REASON_NEW_TECHNICAL_IDENTIFIER = "NEW_TECHNICAL_IDENTIFIER"
+SUMMARY_GROUNDING_REASON_NEW_NUMBER_OR_VERSION = "NEW_NUMBER_OR_VERSION"
+SUMMARY_GROUNDING_REASON_UNSUPPORTED_ADVICE = "UNSUPPORTED_ADVICE"
+SUMMARY_GROUNDING_REASON_UNSUPPORTED_COMPARISON = "UNSUPPORTED_COMPARISON"
+SUMMARY_GROUNDING_REASON_UNSUPPORTED_RESULT = "UNSUPPORTED_RESULT"
+SUMMARY_GROUNDING_REASON_INSUFFICIENT_SOURCE_ANCHORS = "INSUFFICIENT_SOURCE_ANCHORS"
+SUMMARY_GROUNDING_REASON_PARAPHRASE_NOT_GROUNDED = "PARAPHRASE_NOT_GROUNDED"
+
+_SUMMARY_REPAIR_SAFE_REASONS = frozenset(
+    {
+        SUMMARY_GROUNDING_REASON_INSUFFICIENT_SOURCE_ANCHORS,
+        SUMMARY_GROUNDING_REASON_PARAPHRASE_NOT_GROUNDED,
+    }
 )
 
 
@@ -486,6 +513,12 @@ class ScreenshotGroundingDiagnostics:
     unmatched_title_anchor_count: int
     numeric_anchor_count: int
     unmatched_numeric_anchor_count: int
+    extracted_claim_count: int
+    matched_claim_count: int
+    first_unsupported_claim_index: Optional[int]
+    first_unsupported_reason: Optional[str]
+    failed_field_count: int
+    summary_repair_eligible: bool
 
     def as_dict(self) -> Dict[str, object]:
         return {
@@ -502,6 +535,12 @@ class ScreenshotGroundingDiagnostics:
             "unmatched_title_anchor_count": self.unmatched_title_anchor_count,
             "numeric_anchor_count": self.numeric_anchor_count,
             "unmatched_numeric_anchor_count": self.unmatched_numeric_anchor_count,
+            "extracted_claim_count": self.extracted_claim_count,
+            "matched_claim_count": self.matched_claim_count,
+            "first_unsupported_claim_index": self.first_unsupported_claim_index,
+            "first_unsupported_reason": self.first_unsupported_reason,
+            "failed_field_count": self.failed_field_count,
+            "summary_repair_eligible": self.summary_repair_eligible,
         }
 
 
@@ -531,6 +570,12 @@ class _TitleGroundingAnalysis:
             "numeric_anchor_count": self.numeric_anchor_count,
             "unmatched_numeric_anchor_count": self.unmatched_numeric_anchor_count,
         }
+
+
+@dataclass(frozen=True)
+class _ClaimGroundingAnalysis:
+    matched: bool
+    reason: Optional[str] = None
 
 
 def build_screenshot_source_snapshot(raw_text: str) -> ScreenshotSourceSnapshot:
@@ -664,10 +709,25 @@ def _validate_screenshot_proposal(
     )
 
     evidence_claim_count = 0
+    matched_claim_count = 0
+    extracted_claim_count = 0
     unsupported_claim_count = 0
+    first_unsupported_claim_index: Optional[int] = None
+    first_unsupported_reason: Optional[str] = None
+    failed_fields: set[str] = set()
+    failure_reasons: List[str] = []
+    first_failure_field: Optional[str] = None
+    first_failure_value = ""
+    first_failure_message: Optional[str] = None
     title_analysis = _TitleGroundingAnalysis()
 
     def diagnostics(*, value: str, evidence: int, unsupported: int) -> Dict[str, object]:
+        summary_repair_eligible = bool(
+            first_failure_field == "summary"
+            and len(failed_fields) == 1
+            and failure_reasons
+            and all(reason in _SUMMARY_REPAIR_SAFE_REASONS for reason in failure_reasons)
+        )
         result = ScreenshotGroundingDiagnostics(
             source_normalized_char_count=source_snapshot.source_normalized_char_count,
             candidate_field_char_count=len(value),
@@ -677,6 +737,12 @@ def _validate_screenshot_proposal(
             source_snapshot_digest=source_snapshot.digest,
             prompt_source_digest=source_snapshot.digest,
             validation_source_digest=source_snapshot.digest,
+            extracted_claim_count=extracted_claim_count,
+            matched_claim_count=matched_claim_count,
+            first_unsupported_claim_index=first_unsupported_claim_index,
+            first_unsupported_reason=first_unsupported_reason,
+            failed_field_count=len(failed_fields),
+            summary_repair_eligible=summary_repair_eligible,
             **title_analysis.as_diagnostic_fields(),
         )
         return result.as_dict()
@@ -757,6 +823,7 @@ def _validate_screenshot_proposal(
             )
             if not title_analysis.supported:
                 unsupported_claim_count += 1
+                failed_fields.add("title")
                 fail(
                     SCREENSHOT_TITLE_GROUNDING_FAILURE_MESSAGE,
                     field="title",
@@ -769,6 +836,7 @@ def _validate_screenshot_proposal(
                 source_normalized=source_normalized,
             ):
                 unsupported_claim_count += 1
+                failed_fields.add("title")
                 fail(
                     "screenshot proposal title introduces unsupported advice",
                     field="title",
@@ -794,69 +862,98 @@ def _validate_screenshot_proposal(
             continue
 
         claims = _split_claims(value)
+        if not claims:
+            reason = SUMMARY_GROUNDING_REASON_NO_CLAIM_EXTRACTED
+            unsupported_claim_count += 1
+            failed_fields.add(label)
+            failure_reasons.append(reason)
+            if first_unsupported_claim_index is None:
+                first_unsupported_claim_index = extracted_claim_count
+                first_unsupported_reason = reason
+            if first_failure_field is None:
+                first_failure_field = label
+                first_failure_value = value
+                first_failure_message = (
+                    f"screenshot proposal {label} is not supported by OCR source"
+                )
+            continue
+
         for claim in claims:
-            has_source_evidence = _has_source_evidence(
+            claim_index = extracted_claim_count
+            extracted_claim_count += 1
+            claim_analysis = _analyze_claim_grounding(
                 value=claim,
                 source_normalized=source_normalized,
             )
+            if claim_analysis.matched:
+                matched_claim_count += 1
+                evidence_claim_count = matched_claim_count
+                continue
 
-            if has_source_evidence:
-                evidence_claim_count += 1
-            else:
-                unsupported_claim_count += 1
+            reason = claim_analysis.reason or SUMMARY_GROUNDING_REASON_PARAPHRASE_NOT_GROUNDED
+            unsupported_claim_count += 1
+            failed_fields.add(label)
+            failure_reasons.append(reason)
+            if first_unsupported_claim_index is None:
+                first_unsupported_claim_index = claim_index
+                first_unsupported_reason = reason
+            if first_failure_field is None:
+                first_failure_field = label
+                first_failure_value = value
+                if reason == SUMMARY_GROUNDING_REASON_UNSUPPORTED_ADVICE:
+                    first_failure_message = (
+                        f"screenshot proposal {label} introduces unsupported advice"
+                    )
+                elif reason == SUMMARY_GROUNDING_REASON_UNSUPPORTED_COMPARISON:
+                    first_failure_message = (
+                        f"screenshot proposal {label} introduces unsupported comparison"
+                    )
+                elif reason == SUMMARY_GROUNDING_REASON_UNSUPPORTED_RESULT:
+                    first_failure_message = (
+                        f"screenshot proposal {label} introduces unsupported conclusion"
+                    )
+                else:
+                    first_failure_message = (
+                        f"screenshot proposal {label} is not supported by OCR source"
+                    )
 
-            if not label.startswith("concepts[") and _introduces_new_advice(
-                value=claim,
-                source_normalized=source_normalized,
-            ):
-                if has_source_evidence:
-                    unsupported_claim_count += 1
-                fail(
-                    f"screenshot proposal {label} introduces unsupported advice",
-                    field=label,
-                    value=value,
-                    evidence=evidence_claim_count,
-                    unsupported=unsupported_claim_count,
-                )
-            if _introduces_new_conclusion(
-                value=claim,
-                source_normalized=source_normalized,
-            ):
-                if has_source_evidence:
-                    unsupported_claim_count += 1
-                fail(
-                    f"screenshot proposal {label} introduces unsupported conclusion",
-                    field=label,
-                    value=value,
-                    evidence=evidence_claim_count,
-                    unsupported=unsupported_claim_count,
-                )
-            if not has_source_evidence:
-                fail(
-                    f"screenshot proposal {label} is not supported by OCR source",
-                    field=label,
-                    value=value,
-                    evidence=evidence_claim_count,
-                    unsupported=unsupported_claim_count,
-                )
+    if first_failure_field is not None:
+        fail(
+            first_failure_message
+            or f"screenshot proposal {first_failure_field} is not supported by OCR source",
+            field=first_failure_field,
+            value=first_failure_value,
+            evidence=matched_claim_count,
+            unsupported=unsupported_claim_count,
+        )
 
     return proposal, ScreenshotGroundingDiagnostics(
         source_normalized_char_count=source_snapshot.source_normalized_char_count,
         candidate_field_char_count=sum(
             len(value) for _, value in _proposal_text_items(proposal)
         ),
-        evidence_claim_count=evidence_claim_count,
+        evidence_claim_count=matched_claim_count,
         unsupported_claim_count=unsupported_claim_count,
         validator_version=SCREENSHOT_VALIDATOR_VERSION,
         source_snapshot_digest=source_snapshot.digest,
         prompt_source_digest=source_snapshot.digest,
         validation_source_digest=source_snapshot.digest,
+        extracted_claim_count=extracted_claim_count,
+        matched_claim_count=matched_claim_count,
+        first_unsupported_claim_index=first_unsupported_claim_index,
+        first_unsupported_reason=first_unsupported_reason,
+        failed_field_count=len(failed_fields),
+        summary_repair_eligible=False,
         **title_analysis.as_diagnostic_fields(),
     )
 
 
 def _split_claims(value: str) -> List[str]:
-    return [claim.strip() for claim in _CLAIM_SEPARATOR_PATTERN.split(value) if claim.strip()]
+    return [
+        claim.strip()
+        for claim in _CLAIM_BOUNDARY_PATTERN.split(value)
+        if claim.strip() and re.search(r"[A-Za-z0-9\u3400-\u4dbf\u4e00-\u9fff]", claim)
+    ]
 
 
 def validate_screenshot_proposal_with_title_fallback(
@@ -932,7 +1029,15 @@ def _is_browser_chrome_line(line: str) -> bool:
 
 
 def _normalize_for_grounding(value: str) -> str:
-    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", value).casefold()).strip()
+    normalized = unicodedata.normalize("NFKC", value).translate(
+        _SIMPLIFIED_TO_TRADITIONAL
+    ).casefold()
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return re.sub(
+        r"(?<=[\u3400-\u4dbf\u4e00-\u9fff])\s+(?=[\u3400-\u4dbf\u4e00-\u9fff])",
+        "",
+        normalized,
+    )
 
 
 def _normalize_title_text(value: str) -> str:
@@ -1266,6 +1371,124 @@ def _has_source_evidence(*, value: str, source_normalized: str) -> bool:
     return ascii_anchor or cjk_anchor
 
 
+def _analyze_claim_grounding(
+    *,
+    value: str,
+    source_normalized: str,
+) -> _ClaimGroundingAnalysis:
+    """Classify one non-title claim without retaining its source text."""
+
+    normalized_value = _normalize_for_grounding(value)
+    normalized_source = _normalize_for_grounding(source_normalized)
+    value_numbers = set(_NUMBER_PATTERN.findall(normalized_value))
+    source_numbers = set(_NUMBER_PATTERN.findall(normalized_source))
+    if not value_numbers.issubset(source_numbers):
+        return _ClaimGroundingAnalysis(
+            matched=False,
+            reason=SUMMARY_GROUNDING_REASON_NEW_NUMBER_OR_VERSION,
+        )
+
+    if _introduces_new_advice(
+        value=value,
+        source_normalized=source_normalized,
+    ):
+        return _ClaimGroundingAnalysis(
+            matched=False,
+            reason=SUMMARY_GROUNDING_REASON_UNSUPPORTED_ADVICE,
+        )
+    if _introduces_new_comparison(
+        value=value,
+        source_normalized=source_normalized,
+    ):
+        return _ClaimGroundingAnalysis(
+            matched=False,
+            reason=SUMMARY_GROUNDING_REASON_UNSUPPORTED_COMPARISON,
+        )
+    if _introduces_new_conclusion(
+        value=value,
+        source_normalized=source_normalized,
+    ):
+        return _ClaimGroundingAnalysis(
+            matched=False,
+            reason=SUMMARY_GROUNDING_REASON_UNSUPPORTED_RESULT,
+        )
+
+    value_atoms = _technical_atoms(normalized_value)
+    source_atoms = _technical_atoms(normalized_source)
+    if (
+        not value_atoms.issubset(source_atoms)
+        or _has_new_high_signal_identifier(
+            value=value,
+            source_normalized=source_normalized,
+        )
+        or _has_new_high_signal_cjk_phrase(
+            value=normalized_value,
+            source_normalized=normalized_source,
+        )
+    ):
+        return _ClaimGroundingAnalysis(
+            matched=False,
+            reason=SUMMARY_GROUNDING_REASON_NEW_TECHNICAL_IDENTIFIER,
+        )
+
+    if _has_source_evidence(value=value, source_normalized=source_normalized):
+        return _ClaimGroundingAnalysis(matched=True)
+    if not _has_claim_source_anchor(
+        value=normalized_value,
+        source_normalized=normalized_source,
+    ):
+        return _ClaimGroundingAnalysis(
+            matched=False,
+            reason=SUMMARY_GROUNDING_REASON_INSUFFICIENT_SOURCE_ANCHORS,
+        )
+    return _ClaimGroundingAnalysis(
+        matched=False,
+        reason=SUMMARY_GROUNDING_REASON_PARAPHRASE_NOT_GROUNDED,
+    )
+
+
+def _has_new_high_signal_identifier(*, value: str, source_normalized: str) -> bool:
+    source_tokens = _canonical_token_set(source_normalized)
+    frame_tokens = {
+        _canonical_token(token) for token in _PROPOSAL_FRAME_TOKENS
+    }
+    safe_tokens = {
+        _canonical_token(token) for token in _SAFE_PARAPHRASE_TOKENS
+    }
+    for raw_token in _ASCII_TOKEN_PATTERN.findall(value):
+        canonical = _canonical_token(raw_token)
+        if (
+            canonical
+            and canonical not in source_tokens
+            and canonical not in frame_tokens
+            and canonical not in safe_tokens
+            and (
+                any(character.isupper() for character in raw_token)
+                or any(character.isdigit() for character in raw_token)
+                or any(symbol in raw_token for symbol in ("_", ".", "/", ":", "#", "+", "-"))
+            )
+        ):
+            return True
+    return False
+
+
+def _has_new_high_signal_cjk_phrase(*, value: str, source_normalized: str) -> bool:
+    return any(
+        phrase in value and phrase not in source_normalized
+        for phrase in _CJK_HIGH_SIGNAL_TECHNICAL_PHRASES
+    )
+
+
+def _has_claim_source_anchor(*, value: str, source_normalized: str) -> bool:
+    value_tokens = set(_canonical_tokens(value)) - {
+        _canonical_token(token) for token in _PROPOSAL_FRAME_TOKENS
+    }
+    source_tokens = _canonical_token_set(source_normalized)
+    if value_tokens & source_tokens:
+        return True
+    return _has_cjk_anchor(value=value, source=source_normalized)
+
+
 def _canonical_token(token: str) -> str:
     normalized = token.casefold().strip(".,!?;:()[]{}\"'")
     if not normalized:
@@ -1300,6 +1523,8 @@ def _technical_atoms(value: str) -> set[str]:
 
 
 def _has_cjk_anchor(*, value: str, source: str) -> bool:
+    value = _expand_cjk_aliases(value)
+    source = _expand_cjk_aliases(source)
     value_runs = _CJK_RUN_PATTERN.findall(value)
     source_runs = _CJK_RUN_PATTERN.findall(source)
     if not value_runs or not source_runs:
@@ -1325,12 +1550,30 @@ def _has_cjk_anchor(*, value: str, source: str) -> bool:
     return len(value_characters & source_characters) >= 2
 
 
+def _expand_cjk_aliases(value: str) -> str:
+    expanded = value
+    for aliases in _TITLE_CJK_ALIAS_GROUPS.values():
+        if any(alias in value for alias in aliases):
+            expanded = f"{expanded} {' '.join(aliases)}"
+    return expanded
+
+
 def _introduces_new_advice(*, value: str, source_normalized: str) -> bool:
     normalized_value = _normalize_for_grounding(value)
     normalized_source = _normalize_for_grounding(source_normalized)
+    if normalized_value == "use":
+        return False
     if not _ADVICE_PATTERN.search(normalized_value):
         return False
     return not _ADVICE_PATTERN.search(normalized_source)
+
+
+def _introduces_new_comparison(*, value: str, source_normalized: str) -> bool:
+    normalized_value = _normalize_for_grounding(value)
+    normalized_source = _normalize_for_grounding(source_normalized)
+    if not _COMPARISON_PATTERN.search(normalized_value):
+        return False
+    return not _COMPARISON_PATTERN.search(normalized_source)
 
 
 def _introduces_new_conclusion(*, value: str, source_normalized: str) -> bool:

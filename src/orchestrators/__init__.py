@@ -62,9 +62,11 @@ from src.orchestrators.supplement_proposal_schema import (
     SupplementProposalCitationSchema,
     SupplementProposalSchema,
     SupplementProposalSourceSchema,
+    SupplementSummaryRepairSchema,
     SupplementTitleRepairSchema,
     SupplementProposalValidationError,
     parse_supplement_proposal_json,
+    parse_supplement_summary_repair_json,
     parse_supplement_title_repair_json,
 )
 from src.orchestrators.supplement_query_orchestrator import (
@@ -161,9 +163,11 @@ __all__ = [
     "SupplementProposalSchema",
     "SupplementProposalCitationSchema",
     "SupplementProposalSourceSchema",
+    "SupplementSummaryRepairSchema",
     "SupplementTitleRepairSchema",
     "SupplementProposalValidationError",
     "parse_supplement_proposal_json",
+    "parse_supplement_summary_repair_json",
     "parse_supplement_title_repair_json",
     "SupplementCitationResult",
     "SupplementProposalContentResult",

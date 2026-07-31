@@ -399,6 +399,18 @@ Rules:
   one high-specificity anchor or two general content anchors are required.
   New numbers, commands, URLs, technical atoms, advice, comparisons,
   conclusions, or unsupported domain content still fail closed.
+- For summary/concepts/notes, `extracted_claim_count` counts every bounded
+  claim extracted in deterministic field order, `matched_claim_count` counts
+  only claims with source evidence, and `evidence_claim_count` remains the
+  backward-compatible alias for `matched_claim_count`. The validator analyzes
+  every claim before failing closed; it records only counts, the first
+  zero-based claim index, and a fixed `first_unsupported_reason` enum. It does
+  not retain claim, proposal, or OCR text.
+- Source-faithful summary paraphrase may preserve exact technical identifiers,
+  numbers/versions, CJK content anchors, and bounded reporting aliases. New
+  technical identifiers, numbers/versions, advice, comparisons, results, or
+  insufficient/paraphrase anchors fail with a fixed reason rather than by a
+  global threshold reduction.
 - Proposal validation metadata is deterministic and redacted: normalized
   source/candidate character counts, supported/unsupported claim counts,
   validator version, source/prompt/validation digests, and the failing field.
@@ -416,6 +428,13 @@ Rules:
   noun-phrase title using existing technical anchors, replaces only `title`,
   and reruns the deterministic validator. A second failure returns
   `LLM_OUTPUT_INVALID`; it never re-runs OCR or regenerates the full proposal.
+- If the screenshot validator reports only a safe summary grounding failure
+  (`INSUFFICIENT_SOURCE_ANCHORS` or `PARAPHRASE_NOT_GROUNDED`), the backend may
+  make exactly one bounded summary-only repair call. It reuses the same source
+  snapshot, replaces only `summary`, and reruns the same deterministic
+  validator. New numbers, products, technical identifiers, advice,
+  comparisons, results, or any other failing field disable repair; a second
+  failure returns `LLM_OUTPUT_INVALID`.
 - Step 33 still follows safe write policy: create `pending` change request only; no Notion append in this workflow.
 - `/ingest --page <external_page_id>` resolves the target against indexed
   Notion pages; the target is optional for backward compatibility, but accept
