@@ -32,6 +32,13 @@ Grounding contract:
 - A screenshot title may be a concise combination of multiple OCR anchors and
   a faithful paraphrase; it does not need to exactly copy an OCR sentence.
   Preserve source technical terms such as `MySQL`, `EXPLAIN`, and `SQL`.
+- A screenshot title is a noun phrase, not a sentence claim. Use at least one
+  source-supported high-specificity anchor or two source-supported content
+  anchors. Generic words such as "summary", "介紹", "整理", and "筆記" do
+  not count by themselves.
+- Every title number, version, product name, and technical identifier must be
+  present in the OCR after deterministic Traditional/Simplified Chinese,
+  CJK-spacing, casing, and punctuation normalization.
 - Do not infer missing context, causes, benefits, outcomes, recommendations, or
   next steps.
 - Notes may restate source facts, but must not add advice unless that advice is

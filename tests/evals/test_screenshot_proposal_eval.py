@@ -78,6 +78,49 @@ def test_public_safe_four_image_mysql_batch_uses_one_snapshot_and_all_claims() -
     assert snapshot.text.index("EXPLAIN 的 key") < snapshot.text.index("來源說明 MySQL")
 
 
+def test_live_shaped_five_image_title_contract_is_bounded_and_fail_closed() -> None:
+    fixture = next(
+        item
+        for item in _load_fixtures()
+        if item["id"] == "live_shaped_mysql_five_image_batch"
+    )
+    source_text = _merge_images(fixture["images"])
+    snapshot = build_screenshot_source_snapshot(source_text)
+    proposal = SupplementProposalSchema.model_validate(fixture["proposal"])
+
+    result = validate_screenshot_proposal_with_title_fallback(
+        proposal=proposal,
+        source_text=snapshot.text,
+        source_snapshot=snapshot,
+    )
+    assert result.diagnostics is not None
+    diagnostics = result.diagnostics
+    assert diagnostics.title_anchor_count >= 5
+    assert diagnostics.matched_title_anchor_count == diagnostics.title_anchor_count
+    assert diagnostics.unmatched_title_anchor_count == 0
+    assert diagnostics.numeric_anchor_count == 0
+    assert diagnostics.unmatched_numeric_anchor_count == 0
+    assert diagnostics.evidence_claim_count >= 9
+
+    for unsupported_title in (
+        "MySQL EXPLAIN 與 Redis 索引",
+        "MySQL 分庫分表與索引",
+        "MySQL 索引效能提升 30%",
+    ):
+        invalid = proposal.model_copy(update={"title": unsupported_title})
+        with pytest.raises(SupplementProposalValidationError) as exc_info:
+            validate_screenshot_proposal(
+                proposal=invalid,
+                source_text=snapshot.text,
+            )
+        diagnostics = exc_info.value.diagnostics
+        assert diagnostics["evidence_claim_count"] == 0
+        assert diagnostics["unsupported_claim_count"] == 1
+        assert diagnostics["unmatched_title_anchor_count"] >= 1
+    percentage_diagnostics = exc_info.value.diagnostics
+    assert percentage_diagnostics["unmatched_numeric_anchor_count"] >= 1
+
+
 def test_browser_ui_fixture_is_removed_before_proposal_grounding() -> None:
     fixture = next(item for item in _load_fixtures() if item["id"] == "browser_ui_noise")
     source_text = _merge_images(fixture["images"])
@@ -225,7 +268,7 @@ def test_unrelated_title_still_fails_closed() -> None:
 
 def test_grounded_title_fallback_does_not_call_ocr_or_llm() -> None:
     source_text = "MySQL 索引、EXPLAIN 與 SQL 查詢優化。"
-    proposal = _mysql_sql_proposal(title="MySQL 主題")
+    proposal = _mysql_sql_proposal(title="索引")
 
     result = validate_screenshot_proposal_with_title_fallback(
         proposal=proposal,

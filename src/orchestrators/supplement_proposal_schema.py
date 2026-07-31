@@ -93,6 +93,12 @@ class SupplementProposalSchema(BaseModel):
         return normalized_items
 
 
+class SupplementTitleRepairSchema(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    title: str = Field(min_length=1)
+
+
 def parse_supplement_proposal_json(llm_output: str) -> SupplementProposalSchema:
     normalized_output = llm_output.strip()
     if not normalized_output:
@@ -119,6 +125,40 @@ def parse_supplement_proposal_json(llm_output: str) -> SupplementProposalSchema:
         error_message = first_error.get("msg", "schema validation failed")
         raise SupplementProposalValidationError(
             f"LLM output schema validation failed at '{error_loc}': {error_message}"
+        ) from exc
+
+
+def parse_supplement_title_repair_json(llm_output: str) -> SupplementTitleRepairSchema:
+    normalized_output = llm_output.strip()
+    if not normalized_output:
+        raise SupplementProposalValidationError(
+            "title repair output is empty",
+            field="title",
+        )
+
+    json_payload = _extract_json_payload(normalized_output)
+    try:
+        parsed_value = json.loads(json_payload)
+    except json.JSONDecodeError as exc:
+        raise SupplementProposalValidationError(
+            "title repair output is not valid JSON",
+            field="title",
+        ) from exc
+
+    if not isinstance(parsed_value, dict):
+        raise SupplementProposalValidationError(
+            "title repair output JSON must be an object",
+            field="title",
+        )
+
+    try:
+        return SupplementTitleRepairSchema.model_validate(parsed_value)
+    except ValidationError as exc:
+        first_error = exc.errors()[0]
+        error_message = first_error.get("msg", "title repair schema validation failed")
+        raise SupplementProposalValidationError(
+            f"title repair schema validation failed: {error_message}",
+            field="title",
         ) from exc
 
 

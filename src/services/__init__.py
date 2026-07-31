@@ -17,6 +17,7 @@ from src.services.duplicate_checker import (
 from src.services.prompt_template_loader import (
     DEFAULT_PROMPT_TEMPLATE_DIR,
     PROMPT_ID_QA_ANSWER,
+    PROMPT_ID_SCREENSHOT_TITLE_REPAIR,
     PROMPT_ID_SUPPLEMENT_PROPOSAL,
     PromptTemplateBundle,
     PromptTemplateLoader,
@@ -134,6 +135,7 @@ __all__ = [
     "EmbeddingTokenPricing",
     "LLMTokenPricing",
     "PROMPT_ID_QA_ANSWER",
+    "PROMPT_ID_SCREENSHOT_TITLE_REPAIR",
     "PROMPT_ID_SUPPLEMENT_PROPOSAL",
     "PromptTemplateBundle",
     "PromptTemplateLoader",

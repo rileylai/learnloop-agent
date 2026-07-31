@@ -115,8 +115,10 @@ Telegram ingestion observability:
   `download_ms`, `ocr_ms`, `llm_ms`, `persist_ms`, `preview_delivery_ms`, and
   `total_business_ms`. These are numeric stage timings only; OCR text, proposal
   fields, file bytes, callback tokens, URLs, and secrets are excluded.
-- Screenshot proposal metadata may record the boolean `title_fallback_used`;
-  fallback generation is deterministic and does not add an OCR or LLM stage.
+- Screenshot proposal metadata may record `title_repair_attempted` and
+  `title_repair_succeeded`. A repair is one title-only LLM call using the same
+  source snapshot; it never starts a second OCR or full-proposal generation
+  stage.
 - Upload sessions carry a monotonic settle version. The settle job atomically
   promotes `collecting` to `settled`, sorts attachments by Telegram
   `message_id`, and stale/duplicate versions skip before picker or business
@@ -135,7 +137,11 @@ Telegram ingestion observability:
   `source_normalized_char_count`, `candidate_field_char_count`,
   `evidence_claim_count`, `unsupported_claim_count`, `validator_version`,
   `source_snapshot_digest`, `prompt_source_digest`, and
-  `validation_source_digest`. The prompt and validator digests are computed
+  `validation_source_digest`, plus title-only anchor counts:
+  `title_anchor_count`, `matched_title_anchor_count`,
+  `unmatched_title_anchor_count`, `numeric_anchor_count`, and
+  `unmatched_numeric_anchor_count`. `evidence_claim_count` applies only to
+  summary/concept/note claims. The prompt and validator digests are computed
   from the same persisted-source snapshot and must match. Telegram outer
   workflow metadata propagates these fields from the supplement workflow
   through an allowlist, along with `source_attachment_count` and `llm_ms`.

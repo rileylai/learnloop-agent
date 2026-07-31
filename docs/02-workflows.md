@@ -387,16 +387,18 @@ Rules:
   summary, 3-30 concepts, 3-6 grounded notes, and no unsupported advice or
   conclusions. Grounding allows only bounded reporting-language/synonym
   paraphrase; new products, numbers, URLs, commands, technical atoms, and
-  unsupported claim words fail closed without a second LLM judge.
+  unsupported claim words fail closed without a second full-proposal LLM judge.
 - Before screenshot proposal generation, the backend builds one cleaned OCR
   source snapshot from the persisted `source_documents.raw_text`. The prompt
   source and grounding validator receive that same snapshot; there is no
   second page selection, truncation, cleanup, or CJK whitespace normalization
   path. Their source digests must be identical.
-- Grounding evaluates each title, concept, and summary/note sentence as a
-  claim. A claim can pass through bounded reporting-language paraphrase when
-  it retains source anchors, while new numbers, commands, URLs, technical
-  atoms, advice, conclusions, or unsupported domain content still fail closed.
+- Grounding evaluates summary/concepts/notes sentence claims separately. A
+  title uses a separate noun-phrase anchor contract: normalized technical
+  terms, identifiers, numbers, and CJK noun anchors must be source-supported;
+  one high-specificity anchor or two general content anchors are required.
+  New numbers, commands, URLs, technical atoms, advice, comparisons,
+  conclusions, or unsupported domain content still fail closed.
 - Proposal validation metadata is deterministic and redacted: normalized
   source/candidate character counts, supported/unsupported claim counts,
   validator version, source/prompt/validation digests, and the failing field.
@@ -405,14 +407,15 @@ Rules:
   `llm_ms`; it never stores OCR or proposal text.
 - Screenshot titles use normalized source anchors rather than exact OCR
   sentence matching. Unicode, case, punctuation/whitespace, OCR-inserted
-  spaces inside CJK words, full-width and
-  mixed Chinese/English brackets, common Simplified/Traditional pairs, CJK
-  phrases, and English technical terms are normalized before scoring. A
-  grounded title needs multiple topic anchors; an unrelated title still fails.
-- If only title grounding fails while the title has a partial source anchor,
-  the backend creates a deterministic fallback from an OCR heading/keywords
-  after the one LLM response. It does not rerun OCR or the LLM. If the title
-  has no source anchor, the proposal remains invalid.
+  spaces inside CJK words, full-width and mixed Chinese/English brackets,
+  common Simplified/Traditional pairs, CJK noun phrases, and English technical
+  terms are normalized before scoring. Generic words such as `介紹`, `整理`,
+  `筆記`, and `summary` cannot provide evidence alone.
+- If only title grounding fails, the backend may make exactly one bounded
+  title-only repair LLM call. It sends the same source snapshot, asks for one
+  noun-phrase title using existing technical anchors, replaces only `title`,
+  and reruns the deterministic validator. A second failure returns
+  `LLM_OUTPUT_INVALID`; it never re-runs OCR or regenerates the full proposal.
 - Step 33 still follows safe write policy: create `pending` change request only; no Notion append in this workflow.
 - `/ingest --page <external_page_id>` resolves the target against indexed
   Notion pages; the target is optional for backward compatibility, but accept

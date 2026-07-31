@@ -34,8 +34,15 @@ _TECHNICAL_ATOM_PATTERN = re.compile(
 _CLAIM_SEPARATOR_PATTERN = re.compile(
     r"\n+|(?<=[.!?。！？；;])(?:\s+|$)"
 )
+_IMAGE_SECTION_MARKER_PATTERN = re.compile(
+    r"\[image\s+\d+(?::[^\]]+)?\]",
+    re.IGNORECASE,
+)
 
 SCREENSHOT_VALIDATOR_VERSION = "screenshot_grounding_v2"
+SCREENSHOT_TITLE_GROUNDING_FAILURE_MESSAGE = (
+    "screenshot proposal title is not supported by OCR source"
+)
 
 _BROWSER_CHROME_LINES = frozenset(
     {
@@ -162,7 +169,78 @@ _TITLE_CJK_ALIAS_GROUPS = {
     "performance": ("效能", "性能"),
     "database": ("資料庫", "數據庫"),
     "recruitment": ("招募", "招聘"),
+    "readiness": ("就緒", "可用", "準備完成", "準備"),
+    "work": ("工作", "任務"),
+    "processing": ("處理", "執行"),
 }
+_TITLE_GENERIC_CJK_PHRASES = frozenset(
+    {
+        "介紹",
+        "整理",
+        "筆記",
+        "摘要",
+        "概覽",
+        "概述",
+        "內容",
+        "說明",
+        "主題",
+        "標題",
+        "來源",
+        "畫面",
+        "資訊",
+    }
+)
+_TITLE_GENERIC_ENGLISH_TOKENS = frozenset(
+    {
+        "a",
+        "about",
+        "an",
+        "and",
+        "for",
+        "from",
+        "guide",
+        "in",
+        "introduction",
+        "learning",
+        "main",
+        "notes",
+        "of",
+        "on",
+        "overview",
+        "proposal",
+        "summary",
+        "startup",
+        "the",
+        "to",
+        "topic",
+        "with",
+    }
+)
+_TITLE_HIGH_SPECIFICITY_ENGLISH_TOKENS = frozenset(
+    {
+        "api",
+        "docker",
+        "explain",
+        "http",
+        "java",
+        "kubernetes",
+        "mysql",
+        "notion",
+        "postgres",
+        "postgresql",
+        "pytorch",
+        "python",
+        "redis",
+        "rq",
+        "sql",
+    }
+)
+_TITLE_SEMANTIC_GROUPS = (
+    ("advice", "建議", "應該", "必須", "推薦", "recommend", "should"),
+    ("comparison", "比較", "對比", "相較", "compare", "comparison", "versus", "vs"),
+    ("result", "結果", "結論", "影響", "result", "outcome", "conclusion"),
+    ("improvement", "提升", "改善", "優化", "更快", "improve", "faster", "better"),
+)
 _TITLE_SAFE_TOKENS = frozenset(
     {
         "a",
@@ -403,6 +481,11 @@ class ScreenshotGroundingDiagnostics:
     source_snapshot_digest: str
     prompt_source_digest: str
     validation_source_digest: str
+    title_anchor_count: int
+    matched_title_anchor_count: int
+    unmatched_title_anchor_count: int
+    numeric_anchor_count: int
+    unmatched_numeric_anchor_count: int
 
     def as_dict(self) -> Dict[str, object]:
         return {
@@ -414,6 +497,11 @@ class ScreenshotGroundingDiagnostics:
             "source_snapshot_digest": self.source_snapshot_digest,
             "prompt_source_digest": self.prompt_source_digest,
             "validation_source_digest": self.validation_source_digest,
+            "title_anchor_count": self.title_anchor_count,
+            "matched_title_anchor_count": self.matched_title_anchor_count,
+            "unmatched_title_anchor_count": self.unmatched_title_anchor_count,
+            "numeric_anchor_count": self.numeric_anchor_count,
+            "unmatched_numeric_anchor_count": self.unmatched_numeric_anchor_count,
         }
 
 
@@ -422,6 +510,27 @@ class ScreenshotProposalValidationResult:
     proposal: "SupplementProposalSchema"
     title_fallback_used: bool = False
     diagnostics: Optional[ScreenshotGroundingDiagnostics] = None
+
+
+@dataclass(frozen=True)
+class _TitleGroundingAnalysis:
+    title_anchor_count: int = 0
+    matched_title_anchor_count: int = 0
+    unmatched_title_anchor_count: int = 0
+    numeric_anchor_count: int = 0
+    unmatched_numeric_anchor_count: int = 0
+    matched_high_specificity_anchor_count: int = 0
+    matched_general_anchor_count: int = 0
+    supported: bool = False
+
+    def as_diagnostic_fields(self) -> Dict[str, int]:
+        return {
+            "title_anchor_count": self.title_anchor_count,
+            "matched_title_anchor_count": self.matched_title_anchor_count,
+            "unmatched_title_anchor_count": self.unmatched_title_anchor_count,
+            "numeric_anchor_count": self.numeric_anchor_count,
+            "unmatched_numeric_anchor_count": self.unmatched_numeric_anchor_count,
+        }
 
 
 def build_screenshot_source_snapshot(raw_text: str) -> ScreenshotSourceSnapshot:
@@ -524,6 +633,23 @@ def validate_screenshot_proposal(
     )[0]
 
 
+def validate_screenshot_proposal_with_diagnostics(
+    *,
+    proposal: "SupplementProposalSchema",
+    source_text: str,
+    source_snapshot: Optional[ScreenshotSourceSnapshot] = None,
+) -> ScreenshotProposalValidationResult:
+    snapshot = source_snapshot or build_screenshot_source_snapshot(source_text)
+    validated, diagnostics = _validate_screenshot_proposal(
+        proposal=proposal,
+        source_snapshot=snapshot,
+    )
+    return ScreenshotProposalValidationResult(
+        proposal=validated,
+        diagnostics=diagnostics,
+    )
+
+
 def _validate_screenshot_proposal(
     *,
     proposal: "SupplementProposalSchema",
@@ -539,6 +665,7 @@ def _validate_screenshot_proposal(
 
     evidence_claim_count = 0
     unsupported_claim_count = 0
+    title_analysis = _TitleGroundingAnalysis()
 
     def diagnostics(*, value: str, evidence: int, unsupported: int) -> Dict[str, object]:
         result = ScreenshotGroundingDiagnostics(
@@ -550,6 +677,7 @@ def _validate_screenshot_proposal(
             source_snapshot_digest=source_snapshot.digest,
             prompt_source_digest=source_snapshot.digest,
             validation_source_digest=source_snapshot.digest,
+            **title_analysis.as_diagnostic_fields(),
         )
         return result.as_dict()
 
@@ -622,18 +750,55 @@ def _validate_screenshot_proposal(
 
     source_normalized = source_snapshot.normalized_text
     for label, value in _proposal_text_items(proposal):
-        claims = [value] if label == "title" else _split_claims(value)
+        if label == "title":
+            title_analysis = _analyze_title_grounding(
+                value=value,
+                source_text=source_snapshot.text,
+            )
+            if not title_analysis.supported:
+                unsupported_claim_count += 1
+                fail(
+                    SCREENSHOT_TITLE_GROUNDING_FAILURE_MESSAGE,
+                    field="title",
+                    value=value,
+                    evidence=evidence_claim_count,
+                    unsupported=unsupported_claim_count,
+                )
+            if _introduces_new_advice(
+                value=value,
+                source_normalized=source_normalized,
+            ):
+                unsupported_claim_count += 1
+                fail(
+                    "screenshot proposal title introduces unsupported advice",
+                    field="title",
+                    value=value,
+                    evidence=evidence_claim_count,
+                    unsupported=unsupported_claim_count,
+                )
+            if _introduces_new_conclusion(
+                value=value,
+                source_normalized=source_normalized,
+            ) or _introduces_new_title_semantics(
+                value=value,
+                source_text=source_snapshot.text,
+            ):
+                unsupported_claim_count += 1
+                fail(
+                    "screenshot proposal title introduces unsupported conclusion",
+                    field="title",
+                    value=value,
+                    evidence=evidence_claim_count,
+                    unsupported=unsupported_claim_count,
+                )
+            continue
+
+        claims = _split_claims(value)
         for claim in claims:
-            if label == "title":
-                has_source_evidence = _has_title_source_anchor(
-                    value=claim,
-                    source_text=source_snapshot.text,
-                )
-            else:
-                has_source_evidence = _has_source_evidence(
-                    value=claim,
-                    source_normalized=source_normalized,
-                )
+            has_source_evidence = _has_source_evidence(
+                value=claim,
+                source_normalized=source_normalized,
+            )
 
             if has_source_evidence:
                 evidence_claim_count += 1
@@ -686,6 +851,7 @@ def _validate_screenshot_proposal(
         source_snapshot_digest=source_snapshot.digest,
         prompt_source_digest=source_snapshot.digest,
         validation_source_digest=source_snapshot.digest,
+        **title_analysis.as_diagnostic_fields(),
     )
 
 
@@ -803,122 +969,167 @@ def _normalize_title_text(value: str) -> str:
     return re.sub(r"\s+", " ", normalized).strip()
 
 
-def _title_cjk_ngrams(value: str) -> set[str]:
+def _normalize_title_source_text(source_text: str) -> str:
+    source_without_image_markers = _IMAGE_SECTION_MARKER_PATTERN.sub(
+        " ",
+        preprocess_screenshot_ocr_text(source_text),
+    )
+    return _normalize_title_text(source_without_image_markers)
+
+
+def _title_ascii_tokens(value: str) -> dict[str, str]:
+    tokens: dict[str, str] = {}
+    for raw_token in _ASCII_TOKEN_PATTERN.findall(value):
+        canonical = _canonical_token(raw_token)
+        if not canonical or canonical in _TITLE_GENERIC_ENGLISH_TOKENS:
+            continue
+        tokens[canonical] = raw_token
+    return tokens
+
+
+def _title_cjk_chunks(value: str) -> List[str]:
     normalized = _normalize_title_text(value)
+    for phrase in sorted(_TITLE_GENERIC_CJK_PHRASES, key=len, reverse=True):
+        normalized = normalized.replace(phrase, " ")
+    for connective in _TITLE_CONNECTIVE_CJK:
+        normalized = normalized.replace(connective, " ")
+    return _CJK_RUN_PATTERN.findall(normalized)
+
+
+def _title_cjk_bigrams(value: str) -> set[str]:
     return {
         run[index : index + 2]
-        for run in _CJK_RUN_PATTERN.findall(normalized)
+        for run in _title_cjk_chunks(value)
         for index in range(len(run) - 1)
     }
 
 
-def _title_aliases_present(value: str) -> set[str]:
+def _title_source_cjk_bigrams(value: str) -> set[str]:
     normalized = _normalize_title_text(value)
-    return {
-        canonical
-        for canonical, aliases in _TITLE_CJK_ALIAS_GROUPS.items()
-        if any(_normalize_title_text(alias) in normalized for alias in aliases)
-    }
+    source_bigrams = _title_cjk_bigrams(normalized)
+    for aliases in _TITLE_CJK_ALIAS_GROUPS.values():
+        if any(_normalize_title_text(alias) in normalized for alias in aliases):
+            for alias in aliases:
+                source_bigrams.update(_title_cjk_bigrams(alias))
+    return source_bigrams
 
 
-def _title_anchor_details(
+def _title_unmatched_cjk_chunks(
     *,
     value: str,
-    source_text: str,
-) -> tuple[set[str], set[str], set[str], set[str]]:
-    normalized_value = _normalize_title_text(value)
-    normalized_source = _normalize_title_text(
-        preprocess_screenshot_ocr_text(source_text)
-    )
-    source_tokens = _canonical_token_set(normalized_source)
-    value_tokens = _canonical_tokens(normalized_value)
-    value_aliases = _title_aliases_present(normalized_value)
-    source_aliases = _title_aliases_present(normalized_source)
-    for canonical, aliases in _TITLE_CJK_ALIAS_GROUPS.items():
-        if canonical in source_tokens:
-            source_aliases.add(canonical)
-        if any(_normalize_title_text(alias) in normalized_source for alias in aliases):
-            source_aliases.add(canonical)
+    source_bigrams: set[str],
+) -> set[str]:
+    unmatched: set[str] = set()
+    for run in _title_cjk_chunks(value):
+        covered = [False] * len(run)
+        for index in range(len(run) - 1):
+            if run[index : index + 2] in source_bigrams:
+                covered[index] = True
+                covered[index + 1] = True
+        start: Optional[int] = None
+        for index, is_covered in enumerate(covered + [True]):
+            if not is_covered and start is None:
+                start = index
+            elif is_covered and start is not None:
+                chunk = run[start:index]
+                if chunk and not (
+                    len(chunk) == 1
+                    and chunk in {character for bigram in source_bigrams for character in bigram}
+                ):
+                    unmatched.add(chunk)
+                start = None
+    return unmatched
 
-    source_anchor_tokens = source_tokens | source_aliases
-    allowed_tokens = {
-        _canonical_token(token) for token in _TITLE_SAFE_TOKENS
-    }
-    allowed_tokens.update(source_aliases)
-    unknown_tokens = {
-        token
-        for token in value_tokens
-        if token not in source_anchor_tokens and token not in allowed_tokens
-    }
-    exact_or_alias = {
-        token
-        for token in value_tokens
-        if token in source_anchor_tokens and token not in allowed_tokens
-    }
-    alias_overlap = value_aliases & source_aliases
-    cjk_overlap = _title_cjk_ngrams(normalized_value) & _title_cjk_ngrams(
-        normalized_source
+
+def _is_title_high_specificity_token(*, raw_token: str, canonical: str) -> bool:
+    return (
+        canonical in _TITLE_HIGH_SPECIFICITY_ENGLISH_TOKENS
+        or any(character.isupper() for character in raw_token)
+        or any(character.isdigit() for character in raw_token)
+        or any(symbol in raw_token for symbol in ("_", ".", "/", ":", "#", "+", "-"))
     )
-    return unknown_tokens, exact_or_alias, alias_overlap, cjk_overlap
+
+
+def _analyze_title_grounding(*, value: str, source_text: str) -> _TitleGroundingAnalysis:
+    normalized_value = _normalize_title_text(value)
+    normalized_source = _normalize_title_source_text(source_text)
+    value_tokens = _title_ascii_tokens(normalized_value)
+    source_tokens = _title_ascii_tokens(normalized_source)
+    value_atoms = _technical_atoms(normalized_value)
+    source_atoms = _technical_atoms(normalized_source)
+    value_numbers = set(_NUMBER_PATTERN.findall(normalized_value))
+    source_numbers = set(_NUMBER_PATTERN.findall(normalized_source))
+    source_bigrams = _title_source_cjk_bigrams(normalized_source)
+    value_bigrams = _title_cjk_bigrams(normalized_value)
+    matched_cjk = value_bigrams & source_bigrams
+    unmatched_cjk = _title_unmatched_cjk_chunks(
+        value=normalized_value,
+        source_bigrams=source_bigrams,
+    )
+
+    matched_ascii = set(value_tokens) & set(source_tokens)
+    unmatched_ascii = set(value_tokens) - set(source_tokens)
+    matched_atoms = value_atoms & source_atoms
+    unmatched_atoms = value_atoms - source_atoms
+    matched_numbers = value_numbers & source_numbers
+    unmatched_numbers = value_numbers - source_numbers
+
+    candidate_keys = {
+        *(f"word:{token}" for token in value_tokens),
+        *(f"atom:{atom}" for atom in value_atoms),
+        *(f"number:{number}" for number in value_numbers),
+        *(f"cjk:{anchor}" for anchor in matched_cjk),
+        *(f"cjk-unmatched:{anchor}" for anchor in unmatched_cjk),
+    }
+    matched_keys = {
+        *(f"word:{token}" for token in matched_ascii),
+        *(f"atom:{atom}" for atom in matched_atoms),
+        *(f"number:{number}" for number in matched_numbers),
+        *(f"cjk:{anchor}" for anchor in matched_cjk),
+    }
+    unmatched_keys = candidate_keys - matched_keys
+
+    matched_high_specificity = sum(
+        1
+        for canonical, raw_token in value_tokens.items()
+        if canonical in source_tokens
+        and _is_title_high_specificity_token(
+            raw_token=raw_token,
+            canonical=canonical,
+        )
+    ) + len(matched_atoms)
+    matched_general = len(matched_keys) - matched_high_specificity
+    has_unmatched_semantics = _introduces_new_title_semantics(
+        value=value,
+        source_text=source_text,
+    )
+    supported = bool(matched_high_specificity or matched_general >= 2)
+    supported = supported and not unmatched_keys and not has_unmatched_semantics
+
+    return _TitleGroundingAnalysis(
+        title_anchor_count=len(candidate_keys),
+        matched_title_anchor_count=len(matched_keys),
+        unmatched_title_anchor_count=len(unmatched_keys),
+        numeric_anchor_count=len(value_numbers),
+        unmatched_numeric_anchor_count=len(unmatched_numbers),
+        matched_high_specificity_anchor_count=matched_high_specificity,
+        matched_general_anchor_count=max(0, matched_general),
+        supported=supported,
+    )
 
 
 def _has_title_source_anchor(*, value: str, source_text: str) -> bool:
-    normalized_value = _normalize_title_text(value)
-    normalized_source = _normalize_title_text(
-        preprocess_screenshot_ocr_text(source_text)
-    )
-    if not normalized_value:
-        return False
-    if not set(_NUMBER_PATTERN.findall(normalized_value)).issubset(
-        set(_NUMBER_PATTERN.findall(normalized_source))
-    ):
-        return False
-    if not _technical_atoms(normalized_value).issubset(
-        _technical_atoms(normalized_source)
-    ):
-        return False
-
-    unknown_tokens, exact_or_alias, alias_overlap, cjk_overlap = _title_anchor_details(
-        value=normalized_value,
-        source_text=normalized_source,
-    )
-    if unknown_tokens:
-        return False
-
-    has_cjk = any(
-        character not in _TITLE_CONNECTIVE_CJK
-        for character in _CJK_PATTERN.findall(normalized_value)
-    )
-    if has_cjk and not cjk_overlap and not alias_overlap:
-        return False
-    anchor_count = len(exact_or_alias) + len(alias_overlap) + len(cjk_overlap)
-    if anchor_count < 2:
-        return False
-    return bool(exact_or_alias or alias_overlap or cjk_overlap)
+    return _analyze_title_grounding(value=value, source_text=source_text).supported
 
 
 def _has_partial_title_anchor(*, value: str, source_text: str) -> bool:
     """Allow fallback only when the failed title is still on the source topic."""
-
-    normalized_value = _normalize_title_text(value)
-    normalized_source = _normalize_title_text(
-        preprocess_screenshot_ocr_text(source_text)
+    analysis = _analyze_title_grounding(value=value, source_text=source_text)
+    return (
+        analysis.unmatched_title_anchor_count == 0
+        and analysis.matched_title_anchor_count > 0
+        and analysis.unmatched_numeric_anchor_count == 0
     )
-    unknown_tokens, exact_or_alias, alias_overlap, cjk_overlap = _title_anchor_details(
-        value=normalized_value,
-        source_text=normalized_source,
-    )
-    if unknown_tokens:
-        return False
-    if not set(_NUMBER_PATTERN.findall(normalized_value)).issubset(
-        set(_NUMBER_PATTERN.findall(normalized_source))
-    ):
-        return False
-    if not _technical_atoms(normalized_value).issubset(
-        _technical_atoms(normalized_source)
-    ):
-        return False
-    return bool(exact_or_alias or alias_overlap or cjk_overlap)
 
 
 def build_screenshot_fallback_title(source_text: str) -> str:
@@ -1128,6 +1339,29 @@ def _introduces_new_conclusion(*, value: str, source_normalized: str) -> bool:
     if not _CONCLUSION_PATTERN.search(normalized_value):
         return False
     return not _CONCLUSION_PATTERN.search(normalized_source)
+
+
+def _contains_title_semantic_term(*, value: str, term: str) -> bool:
+    if re.fullmatch(r"[a-z]+", term):
+        return bool(re.search(rf"\b{re.escape(term)}\b", value))
+    return term in value
+
+
+def _introduces_new_title_semantics(*, value: str, source_text: str) -> bool:
+    normalized_value = _normalize_title_text(value)
+    normalized_source = _normalize_title_source_text(source_text)
+    for group in _TITLE_SEMANTIC_GROUPS:
+        value_has_term = any(
+            _contains_title_semantic_term(value=normalized_value, term=term)
+            for term in group[1:]
+        )
+        source_has_term = any(
+            _contains_title_semantic_term(value=normalized_source, term=term)
+            for term in group[1:]
+        )
+        if value_has_term and not source_has_term:
+            return True
+    return False
 
 
 def _validate_output_language(
