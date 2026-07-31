@@ -393,19 +393,31 @@ Rules:
   source and grounding validator receive that same snapshot; there is no
   second page selection, truncation, cleanup, or CJK whitespace normalization
   path. Their source digests must be identical.
-- Grounding evaluates summary/concepts/notes sentence claims separately. A
+- Grounding uses `summary_sentence_list_item_v1`: each complete summary
+  sentence is one validation unit, and each complete concept or note list item
+  is one validation unit. Commas, colons, semicolons, parentheses, and
+  newlines inside a list item do not create standalone phrase claims. A
   title uses a separate noun-phrase anchor contract: normalized technical
-  terms, identifiers, numbers, and CJK noun anchors must be source-supported;
+  terms, identifiers, numbers, and CJK noun anchors are scored separately;
   one high-specificity anchor or two general content anchors are required.
+  Unmatched general CJK paraphrase anchors are allowed when all technical
+  identifiers, product names, and numbers match and the threshold is met.
+  Unmatched technical identifiers, product names, or numbers still fail closed.
   New numbers, commands, URLs, technical atoms, advice, comparisons,
   conclusions, or unsupported domain content still fail closed.
-- For summary/concepts/notes, `extracted_claim_count` counts every bounded
-  claim extracted in deterministic field order, `matched_claim_count` counts
-  only claims with source evidence, and `evidence_claim_count` remains the
+- For summary/concepts/notes, `validation_unit_count` counts every bounded
+  validation unit in deterministic field order and `matched_validation_unit_count`
+  counts units with source evidence. `extracted_claim_count` and
+  `matched_claim_count` remain backward-compatible aliases. `failed_field_count`
+  is the deprecated count of unique item paths such as `concepts[2]`; it is
+  not a proposal-field count. `failed_validation_unit_count`,
+  `failed_logical_region_count`, `failed_logical_regions`, and the per-region
+  unit counts carry the unambiguous meaning. `evidence_claim_count` remains the
   backward-compatible alias for `matched_claim_count`. The validator analyzes
-  every claim before failing closed; it records only counts, the first
-  zero-based claim index, and a fixed `first_unsupported_reason` enum. It does
-  not retain claim, proposal, or OCR text.
+  every unit before failing closed. Persisted diagnostics contain only fixed
+  field paths, indexes, reason enums, and evidence counts. An in-process
+  private diagnostic report may contain candidate text for explicit debugging,
+  but it is never copied into workflow metadata, API responses, or general logs.
 - Source-faithful summary paraphrase may preserve exact technical identifiers,
   numbers/versions, CJK content anchors, and bounded reporting aliases. New
   technical identifiers, numbers/versions, advice, comparisons, results, or
@@ -424,17 +436,35 @@ Rules:
   terms are normalized before scoring. Generic words such as `介紹`, `整理`,
   `筆記`, and `summary` cannot provide evidence alone.
 - If only title grounding fails, the backend may make exactly one bounded
-  title-only repair LLM call. It sends the same source snapshot, asks for one
-  noun-phrase title using existing technical anchors, replaces only `title`,
-  and reruns the deterministic validator. A second failure returns
+  title-only repair LLM call. It sends the same source snapshot plus a bounded
+  allowlist extracted from that snapshot, asks for one noun-phrase title using
+  only allowlisted technical/topic anchors, replaces only `title`, and reruns
+  the deterministic validator. If the repair fails only on general CJK
+  paraphrase anchors, one deterministic extractive title is built from matched
+  source anchors and validated again. A second non-repairable failure returns
   `LLM_OUTPUT_INVALID`; it never re-runs OCR or regenerates the full proposal.
 - If the screenshot validator reports only a safe summary grounding failure
   (`INSUFFICIENT_SOURCE_ANCHORS` or `PARAPHRASE_NOT_GROUNDED`), the backend may
   make exactly one bounded summary-only repair call. It reuses the same source
   snapshot, replaces only `summary`, and reruns the same deterministic
   validator. New numbers, products, technical identifiers, advice,
-  comparisons, results, or any other failing field disable repair; a second
-  failure returns `LLM_OUTPUT_INVALID`.
+  comparisons, results, or any other failing logical region disable summary
+  repair; a second failure returns `LLM_OUTPUT_INVALID`.
+- If multiple summary/concept/note units fail only with
+  `INSUFFICIENT_SOURCE_ANCHORS` or `PARAPHRASE_NOT_GROUNDED`, the proposal body
+  is one bounded repair scope. The backend may make exactly one body-only call,
+  replace only `summary`, `concepts`, and `notes`, and rerun the same
+  deterministic validator. Any new number, product, technical identifier,
+  advice, comparison, or result disables body repair. A title repair that has
+  already passed remains successful when later body validation fails, so the
+  body repair policy can still run. Title and body repairs never rerun OCR.
+- A two-stage `OCR -> extractive facts -> deterministic fact validation ->
+  proposal` pipeline was evaluated but is not enabled in this change. It needs
+  a versioned fact schema, minimum-fact policy, and final proposal validation;
+  otherwise it only moves the same grounding boundary earlier while adding a
+  provider call. The bounded body repair plus extractive prompt is the current
+  lower-risk MVP step. A live retest decides whether to promote the two-stage
+  pipeline into a separate ADR and implementation.
 - Step 33 still follows safe write policy: create `pending` change request only; no Notion append in this workflow.
 - `/ingest --page <external_page_id>` resolves the target against indexed
   Notion pages; the target is optional for backward compatibility, but accept

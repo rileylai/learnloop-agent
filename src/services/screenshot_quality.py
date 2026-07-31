@@ -31,18 +31,39 @@ _TECHNICAL_ATOM_PATTERN = re.compile(
     r"(?<!\w)[A-Za-z][A-Za-z0-9_]*(?:[./:#][A-Za-z0-9_./:#-]+)(?!\w)",
     re.IGNORECASE,
 )
-_CLAIM_BOUNDARY_PATTERN = re.compile(
-    r"\n+|(?<=[。！？；;])(?=\s*\S|$)|"
-    r"(?<=[.!?])(?:\s+|$)|(?<=[：:])(?=\s+)"
+_SUMMARY_SENTENCE_BOUNDARY_PATTERN = re.compile(
+    r"(?<=[。！？!?])\s*|(?<=[.])(?:\s+|$)"
 )
 _IMAGE_SECTION_MARKER_PATTERN = re.compile(
     r"\[image\s+\d+(?::[^\]]+)?\]",
     re.IGNORECASE,
 )
 
-SCREENSHOT_VALIDATOR_VERSION = "screenshot_grounding_v2"
+SCREENSHOT_VALIDATOR_VERSION = "screenshot_grounding_v3"
+SCREENSHOT_VALIDATION_GRANULARITY = "summary_sentence_list_item_v1"
 SCREENSHOT_TITLE_GROUNDING_FAILURE_MESSAGE = (
     "screenshot proposal title is not supported by OCR source"
+)
+
+TITLE_FAILURE_REASON_NO_USABLE_ANCHOR = "NO_USABLE_TITLE_ANCHOR"
+TITLE_FAILURE_REASON_INSUFFICIENT_MATCHED_ANCHORS = "INSUFFICIENT_MATCHED_ANCHORS"
+TITLE_FAILURE_REASON_UNMATCHED_TECHNICAL_IDENTIFIER = (
+    "UNMATCHED_TECHNICAL_IDENTIFIER"
+)
+TITLE_FAILURE_REASON_UNMATCHED_PRODUCT_NAME = "UNMATCHED_PRODUCT_NAME"
+TITLE_FAILURE_REASON_UNMATCHED_NUMBER_OR_VERSION = "UNMATCHED_NUMBER_OR_VERSION"
+TITLE_FAILURE_REASON_GENERIC_ONLY = "GENERIC_TITLE_ONLY"
+TITLE_FAILURE_REASON_OCR_NORMALIZATION_MISMATCH = "OCR_NORMALIZATION_MISMATCH"
+TITLE_FAILURE_REASONS = frozenset(
+    {
+        TITLE_FAILURE_REASON_NO_USABLE_ANCHOR,
+        TITLE_FAILURE_REASON_INSUFFICIENT_MATCHED_ANCHORS,
+        TITLE_FAILURE_REASON_UNMATCHED_TECHNICAL_IDENTIFIER,
+        TITLE_FAILURE_REASON_UNMATCHED_PRODUCT_NAME,
+        TITLE_FAILURE_REASON_UNMATCHED_NUMBER_OR_VERSION,
+        TITLE_FAILURE_REASON_GENERIC_ONLY,
+        TITLE_FAILURE_REASON_OCR_NORMALIZATION_MISMATCH,
+    }
 )
 
 _BROWSER_CHROME_LINES = frozenset(
@@ -234,6 +255,22 @@ _TITLE_HIGH_SPECIFICITY_ENGLISH_TOKENS = frozenset(
         "redis",
         "rq",
         "sql",
+    }
+)
+_TITLE_PRODUCT_NAME_TOKENS = frozenset(
+    {
+        "docker",
+        "java",
+        "kubernetes",
+        "mysql",
+        "notion",
+        "postgres",
+        "postgresql",
+        "pytorch",
+        "python",
+        "redis",
+        "redi",
+        "telegram",
     }
 )
 _TITLE_SEMANTIC_GROUPS = (
@@ -519,6 +556,35 @@ class ScreenshotGroundingDiagnostics:
     first_unsupported_reason: Optional[str]
     failed_field_count: int
     summary_repair_eligible: bool
+    validation_granularity: str
+    validation_unit_count: int
+    matched_validation_unit_count: int
+    failed_validation_unit_count: int
+    failed_logical_region_count: int
+    failed_logical_regions: tuple[str, ...]
+    failed_proposal_field_count: int
+    summary_validation_unit_count: int
+    concept_validation_unit_count: int
+    note_validation_unit_count: int
+    failed_summary_validation_unit_count: int
+    failed_concept_validation_unit_count: int
+    failed_note_validation_unit_count: int
+    first_unsupported_validation_unit_index: Optional[int]
+    body_repair_eligible: bool
+    repair_scope: Optional[str]
+    matched_exact_ascii_anchor_count: int
+    matched_cjk_anchor_count: int
+    unmatched_general_token_count: int
+    failure_reason_counts: tuple[tuple[str, int], ...]
+    failed_validation_unit_details: tuple[Dict[str, object], ...]
+    title_failure_reason: Optional[str] = None
+    matched_high_specificity_anchor_count: int = 0
+    unmatched_high_specificity_anchor_count: int = 0
+    matched_general_anchor_count: int = 0
+    unmatched_general_anchor_count: int = 0
+    matched_technical_identifier_count: int = 0
+    unmatched_technical_identifier_count: int = 0
+    title_repair_failure_reason: Optional[str] = None
 
     def as_dict(self) -> Dict[str, object]:
         return {
@@ -541,6 +607,55 @@ class ScreenshotGroundingDiagnostics:
             "first_unsupported_reason": self.first_unsupported_reason,
             "failed_field_count": self.failed_field_count,
             "summary_repair_eligible": self.summary_repair_eligible,
+            "validation_granularity": self.validation_granularity,
+            "validation_unit_count": self.validation_unit_count,
+            "matched_validation_unit_count": self.matched_validation_unit_count,
+            "failed_validation_unit_count": self.failed_validation_unit_count,
+            "failed_logical_region_count": self.failed_logical_region_count,
+            "failed_logical_regions": list(self.failed_logical_regions),
+            "failed_proposal_field_count": self.failed_proposal_field_count,
+            "summary_validation_unit_count": self.summary_validation_unit_count,
+            "concept_validation_unit_count": self.concept_validation_unit_count,
+            "note_validation_unit_count": self.note_validation_unit_count,
+            "failed_summary_validation_unit_count": (
+                self.failed_summary_validation_unit_count
+            ),
+            "failed_concept_validation_unit_count": (
+                self.failed_concept_validation_unit_count
+            ),
+            "failed_note_validation_unit_count": (
+                self.failed_note_validation_unit_count
+            ),
+            "first_unsupported_validation_unit_index": (
+                self.first_unsupported_validation_unit_index
+            ),
+            "body_repair_eligible": self.body_repair_eligible,
+            "repair_scope": self.repair_scope,
+            "matched_exact_ascii_anchor_count": (
+                self.matched_exact_ascii_anchor_count
+            ),
+            "matched_cjk_anchor_count": self.matched_cjk_anchor_count,
+            "unmatched_general_token_count": self.unmatched_general_token_count,
+            "failure_reason_counts": dict(self.failure_reason_counts),
+            "failed_validation_unit_details": [
+                dict(item) for item in self.failed_validation_unit_details
+            ],
+            "title_failure_reason": self.title_failure_reason,
+            "matched_high_specificity_anchor_count": (
+                self.matched_high_specificity_anchor_count
+            ),
+            "unmatched_high_specificity_anchor_count": (
+                self.unmatched_high_specificity_anchor_count
+            ),
+            "matched_general_anchor_count": self.matched_general_anchor_count,
+            "unmatched_general_anchor_count": self.unmatched_general_anchor_count,
+            "matched_technical_identifier_count": (
+                self.matched_technical_identifier_count
+            ),
+            "unmatched_technical_identifier_count": (
+                self.unmatched_technical_identifier_count
+            ),
+            "title_repair_failure_reason": self.title_repair_failure_reason,
         }
 
 
@@ -559,7 +674,12 @@ class _TitleGroundingAnalysis:
     numeric_anchor_count: int = 0
     unmatched_numeric_anchor_count: int = 0
     matched_high_specificity_anchor_count: int = 0
+    unmatched_high_specificity_anchor_count: int = 0
     matched_general_anchor_count: int = 0
+    unmatched_general_anchor_count: int = 0
+    matched_technical_identifier_count: int = 0
+    unmatched_technical_identifier_count: int = 0
+    title_failure_reason: Optional[str] = None
     supported: bool = False
 
     def as_diagnostic_fields(self) -> Dict[str, int]:
@@ -569,6 +689,22 @@ class _TitleGroundingAnalysis:
             "unmatched_title_anchor_count": self.unmatched_title_anchor_count,
             "numeric_anchor_count": self.numeric_anchor_count,
             "unmatched_numeric_anchor_count": self.unmatched_numeric_anchor_count,
+            "title_failure_reason": self.title_failure_reason,
+            "matched_high_specificity_anchor_count": (
+                self.matched_high_specificity_anchor_count
+            ),
+            "unmatched_high_specificity_anchor_count": (
+                self.unmatched_high_specificity_anchor_count
+            ),
+            "matched_general_anchor_count": self.matched_general_anchor_count,
+            "unmatched_general_anchor_count": self.unmatched_general_anchor_count,
+            "matched_technical_identifier_count": (
+                self.matched_technical_identifier_count
+            ),
+            "unmatched_technical_identifier_count": (
+                self.unmatched_technical_identifier_count
+            ),
+            "title_repair_failure_reason": None,
         }
 
 
@@ -576,6 +712,18 @@ class _TitleGroundingAnalysis:
 class _ClaimGroundingAnalysis:
     matched: bool
     reason: Optional[str] = None
+    exact_ascii_anchors: tuple[str, ...] = ()
+    cjk_anchors: tuple[str, ...] = ()
+    unmatched_general_tokens: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _ProposalValidationField:
+    field_path: str
+    logical_region: str
+    item_index: Optional[int]
+    original_value: str
+    validation_units: tuple[str, ...]
 
 
 def build_screenshot_source_snapshot(raw_text: str) -> ScreenshotSourceSnapshot:
@@ -715,18 +863,40 @@ def _validate_screenshot_proposal(
     first_unsupported_claim_index: Optional[int] = None
     first_unsupported_reason: Optional[str] = None
     failed_fields: set[str] = set()
+    failed_logical_regions: set[str] = set()
     failure_reasons: List[str] = []
+    failure_reason_counts: Dict[str, int] = {}
+    validation_unit_counts = {"summary": 0, "concepts": 0, "notes": 0}
+    failed_validation_unit_counts = {"summary": 0, "concepts": 0, "notes": 0}
+    matched_exact_ascii_anchor_count = 0
+    matched_cjk_anchor_count = 0
+    unmatched_general_token_count = 0
+    failed_validation_unit_details: List[Dict[str, object]] = []
+    private_field_details: List[Dict[str, object]] = []
     first_failure_field: Optional[str] = None
     first_failure_value = ""
     first_failure_message: Optional[str] = None
     title_analysis = _TitleGroundingAnalysis()
 
     def diagnostics(*, value: str, evidence: int, unsupported: int) -> Dict[str, object]:
-        summary_repair_eligible = bool(
-            first_failure_field == "summary"
-            and len(failed_fields) == 1
-            and failure_reasons
+        safe_repair_failure = bool(
+            failure_reasons
             and all(reason in _SUMMARY_REPAIR_SAFE_REASONS for reason in failure_reasons)
+            and failed_logical_regions
+            and failed_logical_regions.issubset({"summary", "concepts", "notes"})
+        )
+        summary_repair_eligible = bool(
+            safe_repair_failure and failed_logical_regions == {"summary"}
+        )
+        body_repair_eligible = bool(
+            safe_repair_failure and not summary_repair_eligible
+        )
+        repair_scope = (
+            "summary"
+            if summary_repair_eligible
+            else "body"
+            if body_repair_eligible
+            else None
         )
         result = ScreenshotGroundingDiagnostics(
             source_normalized_char_count=source_snapshot.source_normalized_char_count,
@@ -743,6 +913,37 @@ def _validate_screenshot_proposal(
             first_unsupported_reason=first_unsupported_reason,
             failed_field_count=len(failed_fields),
             summary_repair_eligible=summary_repair_eligible,
+            validation_granularity=SCREENSHOT_VALIDATION_GRANULARITY,
+            validation_unit_count=extracted_claim_count,
+            matched_validation_unit_count=matched_claim_count,
+            failed_validation_unit_count=len(failed_validation_unit_details),
+            failed_logical_region_count=len(failed_logical_regions),
+            failed_logical_regions=tuple(sorted(failed_logical_regions)),
+            failed_proposal_field_count=len(failed_logical_regions),
+            summary_validation_unit_count=validation_unit_counts["summary"],
+            concept_validation_unit_count=validation_unit_counts["concepts"],
+            note_validation_unit_count=validation_unit_counts["notes"],
+            failed_summary_validation_unit_count=(
+                failed_validation_unit_counts["summary"]
+            ),
+            failed_concept_validation_unit_count=(
+                failed_validation_unit_counts["concepts"]
+            ),
+            failed_note_validation_unit_count=(
+                failed_validation_unit_counts["notes"]
+            ),
+            first_unsupported_validation_unit_index=(
+                first_unsupported_claim_index
+            ),
+            body_repair_eligible=body_repair_eligible,
+            repair_scope=repair_scope,
+            matched_exact_ascii_anchor_count=matched_exact_ascii_anchor_count,
+            matched_cjk_anchor_count=matched_cjk_anchor_count,
+            unmatched_general_token_count=unmatched_general_token_count,
+            failure_reason_counts=tuple(sorted(failure_reason_counts.items())),
+            failed_validation_unit_details=tuple(
+                dict(item) for item in failed_validation_unit_details
+            ),
             **title_analysis.as_diagnostic_fields(),
         )
         return result.as_dict()
@@ -767,6 +968,7 @@ def _validate_screenshot_proposal(
                     else unsupported_claim_count
                 ),
             ),
+            private_diagnostics={"validation_fields": private_field_details},
         )
 
     if not 3 <= len(proposal.concepts) <= 30:
@@ -781,13 +983,6 @@ def _validate_screenshot_proposal(
             field="notes",
             value="\n".join(proposal.notes),
         )
-    if _normalize_title_text(proposal.title) in _GENERIC_SCREENSHOT_TITLES:
-        fail(
-            "screenshot proposal title must be concrete and specific",
-            field="title",
-            value=proposal.title,
-            unsupported=1,
-        )
     sentence_count = len(_SENTENCE_PATTERN.findall(proposal.summary))
     if sentence_count == 0:
         sentence_count = 1
@@ -798,6 +993,13 @@ def _validate_screenshot_proposal(
             value=proposal.summary,
         )
 
+    # Compute title diagnostics before language validation so a title-only
+    # failure remains explainable even when the whole proposal also violates
+    # the output-language contract.
+    title_analysis = _analyze_title_grounding(
+        value=proposal.title,
+        source_text=source_snapshot.text,
+    )
     language = detect_screenshot_language(source_snapshot.text)
     try:
         _validate_output_language(proposal, language)
@@ -824,6 +1026,7 @@ def _validate_screenshot_proposal(
             if not title_analysis.supported:
                 unsupported_claim_count += 1
                 failed_fields.add("title")
+                failed_logical_regions.add("title")
                 fail(
                     SCREENSHOT_TITLE_GROUNDING_FAILURE_MESSAGE,
                     field="title",
@@ -837,6 +1040,7 @@ def _validate_screenshot_proposal(
             ):
                 unsupported_claim_count += 1
                 failed_fields.add("title")
+                failed_logical_regions.add("title")
                 fail(
                     "screenshot proposal title introduces unsupported advice",
                     field="title",
@@ -852,6 +1056,8 @@ def _validate_screenshot_proposal(
                 source_text=source_snapshot.text,
             ):
                 unsupported_claim_count += 1
+                failed_fields.add("title")
+                failed_logical_regions.add("title")
                 fail(
                     "screenshot proposal title introduces unsupported conclusion",
                     field="title",
@@ -861,30 +1067,67 @@ def _validate_screenshot_proposal(
                 )
             continue
 
-        claims = _split_claims(value)
+        validation_field = _build_validation_field(label=label, value=value)
+        claims = validation_field.validation_units
+        private_field_detail: Dict[str, object] = {
+            "field_path": validation_field.field_path,
+            "logical_region": validation_field.logical_region,
+            "item_index": validation_field.item_index,
+            "original_claim": validation_field.original_value,
+            "split_result": list(claims),
+            "validation_units": [],
+        }
+        private_field_details.append(private_field_detail)
         if not claims:
             reason = SUMMARY_GROUNDING_REASON_NO_CLAIM_EXTRACTED
             unsupported_claim_count += 1
             failed_fields.add(label)
+            failed_logical_regions.add(validation_field.logical_region)
             failure_reasons.append(reason)
+            failure_reason_counts[reason] = failure_reason_counts.get(reason, 0) + 1
             if first_unsupported_claim_index is None:
                 first_unsupported_claim_index = extracted_claim_count
                 first_unsupported_reason = reason
             if first_failure_field is None:
-                first_failure_field = label
+                first_failure_field = validation_field.logical_region
                 first_failure_value = value
                 first_failure_message = (
                     f"screenshot proposal {label} is not supported by OCR source"
                 )
             continue
 
-        for claim in claims:
+        for unit_index, claim in enumerate(claims):
             claim_index = extracted_claim_count
             extracted_claim_count += 1
+            validation_unit_counts[validation_field.logical_region] += 1
             claim_analysis = _analyze_claim_grounding(
                 value=claim,
                 source_normalized=source_normalized,
             )
+            matched_exact_ascii_anchor_count += len(
+                claim_analysis.exact_ascii_anchors
+            )
+            matched_cjk_anchor_count += len(claim_analysis.cjk_anchors)
+            unmatched_general_token_count += len(
+                claim_analysis.unmatched_general_tokens
+            )
+            private_unit_result = {
+                "validation_unit_index": claim_index,
+                "field_unit_index": unit_index,
+                "claim": claim,
+                "matched": claim_analysis.matched,
+                "matched_evidence": [
+                    *claim_analysis.exact_ascii_anchors,
+                    *claim_analysis.cjk_anchors,
+                ],
+                "unmatched_general_tokens": list(
+                    claim_analysis.unmatched_general_tokens
+                ),
+                "failure_reason": claim_analysis.reason,
+            }
+            cast_units = private_field_detail["validation_units"]
+            if isinstance(cast_units, list):
+                cast_units.append(private_unit_result)
             if claim_analysis.matched:
                 matched_claim_count += 1
                 evidence_claim_count = matched_claim_count
@@ -893,12 +1136,32 @@ def _validate_screenshot_proposal(
             reason = claim_analysis.reason or SUMMARY_GROUNDING_REASON_PARAPHRASE_NOT_GROUNDED
             unsupported_claim_count += 1
             failed_fields.add(label)
+            failed_logical_regions.add(validation_field.logical_region)
             failure_reasons.append(reason)
+            failure_reason_counts[reason] = failure_reason_counts.get(reason, 0) + 1
+            failed_validation_unit_counts[validation_field.logical_region] += 1
+            failed_validation_unit_details.append(
+                {
+                    "validation_unit_index": claim_index,
+                    "field": validation_field.logical_region,
+                    "field_path": validation_field.field_path,
+                    "item_index": validation_field.item_index,
+                    "field_unit_index": unit_index,
+                    "failure_reason": reason,
+                    "exact_ascii_anchor_count": len(
+                        claim_analysis.exact_ascii_anchors
+                    ),
+                    "cjk_anchor_count": len(claim_analysis.cjk_anchors),
+                    "unmatched_general_token_count": len(
+                        claim_analysis.unmatched_general_tokens
+                    ),
+                }
+            )
             if first_unsupported_claim_index is None:
                 first_unsupported_claim_index = claim_index
                 first_unsupported_reason = reason
             if first_failure_field is None:
-                first_failure_field = label
+                first_failure_field = validation_field.logical_region
                 first_failure_value = value
                 if reason == SUMMARY_GROUNDING_REASON_UNSUPPORTED_ADVICE:
                     first_failure_message = (
@@ -944,16 +1207,63 @@ def _validate_screenshot_proposal(
         first_unsupported_reason=first_unsupported_reason,
         failed_field_count=len(failed_fields),
         summary_repair_eligible=False,
+        validation_granularity=SCREENSHOT_VALIDATION_GRANULARITY,
+        validation_unit_count=extracted_claim_count,
+        matched_validation_unit_count=matched_claim_count,
+        failed_validation_unit_count=0,
+        failed_logical_region_count=0,
+        failed_logical_regions=(),
+        failed_proposal_field_count=0,
+        summary_validation_unit_count=validation_unit_counts["summary"],
+        concept_validation_unit_count=validation_unit_counts["concepts"],
+        note_validation_unit_count=validation_unit_counts["notes"],
+        failed_summary_validation_unit_count=0,
+        failed_concept_validation_unit_count=0,
+        failed_note_validation_unit_count=0,
+        first_unsupported_validation_unit_index=None,
+        body_repair_eligible=False,
+        repair_scope=None,
+        matched_exact_ascii_anchor_count=matched_exact_ascii_anchor_count,
+        matched_cjk_anchor_count=matched_cjk_anchor_count,
+        unmatched_general_token_count=unmatched_general_token_count,
+        failure_reason_counts=(),
+        failed_validation_unit_details=(),
         **title_analysis.as_diagnostic_fields(),
     )
 
 
-def _split_claims(value: str) -> List[str]:
+def _split_summary_sentences(value: str) -> List[str]:
     return [
         claim.strip()
-        for claim in _CLAIM_BOUNDARY_PATTERN.split(value)
+        for claim in _SUMMARY_SENTENCE_BOUNDARY_PATTERN.split(value)
         if claim.strip() and re.search(r"[A-Za-z0-9\u3400-\u4dbf\u4e00-\u9fff]", claim)
     ]
+
+
+def _build_validation_field(*, label: str, value: str) -> _ProposalValidationField:
+    if label == "summary":
+        return _ProposalValidationField(
+            field_path=label,
+            logical_region="summary",
+            item_index=None,
+            original_value=value,
+            validation_units=tuple(_split_summary_sentences(value)),
+        )
+
+    match = re.fullmatch(r"(?P<region>concepts|notes)\[(?P<index>\d+)\]", label)
+    if match is None:
+        raise ValueError(f"unsupported screenshot proposal field: {label}")
+    logical_region = match.group("region")
+    return _ProposalValidationField(
+        field_path=label,
+        logical_region=logical_region,
+        item_index=int(match.group("index")),
+        original_value=value,
+        # One concept or note string is one complete list-item validation unit.
+        # Internal commas, colons, semicolons, parentheses, and newlines do not
+        # become independent phrase claims.
+        validation_units=(value.strip(),) if value.strip() else (),
+    )
 
 
 def validate_screenshot_proposal_with_title_fallback(
@@ -1158,6 +1468,11 @@ def _is_title_high_specificity_token(*, raw_token: str, canonical: str) -> bool:
 def _analyze_title_grounding(*, value: str, source_text: str) -> _TitleGroundingAnalysis:
     normalized_value = _normalize_title_text(value)
     normalized_source = _normalize_title_source_text(source_text)
+    if normalized_value in _GENERIC_SCREENSHOT_TITLES:
+        return _TitleGroundingAnalysis(
+            title_failure_reason=TITLE_FAILURE_REASON_GENERIC_ONLY,
+        )
+
     value_tokens = _title_ascii_tokens(normalized_value)
     source_tokens = _title_ascii_tokens(normalized_source)
     value_atoms = _technical_atoms(normalized_value)
@@ -1171,45 +1486,165 @@ def _analyze_title_grounding(*, value: str, source_text: str) -> _TitleGrounding
         value=normalized_value,
         source_bigrams=source_bigrams,
     )
+    value_high_signal_cjk = {
+        phrase
+        for phrase in _CJK_HIGH_SIGNAL_TECHNICAL_PHRASES
+        if phrase in normalized_value
+    }
+    source_high_signal_cjk = {
+        phrase
+        for phrase in _CJK_HIGH_SIGNAL_TECHNICAL_PHRASES
+        if phrase in normalized_source
+    }
+    matched_high_signal_cjk = value_high_signal_cjk & source_high_signal_cjk
+    unmatched_high_signal_cjk = value_high_signal_cjk - source_high_signal_cjk
+    high_signal_bigrams = {
+        bigram
+        for phrase in value_high_signal_cjk
+        for index in range(len(phrase) - 1)
+        for bigram in (phrase[index : index + 2],)
+    }
+    matched_general_cjk = matched_cjk - high_signal_bigrams
+    unmatched_general_cjk = unmatched_cjk - value_high_signal_cjk
 
-    matched_ascii = set(value_tokens) & set(source_tokens)
-    unmatched_ascii = set(value_tokens) - set(source_tokens)
-    matched_atoms = value_atoms & source_atoms
-    unmatched_atoms = value_atoms - source_atoms
+    value_identifier_atoms = value_atoms - value_numbers
+    source_identifier_atoms = source_atoms - source_numbers
+    matched_atoms = value_identifier_atoms & source_identifier_atoms
+    unmatched_atoms = value_identifier_atoms - source_identifier_atoms
     matched_numbers = value_numbers & source_numbers
     unmatched_numbers = value_numbers - source_numbers
 
-    candidate_keys = {
-        *(f"word:{token}" for token in value_tokens),
-        *(f"atom:{atom}" for atom in value_atoms),
-        *(f"number:{number}" for number in value_numbers),
-        *(f"cjk:{anchor}" for anchor in matched_cjk),
-        *(f"cjk-unmatched:{anchor}" for anchor in unmatched_cjk),
+    value_product_tokens = {
+        canonical
+        for canonical in value_tokens
+        if canonical in _TITLE_PRODUCT_NAME_TOKENS
     }
-    matched_keys = {
-        *(f"word:{token}" for token in matched_ascii),
-        *(f"atom:{atom}" for atom in matched_atoms),
-        *(f"number:{number}" for number in matched_numbers),
-        *(f"cjk:{anchor}" for anchor in matched_cjk),
+    source_product_tokens = {
+        canonical
+        for canonical in source_tokens
+        if canonical in _TITLE_PRODUCT_NAME_TOKENS
     }
-    unmatched_keys = candidate_keys - matched_keys
-
-    matched_high_specificity = sum(
-        1
+    value_high_technical_tokens = {
+        canonical
         for canonical, raw_token in value_tokens.items()
-        if canonical in source_tokens
+        if canonical not in _TITLE_PRODUCT_NAME_TOKENS
         and _is_title_high_specificity_token(
             raw_token=raw_token,
             canonical=canonical,
         )
-    ) + len(matched_atoms)
-    matched_general = len(matched_keys) - matched_high_specificity
+    }
+    source_high_technical_tokens = {
+        canonical
+        for canonical, raw_token in source_tokens.items()
+        if canonical not in _TITLE_PRODUCT_NAME_TOKENS
+        and _is_title_high_specificity_token(
+            raw_token=raw_token,
+            canonical=canonical,
+        )
+    }
+    matched_product_tokens = value_product_tokens & source_product_tokens
+    unmatched_product_tokens = value_product_tokens - source_product_tokens
+    matched_high_technical_tokens = (
+        value_high_technical_tokens & source_high_technical_tokens
+    )
+    unmatched_high_technical_tokens = (
+        value_high_technical_tokens - source_high_technical_tokens
+    )
+
+    value_general_ascii = (
+        set(value_tokens)
+        - value_product_tokens
+        - value_high_technical_tokens
+    )
+    matched_general_ascii = (
+        set(value_tokens)
+        & set(source_tokens)
+        - value_product_tokens
+        - value_high_technical_tokens
+    )
+    unmatched_general_ascii = (
+        set(value_tokens)
+        - set(source_tokens)
+        - value_product_tokens
+        - value_high_technical_tokens
+    )
+
+    matched_technical_identifiers = (
+        matched_atoms
+        | matched_high_technical_tokens
+        | {f"cjk:{phrase}" for phrase in matched_high_signal_cjk}
+    )
+    unmatched_technical_identifiers = (
+        unmatched_atoms | unmatched_high_technical_tokens
+        | {f"cjk:{phrase}" for phrase in unmatched_high_signal_cjk}
+    )
+    matched_high_specificity = (
+        len(matched_product_tokens)
+        + len(matched_technical_identifiers)
+    )
+    unmatched_high_specificity = (
+        len(unmatched_product_tokens)
+        + len(unmatched_technical_identifiers)
+    )
+    matched_general = len(matched_general_ascii) + len(matched_general_cjk)
+    unmatched_general = len(unmatched_general_ascii) + len(unmatched_general_cjk)
+
+    candidate_keys = {
+        *(f"product:{token}" for token in value_product_tokens),
+        *(f"identifier:{identifier}" for identifier in value_identifier_atoms),
+        *(f"word:{token}" for token in value_high_technical_tokens),
+        *(f"word:{token}" for token in value_general_ascii),
+        *(f"number:{number}" for number in value_numbers),
+        *(f"cjk:{anchor}" for anchor in matched_general_cjk),
+        *(f"cjk-unmatched:{anchor}" for anchor in unmatched_general_cjk),
+        *(f"technical-cjk:{anchor}" for anchor in value_high_signal_cjk),
+    }
+    matched_keys = {
+        *(f"product:{token}" for token in matched_product_tokens),
+        *(f"identifier:{identifier}" for identifier in matched_atoms),
+        *(f"word:{token}" for token in matched_high_technical_tokens),
+        *(f"word:{token}" for token in matched_general_ascii),
+        *(f"number:{number}" for number in matched_numbers),
+        *(f"cjk:{anchor}" for anchor in matched_general_cjk),
+        *(f"technical-cjk:{anchor}" for anchor in matched_high_signal_cjk),
+    }
+    unmatched_keys = candidate_keys - matched_keys
     has_unmatched_semantics = _introduces_new_title_semantics(
         value=value,
         source_text=source_text,
     )
-    supported = bool(matched_high_specificity or matched_general >= 2)
-    supported = supported and not unmatched_keys and not has_unmatched_semantics
+    has_sufficient_matched_anchors = bool(
+        matched_high_specificity or matched_general >= 2
+    )
+    # CJK paraphrase bigrams are intentionally advisory. Once all products,
+    # technical identifiers, and numbers are source-supported, one
+    # high-specificity anchor or two general anchors is enough. Unknown ASCII
+    # nouns remain strict because they are more likely to be new domain terms.
+    supported = (
+        has_sufficient_matched_anchors
+        and not unmatched_product_tokens
+        and not unmatched_technical_identifiers
+        and not unmatched_numbers
+        and not unmatched_general_ascii
+        and not has_unmatched_semantics
+    )
+
+    title_failure_reason: Optional[str] = None
+    if not supported:
+        if unmatched_numbers:
+            title_failure_reason = TITLE_FAILURE_REASON_UNMATCHED_NUMBER_OR_VERSION
+        elif unmatched_product_tokens:
+            title_failure_reason = TITLE_FAILURE_REASON_UNMATCHED_PRODUCT_NAME
+        elif unmatched_technical_identifiers:
+            title_failure_reason = TITLE_FAILURE_REASON_UNMATCHED_TECHNICAL_IDENTIFIER
+        elif not matched_high_specificity and not matched_general:
+            title_failure_reason = TITLE_FAILURE_REASON_NO_USABLE_ANCHOR
+        elif not has_sufficient_matched_anchors or unmatched_general_ascii:
+            title_failure_reason = TITLE_FAILURE_REASON_INSUFFICIENT_MATCHED_ANCHORS
+        elif has_unmatched_semantics:
+            title_failure_reason = TITLE_FAILURE_REASON_INSUFFICIENT_MATCHED_ANCHORS
+        else:
+            title_failure_reason = TITLE_FAILURE_REASON_OCR_NORMALIZATION_MISMATCH
 
     return _TitleGroundingAnalysis(
         title_anchor_count=len(candidate_keys),
@@ -1218,7 +1653,12 @@ def _analyze_title_grounding(*, value: str, source_text: str) -> _TitleGrounding
         numeric_anchor_count=len(value_numbers),
         unmatched_numeric_anchor_count=len(unmatched_numbers),
         matched_high_specificity_anchor_count=matched_high_specificity,
-        matched_general_anchor_count=max(0, matched_general),
+        unmatched_high_specificity_anchor_count=unmatched_high_specificity,
+        matched_general_anchor_count=matched_general,
+        unmatched_general_anchor_count=unmatched_general,
+        matched_technical_identifier_count=len(matched_technical_identifiers),
+        unmatched_technical_identifier_count=len(unmatched_technical_identifiers),
+        title_failure_reason=title_failure_reason,
         supported=supported,
     )
 
@@ -1231,16 +1671,72 @@ def _has_partial_title_anchor(*, value: str, source_text: str) -> bool:
     """Allow fallback only when the failed title is still on the source topic."""
     analysis = _analyze_title_grounding(value=value, source_text=source_text)
     return (
-        analysis.unmatched_title_anchor_count == 0
+        analysis.title_failure_reason
+        in {
+            TITLE_FAILURE_REASON_INSUFFICIENT_MATCHED_ANCHORS,
+            TITLE_FAILURE_REASON_OCR_NORMALIZATION_MISMATCH,
+        }
         and analysis.matched_title_anchor_count > 0
+        and analysis.unmatched_high_specificity_anchor_count == 0
+        and analysis.unmatched_technical_identifier_count == 0
         and analysis.unmatched_numeric_anchor_count == 0
     )
+
+
+def build_screenshot_title_anchor_allowlist(
+    source_snapshot: ScreenshotSourceSnapshot,
+) -> str:
+    """Extract a bounded, source-only title vocabulary for title repair."""
+
+    source_text = _IMAGE_SECTION_MARKER_PATTERN.sub(" ", source_snapshot.text)
+    frame_tokens = {_canonical_token(token) for token in _PROPOSAL_FRAME_TOKENS}
+    safe_tokens = {_canonical_token(token) for token in _SAFE_PARAPHRASE_TOKENS}
+    anchors: list[str] = []
+    seen: set[str] = set()
+
+    def add_anchor(anchor: str) -> None:
+        normalized = _normalize_title_text(anchor)
+        if not normalized or normalized in seen:
+            return
+        seen.add(normalized)
+        anchors.append(anchor)
+
+    # Preserve technical spellings and topic nouns exactly as OCR produced
+    # them. The cap keeps repair input bounded even for a long screenshot batch.
+    for raw_token in _ASCII_TOKEN_PATTERN.findall(source_text):
+        canonical = _canonical_token(raw_token)
+        if (
+            canonical
+            and canonical not in frame_tokens
+            and canonical not in safe_tokens
+            and not _is_browser_chrome_line(raw_token)
+        ):
+            add_anchor(raw_token.strip(".,!?;:"))
+        if len(anchors) >= 24:
+            break
+
+    if len(anchors) < 24:
+        for atom in sorted(_technical_atoms(_normalize_title_text(source_text))):
+            add_anchor(atom)
+            if len(anchors) >= 24:
+                break
+
+    if len(anchors) < 24:
+        for cjk_chunk in _title_cjk_chunks(source_text):
+            add_anchor(cjk_chunk[:24])
+            if len(anchors) >= 24:
+                break
+
+    return "\n".join(f"- {anchor}" for anchor in anchors)
 
 
 def build_screenshot_fallback_title(source_text: str) -> str:
     """Build a grounded title from OCR headings/keywords without an LLM."""
 
-    cleaned_source = preprocess_screenshot_ocr_text(source_text)
+    cleaned_source = _IMAGE_SECTION_MARKER_PATTERN.sub(
+        " ",
+        preprocess_screenshot_ocr_text(source_text),
+    )
     for raw_line in cleaned_source.splitlines():
         candidate = re.sub(r"\s+", " ", raw_line).strip(" -–—:;|")
         if not candidate or re.match(r"^\[image\s+\d+\]$", candidate, re.I):
@@ -1380,10 +1876,26 @@ def _analyze_claim_grounding(
 
     normalized_value = _normalize_for_grounding(value)
     normalized_source = _normalize_for_grounding(source_normalized)
+    exact_ascii_anchors, cjk_anchors, unmatched_general_tokens = (
+        _claim_lexical_evidence(
+            value=normalized_value,
+            source_normalized=normalized_source,
+        )
+    )
+
+    def analysis(*, matched: bool, reason: Optional[str] = None) -> _ClaimGroundingAnalysis:
+        return _ClaimGroundingAnalysis(
+            matched=matched,
+            reason=reason,
+            exact_ascii_anchors=exact_ascii_anchors,
+            cjk_anchors=cjk_anchors,
+            unmatched_general_tokens=unmatched_general_tokens,
+        )
+
     value_numbers = set(_NUMBER_PATTERN.findall(normalized_value))
     source_numbers = set(_NUMBER_PATTERN.findall(normalized_source))
     if not value_numbers.issubset(source_numbers):
-        return _ClaimGroundingAnalysis(
+        return analysis(
             matched=False,
             reason=SUMMARY_GROUNDING_REASON_NEW_NUMBER_OR_VERSION,
         )
@@ -1392,7 +1904,7 @@ def _analyze_claim_grounding(
         value=value,
         source_normalized=source_normalized,
     ):
-        return _ClaimGroundingAnalysis(
+        return analysis(
             matched=False,
             reason=SUMMARY_GROUNDING_REASON_UNSUPPORTED_ADVICE,
         )
@@ -1400,7 +1912,7 @@ def _analyze_claim_grounding(
         value=value,
         source_normalized=source_normalized,
     ):
-        return _ClaimGroundingAnalysis(
+        return analysis(
             matched=False,
             reason=SUMMARY_GROUNDING_REASON_UNSUPPORTED_COMPARISON,
         )
@@ -1408,7 +1920,7 @@ def _analyze_claim_grounding(
         value=value,
         source_normalized=source_normalized,
     ):
-        return _ClaimGroundingAnalysis(
+        return analysis(
             matched=False,
             reason=SUMMARY_GROUNDING_REASON_UNSUPPORTED_RESULT,
         )
@@ -1426,25 +1938,61 @@ def _analyze_claim_grounding(
             source_normalized=normalized_source,
         )
     ):
-        return _ClaimGroundingAnalysis(
+        return analysis(
             matched=False,
             reason=SUMMARY_GROUNDING_REASON_NEW_TECHNICAL_IDENTIFIER,
         )
 
     if _has_source_evidence(value=value, source_normalized=source_normalized):
-        return _ClaimGroundingAnalysis(matched=True)
+        return analysis(matched=True)
     if not _has_claim_source_anchor(
         value=normalized_value,
         source_normalized=normalized_source,
     ):
-        return _ClaimGroundingAnalysis(
+        return analysis(
             matched=False,
             reason=SUMMARY_GROUNDING_REASON_INSUFFICIENT_SOURCE_ANCHORS,
         )
-    return _ClaimGroundingAnalysis(
+    return analysis(
         matched=False,
         reason=SUMMARY_GROUNDING_REASON_PARAPHRASE_NOT_GROUNDED,
     )
+
+
+def _claim_lexical_evidence(
+    *,
+    value: str,
+    source_normalized: str,
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    """Return bounded lexical evidence for private and redacted diagnostics."""
+
+    frame_tokens = {
+        _canonical_token(token) for token in _PROPOSAL_FRAME_TOKENS
+    }
+    safe_tokens = {
+        _canonical_token(token) for token in _SAFE_PARAPHRASE_TOKENS
+    }
+    source_tokens = _canonical_token_set(source_normalized)
+    content_tokens = set(_canonical_tokens(value)) - frame_tokens
+    exact_ascii_anchors = tuple(sorted(content_tokens & source_tokens))
+    unmatched_general_tokens = tuple(
+        sorted(content_tokens - source_tokens - safe_tokens)
+    )
+
+    expanded_value = _expand_cjk_aliases(value)
+    expanded_source = _expand_cjk_aliases(source_normalized)
+    value_bigrams = {
+        run[index : index + 2]
+        for run in _CJK_RUN_PATTERN.findall(expanded_value)
+        for index in range(len(run) - 1)
+    }
+    source_bigrams = {
+        run[index : index + 2]
+        for run in _CJK_RUN_PATTERN.findall(expanded_source)
+        for index in range(len(run) - 1)
+    }
+    cjk_anchors = tuple(sorted(value_bigrams & source_bigrams))
+    return exact_ascii_anchors, cjk_anchors, unmatched_general_tokens
 
 
 def _has_new_high_signal_identifier(*, value: str, source_normalized: str) -> bool:

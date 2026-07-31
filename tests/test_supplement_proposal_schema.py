@@ -4,8 +4,40 @@ import pytest
 
 from src.orchestrators import (
     SupplementProposalValidationError,
+    parse_supplement_body_repair_json,
     parse_supplement_proposal_json,
 )
+
+
+def test_parse_supplement_body_repair_json_accepts_bounded_body() -> None:
+    parsed = parse_supplement_body_repair_json(
+        """
+        {
+          "summary": "MySQL EXPLAIN summary.",
+          "concepts": ["MySQL", "EXPLAIN", "SQL"],
+          "notes": ["MySQL note.", "EXPLAIN note.", "SQL note."]
+        }
+        """
+    )
+
+    assert parsed.summary == "MySQL EXPLAIN summary."
+    assert parsed.concepts == ["MySQL", "EXPLAIN", "SQL"]
+
+
+def test_parse_supplement_body_repair_json_rejects_extra_or_short_lists() -> None:
+    with pytest.raises(SupplementProposalValidationError) as exc_info:
+        parse_supplement_body_repair_json(
+            """
+            {
+              "summary": "MySQL EXPLAIN summary.",
+              "concepts": ["MySQL", "EXPLAIN"],
+              "notes": ["one", "two", "three"],
+              "title": "not allowed"
+            }
+            """
+        )
+
+    assert exc_info.value.field == "body"
 
 
 def test_parse_supplement_proposal_json_accepts_valid_object() -> None:

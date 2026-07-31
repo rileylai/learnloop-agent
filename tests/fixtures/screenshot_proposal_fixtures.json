@@ -1,5 +1,112 @@
 [
   {
+    "id": "workflow_252_255_shape_public_safe",
+    "source": "MySQL EXPLAIN 會顯示查詢的執行計畫。SQL 查詢可搭配 EXPLAIN 觀察索引。畫面列出 type、key、rows 欄位。索引可協助查詢條件過濾。",
+    "proposal": {
+      "title": "MySQL EXPLAIN 與 SQL 索引查詢",
+      "target_path": "Knowledge/Database/AI Supplement Zone",
+      "source": {
+        "source_type": "screenshot",
+        "source_display_name": "Public-safe workflow shape"
+      },
+      "summary": "這組截圖統整 MySQL EXPLAIN 與 SQL 的 optimizer workflow，並整理索引資訊。",
+      "concepts": [
+        "MySQL optimizer",
+        "EXPLAIN planner",
+        "SQL runtime",
+        "索引 pipeline",
+        "MySQL",
+        "EXPLAIN",
+        "SQL",
+        "索引",
+        "查詢執行計畫"
+      ],
+      "notes": [
+        "EXPLAIN 顯示 query planner。",
+        "SQL 查詢遵循 optimizer workflow。",
+        "索引可協助 runtime 過濾。",
+        "EXPLAIN 會顯示查詢的執行計畫。",
+        "畫面列出 type、key、rows 欄位。"
+      ]
+    },
+    "retry_proposal": {
+      "title": "MySQL EXPLAIN 與 SQL 索引查詢",
+      "target_path": "Knowledge/Database/AI Supplement Zone",
+      "source": {
+        "source_type": "screenshot",
+        "source_display_name": "Public-safe workflow shape"
+      },
+      "summary": "這組截圖統整 MySQL EXPLAIN 與 SQL 的 optimizer workflow，並整理索引資訊。",
+      "concepts": [
+        "MySQL optimizer",
+        "EXPLAIN planner",
+        "SQL runtime",
+        "MySQL",
+        "EXPLAIN",
+        "SQL",
+        "索引",
+        "查詢執行計畫",
+        "type 欄位",
+        "key 與 rows 欄位"
+      ],
+      "notes": [
+        "EXPLAIN 顯示 query planner。",
+        "SQL 查詢遵循 optimizer workflow。",
+        "索引可協助 runtime 過濾。",
+        "EXPLAIN 會顯示查詢的執行計畫。",
+        "畫面列出 type、key、rows 欄位。"
+      ]
+    }
+  },
+  {
+    "id": "live_shaped_mysql_four_image_title_general_cjk",
+    "images": [
+      {
+        "message_id": 10,
+        "ocr": "[Image 10]\nMySQL EXPLAIN 會顯示 查 詢 資 訊。"
+      },
+      {
+        "message_id": 20,
+        "ocr": "[Image 20]\nSQL 可搭配 EXPLAIN 觀察 type、key、rows 欄位。"
+      },
+      {
+        "message_id": 30,
+        "ocr": "[Image 30]\n畫面列出索 引 與查 詢 欄位。"
+      },
+      {
+        "message_id": 40,
+        "ocr": "[Image 40]\n來源說明 MySQL、SQL 與 EXPLAIN。"
+      }
+    ],
+    "proposal": {
+      "title": "MySQL 資料庫 / 執行流程 / 效能分析",
+      "target_path": "Knowledge/Database/AI Supplement Zone",
+      "source": {
+        "source_type": "screenshot",
+        "source_display_name": "Screenshot batch (4 images)"
+      },
+      "summary": "來源整理 MySQL EXPLAIN 與 SQL 查詢資訊。",
+      "concepts": [
+        "MySQL",
+        "EXPLAIN",
+        "SQL",
+        "查詢資訊"
+      ],
+      "notes": [
+        "EXPLAIN 會顯示查詢資訊。",
+        "SQL 可搭配 EXPLAIN 觀察欄位。",
+        "畫面列出 type、key、rows 欄位。"
+      ]
+    },
+    "expected_title_anchor_profile": {
+      "title_anchor_count": 4,
+      "matched_title_anchor_count": 1,
+      "unmatched_title_anchor_count": 3,
+      "numeric_anchor_count": 0,
+      "unmatched_numeric_anchor_count": 0
+    }
+  },
+  {
     "id": "live_shaped_mysql_five_image_batch",
     "images": [
       {

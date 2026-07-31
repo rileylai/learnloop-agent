@@ -1102,7 +1102,10 @@ def test_grounding_failure_metadata_reaches_outer_telegram_workflow() -> None:
             metadata = json.loads(workflow.metadata_json or "{}")
             assert metadata["failure_stage"] == "proposal_validation"
             assert metadata["validation_field"] == "summary"
-            assert metadata["validator_version"] == "screenshot_grounding_v2"
+            assert metadata["validator_version"] == "screenshot_grounding_v3"
+            assert metadata["validation_granularity"] == (
+                "summary_sentence_list_item_v1"
+            )
             assert metadata["source_document_id"] == 1
             assert metadata["source_attachment_count"] == 1
             assert metadata["session_retry_available"] is True
@@ -1115,6 +1118,10 @@ def test_grounding_failure_metadata_reaches_outer_telegram_workflow() -> None:
             assert metadata["first_unsupported_claim_index"] is not None
             assert metadata["first_unsupported_reason"] is not None
             assert metadata["failed_field_count"] >= 1
+            assert metadata["failed_validation_unit_count"] >= 1
+            assert metadata["failed_logical_region_count"] >= 1
+            assert metadata["failed_logical_regions"]
+            assert metadata["failure_reason_counts"]
             assert metadata["title_anchor_count"] >= 2
             assert metadata["matched_title_anchor_count"] == metadata["title_anchor_count"]
             assert metadata["unmatched_title_anchor_count"] == 0

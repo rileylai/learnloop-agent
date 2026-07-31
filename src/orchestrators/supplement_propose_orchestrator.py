@@ -10,6 +10,7 @@ from src.db.unit_of_work import UnitOfWorkFactory
 from src.orchestrators.supplement_proposal_schema import (
     SupplementProposalSchema,
     SupplementProposalValidationError,
+    parse_supplement_body_repair_json,
     parse_supplement_proposal_json,
     parse_supplement_summary_repair_json,
     parse_supplement_title_repair_json,
@@ -31,6 +32,7 @@ from src.services import (
     CostTracker,
     DuplicateKnowledgeChecker,
     DuplicateMatch,
+    PROMPT_ID_SCREENSHOT_BODY_REPAIR,
     PROMPT_ID_SCREENSHOT_SUMMARY_REPAIR,
     PROMPT_ID_SCREENSHOT_TITLE_REPAIR,
     PROMPT_ID_SUPPLEMENT_PROPOSAL,
@@ -48,9 +50,12 @@ from src.services import (
 )
 from src.services.latency_evidence import LatencyEvidence, elapsed_ms
 from src.services.screenshot_quality import (
-    SCREENSHOT_TITLE_GROUNDING_FAILURE_MESSAGE,
+    TITLE_FAILURE_REASON_INSUFFICIENT_MATCHED_ANCHORS,
+    TITLE_FAILURE_REASONS,
     ScreenshotSourceSnapshot,
+    build_screenshot_fallback_title,
     build_screenshot_source_snapshot,
+    build_screenshot_title_anchor_allowlist,
     detect_screenshot_language,
     validate_screenshot_proposal_with_diagnostics,
 )
@@ -79,6 +84,7 @@ class SupplementProposeResult:
     title_fallback_used: bool = False
     title_repair_used: bool = False
     summary_repair_used: bool = False
+    body_repair_used: bool = False
 
 
 class SupplementProposeError(Exception):
@@ -187,10 +193,15 @@ class SupplementProposeOrchestrator:
         token_output: Optional[int] = None
         estimated_cost: Optional[float] = None
         title_fallback_used = False
+        title_fallback_attempted = False
+        title_fallback_succeeded = False
         title_repair_attempted = False
         title_repair_succeeded = False
+        title_repair_failure_reason: Optional[str] = None
         summary_repair_attempted = False
         summary_repair_succeeded = False
+        body_repair_attempted = False
+        body_repair_succeeded = False
         latency = LatencyEvidence()
         target_page_path: Optional[str] = None
         allowed_target_path: Optional[str] = None
@@ -328,6 +339,7 @@ class SupplementProposeOrchestrator:
                     target_page_path=target_page_path,
                 )
                 if source_document.source_type == "screenshot":
+                    validation_error: Optional[SupplementProposalValidationError] = None
                     try:
                         validation_result = validate_screenshot_proposal_with_diagnostics(
                             proposal=proposal,
@@ -345,55 +357,128 @@ class SupplementProposeOrchestrator:
                             else None
                         )
                     except SupplementProposalValidationError as exc:
-                        if self._is_title_grounding_failure(exc):
-                            title_repair_attempted = True
-                            validation_diagnostics = exc.diagnostics
-                            repair_started = perf_counter()
-                            try:
-                                repair_response = await self._repair_screenshot_title(
-                                    source_snapshot=source_snapshot,
-                                    failed_title=proposal.title,
-                                    provider_name=normalized_provider_name,
-                                    model=normalized_model,
-                                    request_workflow_id=request_workflow_id,
-                                )
-                            finally:
-                                latency.add(llm_ms=elapsed_ms(repair_started))
-                            provider = repair_response.provider
-                            model_name = repair_response.model
-                            token_input = self._sum_optional(
-                                token_input,
-                                repair_response.token_input,
+                        validation_error = exc
+                        validation_diagnostics = dict(exc.diagnostics)
+
+                    if validation_error is not None and self._is_title_grounding_failure(
+                        validation_error
+                    ):
+                        title_repair_attempted = True
+                        initial_title_failure_reason = self._title_failure_reason(
+                            validation_error
+                        )
+                        repair_started = perf_counter()
+                        try:
+                            repair_response = await self._repair_screenshot_title(
+                                source_snapshot=source_snapshot,
+                                failed_title=proposal.title,
+                                provider_name=normalized_provider_name,
+                                model=normalized_model,
+                                request_workflow_id=request_workflow_id,
                             )
-                            token_output = self._sum_optional(
-                                token_output,
-                                repair_response.token_output,
-                            )
-                            repair_cost = self._cost_tracker.estimate_llm_cost(
-                                provider_name=repair_response.provider,
-                                model=repair_response.model,
-                                token_input=repair_response.token_input,
-                                token_output=repair_response.token_output,
-                            )
-                            if estimated_cost is None:
-                                estimated_cost = repair_cost
-                            elif repair_cost is not None:
-                                estimated_cost = round(estimated_cost + repair_cost, 8)
+                        finally:
+                            latency.add(llm_ms=elapsed_ms(repair_started))
+                        provider = repair_response.provider
+                        model_name = repair_response.model
+                        token_input = self._sum_optional(
+                            token_input, repair_response.token_input
+                        )
+                        token_output = self._sum_optional(
+                            token_output, repair_response.token_output
+                        )
+                        repair_cost = self._cost_tracker.estimate_llm_cost(
+                            provider_name=repair_response.provider,
+                            model=repair_response.model,
+                            token_input=repair_response.token_input,
+                            token_output=repair_response.token_output,
+                        )
+                        if estimated_cost is None:
+                            estimated_cost = repair_cost
+                        elif repair_cost is not None:
+                            estimated_cost = round(estimated_cost + repair_cost, 8)
+
+                        try:
                             repaired_title = parse_supplement_title_repair_json(
                                 repair_response.output_text
                             ).title
-                            proposal = proposal.model_copy(
+                            repaired_proposal = proposal.model_copy(
                                 update={"title": repaired_title}
                             )
                             validation_result = validate_screenshot_proposal_with_diagnostics(
-                                proposal=proposal,
-                                source_text=(
-                                    source_snapshot.text
-                                    if source_snapshot is not None
-                                    else source_document.raw_text
-                                ),
+                                proposal=repaired_proposal,
+                                source_text=source_snapshot.text,
                                 source_snapshot=source_snapshot,
                             )
+                        except SupplementProposalValidationError as repair_exc:
+                            if repair_exc.field != "title":
+                                # Validation reaches body fields only after the repaired
+                                # title has passed. Preserve that successful stage and let
+                                # the bounded body repair policy handle the new failure.
+                                proposal = repaired_proposal
+                                title_repair_succeeded = True
+                                validation_error = repair_exc
+                                validation_diagnostics = dict(repair_exc.diagnostics)
+                            else:
+                                title_repair_failure_reason = self._title_failure_reason(
+                                    repair_exc,
+                                    fallback=initial_title_failure_reason,
+                                )
+                                repair_diagnostics = dict(
+                                    repair_exc.diagnostics or validation_diagnostics
+                                )
+                                repair_diagnostics[
+                                    "title_repair_failure_reason"
+                                ] = title_repair_failure_reason
+                                if self._is_title_fallback_eligible(repair_exc):
+                                    title_fallback_attempted = True
+                                    fallback_proposal = proposal.model_copy(
+                                        update={
+                                            "title": build_screenshot_fallback_title(
+                                                source_snapshot.text
+                                            )
+                                        }
+                                    )
+                                    try:
+                                        fallback_result = validate_screenshot_proposal_with_diagnostics(
+                                            proposal=fallback_proposal,
+                                            source_text=source_snapshot.text,
+                                            source_snapshot=source_snapshot,
+                                        )
+                                    except SupplementProposalValidationError as fallback_exc:
+                                        fallback_diagnostics = dict(
+                                            fallback_exc.diagnostics or repair_diagnostics
+                                        )
+                                        fallback_diagnostics[
+                                            "title_repair_failure_reason"
+                                        ] = title_repair_failure_reason
+                                        fallback_exc.diagnostics = fallback_diagnostics
+                                        if fallback_exc.field == "title":
+                                            validation_error = fallback_exc
+                                            validation_diagnostics = fallback_diagnostics
+                                        else:
+                                            proposal = fallback_proposal
+                                            title_fallback_used = True
+                                            title_fallback_succeeded = True
+                                            validation_error = fallback_exc
+                                            validation_diagnostics = fallback_diagnostics
+                                    else:
+                                        proposal = fallback_result.proposal
+                                        validation_diagnostics = (
+                                            fallback_result.diagnostics.as_dict()
+                                            if fallback_result.diagnostics is not None
+                                            else repair_diagnostics
+                                        )
+                                        validation_diagnostics[
+                                            "title_repair_failure_reason"
+                                        ] = title_repair_failure_reason
+                                        title_fallback_used = True
+                                        title_fallback_succeeded = True
+                                        validation_error = None
+                                else:
+                                    repair_exc.diagnostics = repair_diagnostics
+                                    validation_error = repair_exc
+                                    validation_diagnostics = repair_diagnostics
+                        else:
                             proposal = validation_result.proposal
                             validation_diagnostics = (
                                 validation_result.diagnostics.as_dict()
@@ -401,64 +486,119 @@ class SupplementProposeOrchestrator:
                                 else validation_diagnostics
                             )
                             title_repair_succeeded = True
-                        elif self._is_summary_grounding_failure(exc):
-                            summary_repair_attempted = True
-                            validation_diagnostics = exc.diagnostics
-                            repair_started = perf_counter()
-                            try:
-                                repair_response = await self._repair_screenshot_summary(
-                                    source_snapshot=source_snapshot,
-                                    failed_summary=proposal.summary,
-                                    provider_name=normalized_provider_name,
-                                    model=normalized_model,
-                                    request_workflow_id=request_workflow_id,
-                                )
-                            finally:
-                                latency.add(llm_ms=elapsed_ms(repair_started))
-                            provider = repair_response.provider
-                            model_name = repair_response.model
-                            token_input = self._sum_optional(
-                                token_input,
-                                repair_response.token_input,
-                            )
-                            token_output = self._sum_optional(
-                                token_output,
-                                repair_response.token_output,
-                            )
-                            repair_cost = self._cost_tracker.estimate_llm_cost(
-                                provider_name=repair_response.provider,
-                                model=repair_response.model,
-                                token_input=repair_response.token_input,
-                                token_output=repair_response.token_output,
-                            )
-                            if estimated_cost is None:
-                                estimated_cost = repair_cost
-                            elif repair_cost is not None:
-                                estimated_cost = round(estimated_cost + repair_cost, 8)
-                            repaired_summary = parse_supplement_summary_repair_json(
-                                repair_response.output_text
-                            ).summary
-                            proposal = proposal.model_copy(
-                                update={"summary": repaired_summary}
-                            )
-                            validation_result = validate_screenshot_proposal_with_diagnostics(
-                                proposal=proposal,
-                                source_text=(
-                                    source_snapshot.text
-                                    if source_snapshot is not None
-                                    else source_document.raw_text
-                                ),
+                            validation_error = None
+
+                    if validation_error is not None and self._is_summary_grounding_failure(
+                        validation_error
+                    ):
+                        summary_repair_attempted = True
+                        repair_started = perf_counter()
+                        try:
+                            repair_response = await self._repair_screenshot_summary(
                                 source_snapshot=source_snapshot,
+                                failed_summary=proposal.summary,
+                                provider_name=normalized_provider_name,
+                                model=normalized_model,
+                                request_workflow_id=request_workflow_id,
                             )
-                            proposal = validation_result.proposal
-                            validation_diagnostics = (
-                                validation_result.diagnostics.as_dict()
-                                if validation_result.diagnostics is not None
-                                else validation_diagnostics
+                        finally:
+                            latency.add(llm_ms=elapsed_ms(repair_started))
+                        provider = repair_response.provider
+                        model_name = repair_response.model
+                        token_input = self._sum_optional(
+                            token_input, repair_response.token_input
+                        )
+                        token_output = self._sum_optional(
+                            token_output, repair_response.token_output
+                        )
+                        repair_cost = self._cost_tracker.estimate_llm_cost(
+                            provider_name=repair_response.provider,
+                            model=repair_response.model,
+                            token_input=repair_response.token_input,
+                            token_output=repair_response.token_output,
+                        )
+                        if estimated_cost is None:
+                            estimated_cost = repair_cost
+                        elif repair_cost is not None:
+                            estimated_cost = round(estimated_cost + repair_cost, 8)
+                        repaired_summary = parse_supplement_summary_repair_json(
+                            repair_response.output_text
+                        ).summary
+                        proposal = proposal.model_copy(
+                            update={"summary": repaired_summary}
+                        )
+                        validation_result = validate_screenshot_proposal_with_diagnostics(
+                            proposal=proposal,
+                            source_text=source_snapshot.text,
+                            source_snapshot=source_snapshot,
+                        )
+                        proposal = validation_result.proposal
+                        validation_diagnostics = (
+                            validation_result.diagnostics.as_dict()
+                            if validation_result.diagnostics is not None
+                            else validation_diagnostics
+                        )
+                        summary_repair_succeeded = True
+                        validation_error = None
+                    elif validation_error is not None and self._is_body_grounding_failure(
+                        validation_error
+                    ):
+                        body_repair_attempted = True
+                        repair_started = perf_counter()
+                        try:
+                            repair_response = await self._repair_screenshot_body(
+                                source_snapshot=source_snapshot,
+                                failed_proposal=proposal,
+                                provider_name=normalized_provider_name,
+                                model=normalized_model,
+                                request_workflow_id=request_workflow_id,
                             )
-                            summary_repair_succeeded = True
-                        else:
-                            raise
+                        finally:
+                            latency.add(llm_ms=elapsed_ms(repair_started))
+                        provider = repair_response.provider
+                        model_name = repair_response.model
+                        token_input = self._sum_optional(
+                            token_input, repair_response.token_input
+                        )
+                        token_output = self._sum_optional(
+                            token_output, repair_response.token_output
+                        )
+                        repair_cost = self._cost_tracker.estimate_llm_cost(
+                            provider_name=repair_response.provider,
+                            model=repair_response.model,
+                            token_input=repair_response.token_input,
+                            token_output=repair_response.token_output,
+                        )
+                        if estimated_cost is None:
+                            estimated_cost = repair_cost
+                        elif repair_cost is not None:
+                            estimated_cost = round(estimated_cost + repair_cost, 8)
+                        repaired_body = parse_supplement_body_repair_json(
+                            repair_response.output_text
+                        )
+                        proposal = proposal.model_copy(
+                            update={
+                                "summary": repaired_body.summary,
+                                "concepts": repaired_body.concepts,
+                                "notes": repaired_body.notes,
+                            }
+                        )
+                        validation_result = validate_screenshot_proposal_with_diagnostics(
+                            proposal=proposal,
+                            source_text=source_snapshot.text,
+                            source_snapshot=source_snapshot,
+                        )
+                        proposal = validation_result.proposal
+                        validation_diagnostics = (
+                            validation_result.diagnostics.as_dict()
+                            if validation_result.diagnostics is not None
+                            else validation_diagnostics
+                        )
+                        body_repair_succeeded = True
+                        validation_error = None
+
+                    if validation_error is not None:
+                        raise validation_error
                 duplicate_match = self._check_duplicate(
                     self._build_duplicate_candidate_from_proposal(proposal)
                 )
@@ -513,10 +653,15 @@ class SupplementProposeOrchestrator:
                         "token_output": token_output,
                         "estimated_cost": estimated_cost,
                         "title_fallback_used": title_fallback_used,
+                        "title_fallback_attempted": title_fallback_attempted,
+                        "title_fallback_succeeded": title_fallback_succeeded,
                         "title_repair_attempted": title_repair_attempted,
                         "title_repair_succeeded": title_repair_succeeded,
+                        "title_repair_failure_reason": title_repair_failure_reason,
                         "summary_repair_attempted": summary_repair_attempted,
                         "summary_repair_succeeded": summary_repair_succeeded,
+                        "body_repair_attempted": body_repair_attempted,
+                        "body_repair_succeeded": body_repair_succeeded,
                         **(validation_diagnostics or {}),
                         **latency.as_dict(),
                     },
@@ -544,6 +689,7 @@ class SupplementProposeOrchestrator:
                 title_fallback_used=title_fallback_used,
                 title_repair_used=title_repair_succeeded,
                 summary_repair_used=summary_repair_succeeded,
+                body_repair_used=body_repair_succeeded,
             )
         except WorkflowRunAuditUpdateError:
             raise
@@ -583,8 +729,13 @@ class SupplementProposeOrchestrator:
                 validation_diagnostics=effective_validation_diagnostics,
                 title_repair_attempted=title_repair_attempted,
                 title_repair_succeeded=title_repair_succeeded,
+                title_repair_failure_reason=title_repair_failure_reason,
+                title_fallback_attempted=title_fallback_attempted,
+                title_fallback_succeeded=title_fallback_succeeded,
                 summary_repair_attempted=summary_repair_attempted,
                 summary_repair_succeeded=summary_repair_succeeded,
+                body_repair_attempted=body_repair_attempted,
+                body_repair_succeeded=body_repair_succeeded,
                 provider_name=normalized_provider_name,
                 model=normalized_model,
                 prompt_id=prompt_id,
@@ -607,8 +758,13 @@ class SupplementProposeOrchestrator:
                     "validation_field": exc.field,
                     "title_repair_attempted": title_repair_attempted,
                     "title_repair_succeeded": title_repair_succeeded,
+                    "title_repair_failure_reason": title_repair_failure_reason,
+                    "title_fallback_attempted": title_fallback_attempted,
+                    "title_fallback_succeeded": title_fallback_succeeded,
                     "summary_repair_attempted": summary_repair_attempted,
                     "summary_repair_succeeded": summary_repair_succeeded,
+                    "body_repair_attempted": body_repair_attempted,
+                    "body_repair_succeeded": body_repair_succeeded,
                     **effective_validation_diagnostics,
                     **latency.as_dict(),
                 },
@@ -728,7 +884,37 @@ class SupplementProposeOrchestrator:
     ) -> bool:
         return (
             error.field == "title"
-            and error.message == SCREENSHOT_TITLE_GROUNDING_FAILURE_MESSAGE
+            and error.diagnostics.get("title_failure_reason") in TITLE_FAILURE_REASONS
+        )
+
+    @staticmethod
+    def _title_failure_reason(
+        error: SupplementProposalValidationError,
+        *,
+        fallback: Optional[str] = None,
+    ) -> str:
+        reason = error.diagnostics.get("title_failure_reason")
+        if reason in TITLE_FAILURE_REASONS:
+            return str(reason)
+        if fallback in TITLE_FAILURE_REASONS:
+            return str(fallback)
+        return "NO_USABLE_TITLE_ANCHOR"
+
+    @staticmethod
+    def _is_title_fallback_eligible(
+        error: SupplementProposalValidationError,
+    ) -> bool:
+        diagnostics = error.diagnostics
+        return (
+            error.field == "title"
+            and diagnostics.get("title_failure_reason")
+            == TITLE_FAILURE_REASON_INSUFFICIENT_MATCHED_ANCHORS
+            and int(diagnostics.get("unmatched_general_anchor_count", 0)) > 0
+            and int(diagnostics.get("unmatched_high_specificity_anchor_count", 0))
+            == 0
+            and int(diagnostics.get("unmatched_technical_identifier_count", 0))
+            == 0
+            and int(diagnostics.get("unmatched_numeric_anchor_count", 0)) == 0
         )
 
     @staticmethod
@@ -739,6 +925,12 @@ class SupplementProposeOrchestrator:
             error.field == "summary"
             and error.diagnostics.get("summary_repair_eligible") is True
         )
+
+    @staticmethod
+    def _is_body_grounding_failure(
+        error: SupplementProposalValidationError,
+    ) -> bool:
+        return error.diagnostics.get("body_repair_eligible") is True
 
     async def _repair_screenshot_title(
         self,
@@ -766,6 +958,10 @@ class SupplementProposeOrchestrator:
                 "failed_title": format_untrusted_prompt_block(
                     label="FAILED_TITLE",
                     value=failed_title,
+                ),
+                "source_supported_title_anchors": format_untrusted_prompt_block(
+                    label="SOURCE_SUPPORTED_TITLE_ANCHORS",
+                    value=build_screenshot_title_anchor_allowlist(source_snapshot),
                 ),
                 "source_text": format_untrusted_prompt_block(
                     label="SOURCE_TEXT",
@@ -842,6 +1038,70 @@ class SupplementProposeOrchestrator:
                     "workflow_id": request_workflow_id,
                     "operation": "repair_screenshot_summary",
                     "prompt_id": PROMPT_ID_SCREENSHOT_SUMMARY_REPAIR,
+                    "prompt_version": prompt_bundle.version,
+                    "prompt_safety_version": PROMPT_SAFETY_VERSION,
+                    "provider_name": provider_name,
+                    "model": model,
+                },
+            ),
+        )
+
+    async def _repair_screenshot_body(
+        self,
+        *,
+        source_snapshot: Optional[ScreenshotSourceSnapshot],
+        failed_proposal: SupplementProposalSchema,
+        provider_name: str,
+        model: str,
+        request_workflow_id: str,
+    ) -> LLMResponse:
+        if source_snapshot is None:
+            raise SupplementProposalValidationError(
+                "screenshot body repair requires a source snapshot",
+                field="body",
+            )
+
+        prompt_bundle = self._prompt_template_loader.load_bundle(
+            PROMPT_ID_SCREENSHOT_BODY_REPAIR
+        )
+        failed_body = json.dumps(
+            {
+                "summary": failed_proposal.summary,
+                "concepts": failed_proposal.concepts,
+                "notes": failed_proposal.notes,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        system_message, user_message = prompt_bundle.render_messages(
+            variables={
+                "source_language": detect_screenshot_language(
+                    source_snapshot.text
+                ).instruction,
+                "failed_body": format_untrusted_prompt_block(
+                    label="FAILED_BODY",
+                    value=failed_body,
+                ),
+                "source_text": format_untrusted_prompt_block(
+                    label="SOURCE_TEXT",
+                    value=source_snapshot.text,
+                ),
+            }
+        )
+        return await self._provider_router.route(
+            provider_name,
+            LLMRequest(
+                model=model,
+                messages=[
+                    LLMMessage(role="system", content=system_message),
+                    LLMMessage(role="user", content=user_message),
+                ],
+                temperature=0.1,
+                max_tokens=760,
+                metadata={
+                    "workflow_id": request_workflow_id,
+                    "operation": "repair_screenshot_body",
+                    "prompt_id": PROMPT_ID_SCREENSHOT_BODY_REPAIR,
                     "prompt_version": prompt_bundle.version,
                     "prompt_safety_version": PROMPT_SAFETY_VERSION,
                     "provider_name": provider_name,
@@ -947,8 +1207,13 @@ class SupplementProposeOrchestrator:
         validation_diagnostics: Optional[dict[str, object]] = None,
         title_repair_attempted: bool = False,
         title_repair_succeeded: bool = False,
+        title_repair_failure_reason: Optional[str] = None,
+        title_fallback_attempted: bool = False,
+        title_fallback_succeeded: bool = False,
         summary_repair_attempted: bool = False,
         summary_repair_succeeded: bool = False,
+        body_repair_attempted: bool = False,
+        body_repair_succeeded: bool = False,
         provider_name: str,
         model: str,
         prompt_id: str,
@@ -969,8 +1234,13 @@ class SupplementProposeOrchestrator:
                     "validation_field": validation_field,
                     "title_repair_attempted": title_repair_attempted,
                     "title_repair_succeeded": title_repair_succeeded,
+                    "title_repair_failure_reason": title_repair_failure_reason,
+                    "title_fallback_attempted": title_fallback_attempted,
+                    "title_fallback_succeeded": title_fallback_succeeded,
                     "summary_repair_attempted": summary_repair_attempted,
                     "summary_repair_succeeded": summary_repair_succeeded,
+                    "body_repair_attempted": body_repair_attempted,
+                    "body_repair_succeeded": body_repair_succeeded,
                     "provider_name": provider_name,
                     "model": model,
                     "prompt_id": prompt_id,

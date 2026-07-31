@@ -147,6 +147,75 @@ class _ScreenshotSummaryRepairProvider(LLMProvider):
         )
 
 
+class _ScreenshotBodyRepairProvider(LLMProvider):
+    def __init__(
+        self,
+        *,
+        initial_title: str = "MySQL EXPLAIN 與 SQL 索引查詢",
+        include_title_repair: bool = False,
+        repaired_body_is_valid: bool = True,
+    ) -> None:
+        self.requests: list[LLMRequest] = []
+        initial_proposal = {
+            "title": initial_title,
+            "target_path": "NONE (no selected target page)",
+            "source": {
+                "source_type": "screenshot",
+                "source_display_name": "Screenshot batch (5 images)",
+            },
+            "summary": (
+                "這組截圖統整 MySQL EXPLAIN 與 SQL 的 optimizer workflow。"
+            ),
+            "concepts": [
+                "MySQL optimizer",
+                "EXPLAIN planner",
+                "SQL runtime",
+                "索引 pipeline",
+                "MySQL",
+            ],
+            "notes": [
+                "EXPLAIN 顯示 query planner。",
+                "SQL 查詢遵循 optimizer workflow。",
+                "索引可協助 runtime 過濾。",
+            ],
+        }
+        repaired_body = {
+            "summary": (
+                "這組截圖整理 MySQL EXPLAIN 與 SQL 查詢的執行計畫資訊，"
+                "並列出 type、key、rows 與索引資訊。"
+            ),
+            "concepts": ["MySQL", "EXPLAIN", "SQL", "索引", "查詢執行計畫"],
+            "notes": [
+                "EXPLAIN 會顯示查詢的執行計畫。",
+                "SQL 查詢可搭配 EXPLAIN 觀察索引。",
+                "畫面列出 type、key、rows 欄位。",
+                "索引可協助查詢條件過濾。",
+            ],
+        }
+        if not repaired_body_is_valid:
+            repaired_body["summary"] = "這組截圖加入 Redis。"
+        self.outputs = [json.dumps(initial_proposal)]
+        if include_title_repair:
+            self.outputs.append(
+                json.dumps({"title": "MySQL EXPLAIN 與 SQL 索引查詢"})
+            )
+        self.outputs.append(json.dumps(repaired_body))
+
+    @property
+    def name(self) -> str:
+        return "openai"
+
+    async def generate(self, request: LLMRequest) -> LLMResponse:
+        self.requests.append(request)
+        return LLMResponse(
+            provider="openai",
+            model="gpt-4o-mini",
+            output_text=self.outputs.pop(0),
+            token_input=30,
+            token_output=25,
+        )
+
+
 class _SnapshotBackedNotionReaderClient(NotionReaderClient):
     def __init__(self, pages: Dict[str, InMemoryNotionPageSnapshot]) -> None:
         self._pages = pages
@@ -451,7 +520,7 @@ def test_supplement_propose_api_creates_pending_change_request() -> None:
             assert metadata["provider_name"] == "openai"
             assert metadata["model"] == "gpt-4o-mini"
             assert metadata["prompt_id"] == "supplement_proposal"
-            assert metadata["prompt_version"] == "supplement_proposal_v4"
+            assert metadata["prompt_version"] == "supplement_proposal_v5"
             assert metadata["estimated_cost"] == pytest.approx(0.000072)
 
             # Step 28 must not write to Notion.
@@ -613,6 +682,88 @@ def test_screenshot_title_repair_is_bounded_to_one_attempt() -> None:
         app.dependency_overrides.clear()
 
 
+def test_screenshot_title_repair_uses_deterministic_fallback_for_general_cjk_only() -> None:
+    session_factory = _build_session_factory()
+    seed_session = session_factory()
+    try:
+        _seed_source_document(
+            seed_session,
+            source_document_id=25,
+            source_type="screenshot",
+            source_display_name="Screenshot batch (5 images)",
+            raw_text=(
+                "[Image 10]\nMySQL EXPLAIN 會顯示查 詢 的執 行 計 畫。\n"
+                "[Image 20]\nSQL 查 詢 可搭配 EXPLAIN 觀察索 引。\n"
+                "[Image 30]\n索 引 可協助查 詢 條件 過 濾。\n"
+                "[Image 40]\n畫面列出 type、key、rows 欄位，並顯示索 引 是否被使用。\n"
+                "[Image 50]\n來源：MySQL EXPLAIN 與 SQL 索 引 查 詢 資 訊。"
+            ),
+        )
+    finally:
+        seed_session.close()
+
+    provider = _ScreenshotTitleRepairProvider()
+    provider.outputs[1] = json.dumps(
+        {"title": "索引 / 資料庫 / 效能分析"}
+    )
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _provider_router_override() -> ProviderRouter:
+        router = ProviderRouter()
+        router.register_provider(provider)
+        return router
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
+    app.dependency_overrides[get_provider_router] = _provider_router_override
+
+    try:
+        response = TestClient(app).post(
+            "/api/supplement/propose",
+            json={"source_document_id": 25},
+        )
+        assert response.status_code == 200
+        assert len(provider.requests) == 2
+
+        session = session_factory()
+        try:
+            change_request = session.get(ChangeRequest, response.json()["change_request_id"])
+            assert change_request is not None
+            proposal = json.loads(change_request.proposal_json)
+            assert proposal["title"] != "索引 / 資料庫 / 效能分析"
+            assert "MySQL" in proposal["title"]
+            assert proposal["summary"] == (
+                "這組截圖整理 MySQL EXPLAIN、SQL 與索引查詢資訊。"
+            )
+
+            workflow = session.get(WorkflowRun, response.json()["workflow_run_id"])
+            assert workflow is not None
+            metadata = json.loads(workflow.metadata_json or "{}")
+            assert metadata["title_repair_attempted"] is True
+            assert metadata["title_repair_succeeded"] is False
+            assert metadata["title_fallback_used"] is True
+            assert metadata["title_fallback_attempted"] is True
+            assert metadata["title_fallback_succeeded"] is True
+            assert metadata["title_repair_failure_reason"] == (
+                "INSUFFICIENT_MATCHED_ANCHORS"
+            )
+            assert metadata["unmatched_high_specificity_anchor_count"] == 0
+            assert metadata["unmatched_technical_identifier_count"] == 0
+        finally:
+            session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_screenshot_summary_repair_only_retries_summary_with_same_source_snapshot() -> None:
     session_factory = _build_session_factory()
     seed_session = session_factory()
@@ -765,6 +916,159 @@ def test_screenshot_summary_repair_is_bounded_to_one_attempt() -> None:
         app.dependency_overrides.clear()
 
 
+def test_screenshot_title_repair_can_continue_into_one_bounded_body_repair() -> None:
+    session_factory = _build_session_factory()
+    seed_session = session_factory()
+    try:
+        _seed_source_document(
+            seed_session,
+            source_document_id=27,
+            source_type="screenshot",
+            source_display_name="Screenshot batch (5 images)",
+            raw_text=(
+                "[Image 10]\nMySQL EXPLAIN 會顯示查詢的執行計畫。\n"
+                "[Image 20]\nSQL 查詢可搭配 EXPLAIN 觀察索引。\n"
+                "[Image 30]\n索引可協助查詢條件過濾。\n"
+                "[Image 40]\n畫面列出 type、key、rows 欄位。"
+            ),
+        )
+    finally:
+        seed_session.close()
+
+    provider = _ScreenshotBodyRepairProvider(
+        initial_title="MySQL EXPLAIN 與 Redis 索引",
+        include_title_repair=True,
+    )
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _provider_router_override() -> ProviderRouter:
+        router = ProviderRouter()
+        router.register_provider(provider)
+        return router
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
+    app.dependency_overrides[get_provider_router] = _provider_router_override
+
+    try:
+        response = TestClient(app).post(
+            "/api/supplement/propose",
+            json={"source_document_id": 27},
+        )
+        assert response.status_code == 200
+        assert [request.metadata["operation"] for request in provider.requests] == [
+            "propose_change_request",
+            "repair_screenshot_title",
+            "repair_screenshot_body",
+        ]
+        assert provider.requests[2].max_tokens == 760
+        assert "MySQL EXPLAIN 會顯示查詢的執行計畫。" in (
+            provider.requests[2].messages[1].content
+        )
+
+        session = session_factory()
+        try:
+            workflow = session.get(WorkflowRun, response.json()["workflow_run_id"])
+            assert workflow is not None
+            metadata = json.loads(workflow.metadata_json or "{}")
+            assert metadata["title_repair_attempted"] is True
+            assert metadata["title_repair_succeeded"] is True
+            assert metadata["title_repair_failure_reason"] is None
+            assert metadata["title_fallback_attempted"] is False
+            assert metadata["title_fallback_succeeded"] is False
+            assert metadata["body_repair_attempted"] is True
+            assert metadata["body_repair_succeeded"] is True
+            assert metadata["summary_repair_attempted"] is False
+            assert session.query(ChangeRequest).count() == 1
+            assert session.query(SourceDocument).count() == 1
+        finally:
+            session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_screenshot_body_repair_is_bounded_to_one_attempt() -> None:
+    session_factory = _build_session_factory()
+    seed_session = session_factory()
+    try:
+        _seed_source_document(
+            seed_session,
+            source_document_id=28,
+            source_type="screenshot",
+            source_display_name="Screenshot batch (5 images)",
+            raw_text=(
+                "MySQL EXPLAIN 會顯示查詢的執行計畫。"
+                "SQL 查詢可搭配 EXPLAIN 觀察索引。"
+                "索引可協助查詢條件過濾。"
+                "畫面列出 type、key、rows 欄位。"
+            ),
+        )
+    finally:
+        seed_session.close()
+
+    provider = _ScreenshotBodyRepairProvider(repaired_body_is_valid=False)
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _provider_router_override() -> ProviderRouter:
+        router = ProviderRouter()
+        router.register_provider(provider)
+        return router
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
+    app.dependency_overrides[get_provider_router] = _provider_router_override
+
+    try:
+        response = TestClient(app).post(
+            "/api/supplement/propose",
+            json={"source_document_id": 28},
+        )
+        assert response.status_code == 502
+        assert [request.metadata["operation"] for request in provider.requests] == [
+            "propose_change_request",
+            "repair_screenshot_body",
+        ]
+
+        session = session_factory()
+        try:
+            workflow_id = response.json()["detail"]["workflow_run_id"]
+            workflow = session.get(WorkflowRun, workflow_id)
+            assert workflow is not None
+            metadata = json.loads(workflow.metadata_json or "{}")
+            assert metadata["body_repair_attempted"] is True
+            assert metadata["body_repair_succeeded"] is False
+            assert metadata["first_unsupported_reason"] == (
+                "NEW_TECHNICAL_IDENTIFIER"
+            )
+            serialized_metadata = json.dumps(metadata, ensure_ascii=False)
+            assert "optimizer workflow" not in serialized_metadata
+            assert "這組截圖加入 Redis" not in serialized_metadata
+            assert session.query(ChangeRequest).count() == 0
+            assert session.query(SourceDocument).count() == 1
+        finally:
+            session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_supplement_propose_api_uses_duplicate_reference_without_provider() -> None:
     session_factory = _build_session_factory()
     seed_session = session_factory()
@@ -836,7 +1140,7 @@ def test_supplement_propose_api_uses_duplicate_reference_without_provider() -> N
             assert metadata["provider_name"] == "openai"
             assert metadata["model"] == "gpt-4o-mini"
             assert metadata["prompt_id"] == "supplement_proposal"
-            assert metadata["prompt_version"] == "supplement_proposal_v4"
+            assert metadata["prompt_version"] == "supplement_proposal_v5"
             assert metadata["estimated_cost"] is None
 
             # No Notion write should happen. Existing seeded rows remain unchanged.
@@ -903,7 +1207,7 @@ def test_supplement_propose_api_returns_llm_output_invalid() -> None:
             assert metadata["provider_name"] == "openai"
             assert metadata["model"] == "gpt-4o-mini"
             assert metadata["prompt_id"] == "supplement_proposal"
-            assert metadata["prompt_version"] == "supplement_proposal_v4"
+            assert metadata["prompt_version"] == "supplement_proposal_v5"
             assert metadata["estimated_cost"] == pytest.approx(0.000072)
             assert verify_session.query(ChangeRequest).count() == 0
         finally:
@@ -971,7 +1275,7 @@ def test_supplement_propose_api_returns_provider_not_found_when_provider_missing
             assert metadata["provider_name"] == "openai"
             assert metadata["model"] == "gpt-4o-mini"
             assert metadata["prompt_id"] == "supplement_proposal"
-            assert metadata["prompt_version"] == "supplement_proposal_v4"
+            assert metadata["prompt_version"] == "supplement_proposal_v5"
             assert metadata["estimated_cost"] is None
             assert verify_session.query(ChangeRequest).count() == 0
         finally:

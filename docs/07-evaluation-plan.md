@@ -336,15 +336,24 @@ The fixtures cover:
 - browser tab/address/navigation noise removal;
 - Traditional Chinese language selection with original technical terms;
 - reasonable English and Traditional Chinese paraphrase acceptance;
-- five-image live-shaped MySQL/EXPLAIN summaries of 100–180 characters with
-  CJK OCR spacing noise, mixed punctuation, and bounded claim-level diagnostics;
+- four- and five-image live-shaped MySQL/EXPLAIN Traditional Chinese titles
+  with CJK OCR spacing noise, 20–40 character noun phrases, no-number title
+  cases, mixed punctuation, and bounded claim-level diagnostics;
+- public-safe workflow-252/255-shaped proposals with exactly 15/16 validation
+  units and 7/9 matches, proving that counts span summary plus complete concept
+  and note items rather than splitting one summary into phrase fragments;
 - MySQL/索引/EXPLAIN/SQL title anchors, mixed technical punctuation, and
-  deterministic title fallback without another OCR/provider call;
+  deterministic title fallback without another OCR/provider call, including
+  unmatched general CJK anchors that remain valid with a matched
+  high-specificity anchor;
 - deterministic rejection of unsupported products, numbers/percentages,
   technical content, advice, comparisons, conclusions, and browser-noise
   evidence without a second full-proposal LLM judge;
 - one summary-only repair using the same source snapshot, with a second
   failure bounded to `LLM_OUTPUT_INVALID` and no new source/OCR row.
+- one body-only repair for safe multi-item paraphrase failures, including the
+  title-repair-to-body-repair transition and a second failure bounded to
+  `LLM_OUTPUT_INVALID`.
 
 Run:
 

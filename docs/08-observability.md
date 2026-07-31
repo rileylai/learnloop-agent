@@ -119,12 +119,21 @@ Telegram ingestion observability:
   `title_repair_succeeded`. A repair is one title-only LLM call using the same
   source snapshot; it never starts a second OCR or full-proposal generation
   stage.
+- Deterministic title fallback records `title_fallback_attempted` and
+  `title_fallback_succeeded` separately from the title LLM repair result. If a
+  repaired or fallback title passes before body validation fails, the title
+  stage remains successful in metadata.
 - Screenshot proposal metadata may also record
   `summary_repair_attempted` and `summary_repair_succeeded`. This repair is
   eligible only for a single summary field failure with no new number,
   version, product, technical identifier, advice, comparison, or result. It
   makes one summary-only LLM call against the same source snapshot and is
   bounded to one retry.
+- Safe multi-item lexical failures may record `body_repair_eligible`,
+  `body_repair_attempted`, and `body_repair_succeeded`. One body-only repair
+  may replace summary/concepts/notes and must pass the unchanged deterministic
+  validator. New identifiers, numbers, advice, comparisons, or results disable
+  this repair.
 - Upload sessions carry a monotonic settle version. The settle job atomically
   promotes `collecting` to `settled`, sorts attachments by Telegram
   `message_id`, and stale/duplicate versions skip before picker or business
@@ -145,17 +154,36 @@ Telegram ingestion observability:
   `source_snapshot_digest`, `prompt_source_digest`, and
   `validation_source_digest`, plus title-only anchor counts:
   `title_anchor_count`, `matched_title_anchor_count`,
-  `unmatched_title_anchor_count`, `numeric_anchor_count`, and
-  `unmatched_numeric_anchor_count`. `evidence_claim_count` applies only to
+  `unmatched_title_anchor_count`, `title_failure_reason`,
+  `matched_high_specificity_anchor_count`,
+  `unmatched_high_specificity_anchor_count`, `matched_general_anchor_count`,
+  `unmatched_general_anchor_count`, `matched_technical_identifier_count`,
+  `unmatched_technical_identifier_count`, `numeric_anchor_count`,
+  `unmatched_numeric_anchor_count`, and `title_repair_failure_reason`.
+  Title reasons use the fixed enum set `NO_USABLE_TITLE_ANCHOR`,
+  `INSUFFICIENT_MATCHED_ANCHORS`, `UNMATCHED_TECHNICAL_IDENTIFIER`,
+  `UNMATCHED_PRODUCT_NAME`, `UNMATCHED_NUMBER_OR_VERSION`,
+  `GENERIC_TITLE_ONLY`, and `OCR_NORMALIZATION_MISMATCH`.
+  `evidence_claim_count` applies only to
   summary/concept/note claims and is the backward-compatible alias for
   `matched_claim_count`. Additional redacted claim diagnostics include
-  `extracted_claim_count`, `matched_claim_count`,
-  `first_unsupported_claim_index`, `first_unsupported_reason`,
-  `failed_field_count`, and `summary_repair_eligible`. The prompt and
+  `validation_granularity`, `validation_unit_count`,
+  `matched_validation_unit_count`, `failed_validation_unit_count`,
+  `failed_logical_region_count`, `failed_logical_regions`, per-region unit
+  counts, `first_unsupported_validation_unit_index`, fixed reason counts,
+  redacted failed-unit field/index/evidence-count details,
+  `matched_exact_ascii_anchor_count`, `matched_cjk_anchor_count`,
+  `unmatched_general_token_count`, `summary_repair_eligible`,
+  `body_repair_eligible`, and `repair_scope`. `extracted_claim_count`,
+  `matched_claim_count`, and `failed_field_count` remain backward-compatible;
+  `failed_field_count` means unique item paths, not proposal fields. The prompt and
   validator digests are computed from the same persisted-source snapshot and
   must match. Telegram outer workflow metadata propagates these fields from
   the supplement workflow through an allowlist, along with
   `source_attachment_count` and `llm_ms`.
+  Raw candidate units and matched anchor strings are available only in an
+  in-process private diagnostic report. They are never persisted or propagated
+  to the outer Telegram workflow.
 
 ## Workflow Metadata Notes
 

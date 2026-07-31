@@ -26,6 +26,7 @@ class SupplementProposalValidationError(Exception):
         *,
         field: Optional[str] = None,
         diagnostics: Optional[Dict[str, Any]] = None,
+        private_diagnostics: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__(message)
         self.error_code = "LLM_OUTPUT_INVALID"
@@ -33,6 +34,10 @@ class SupplementProposalValidationError(Exception):
         self.message = message
         self.field = field
         self.diagnostics = dict(diagnostics or {})
+        # Private diagnostics may contain proposal text. They are available
+        # only to an explicit in-process diagnostic caller and must never be
+        # copied into workflow metadata, API responses, or general logs.
+        self.private_diagnostics = dict(private_diagnostics or {})
 
 
 class SupplementProposalSourceSchema(BaseModel):
@@ -103,6 +108,27 @@ class SupplementSummaryRepairSchema(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     summary: str = Field(min_length=1)
+
+
+class SupplementBodyRepairSchema(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    summary: str = Field(min_length=1)
+    concepts: List[str] = Field(min_length=3, max_length=30)
+    notes: List[str] = Field(min_length=3, max_length=6)
+
+    @field_validator("concepts", "notes")
+    @classmethod
+    def _validate_non_empty_string_items(cls, items: List[str]) -> List[str]:
+        normalized_items: List[str] = []
+        for index, value in enumerate(items):
+            if not isinstance(value, str):
+                raise ValueError(f"item at index {index} must be a string")
+            normalized_value = value.strip()
+            if not normalized_value:
+                raise ValueError(f"item at index {index} must not be empty")
+            normalized_items.append(normalized_value)
+        return normalized_items
 
 
 def parse_supplement_proposal_json(llm_output: str) -> SupplementProposalSchema:
@@ -201,6 +227,42 @@ def parse_supplement_summary_repair_json(
         raise SupplementProposalValidationError(
             f"summary repair schema validation failed: {error_message}",
             field="summary",
+        ) from exc
+
+
+def parse_supplement_body_repair_json(
+    llm_output: str,
+) -> SupplementBodyRepairSchema:
+    normalized_output = llm_output.strip()
+    if not normalized_output:
+        raise SupplementProposalValidationError(
+            "body repair output is empty",
+            field="body",
+        )
+
+    json_payload = _extract_json_payload(normalized_output)
+    try:
+        parsed_value = json.loads(json_payload)
+    except json.JSONDecodeError as exc:
+        raise SupplementProposalValidationError(
+            "body repair output is not valid JSON",
+            field="body",
+        ) from exc
+
+    if not isinstance(parsed_value, dict):
+        raise SupplementProposalValidationError(
+            "body repair output JSON must be an object",
+            field="body",
+        )
+
+    try:
+        return SupplementBodyRepairSchema.model_validate(parsed_value)
+    except ValidationError as exc:
+        first_error = exc.errors()[0]
+        error_message = first_error.get("msg", "body repair schema validation failed")
+        raise SupplementProposalValidationError(
+            f"body repair schema validation failed: {error_message}",
+            field="body",
         ) from exc
 
 

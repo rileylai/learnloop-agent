@@ -79,6 +79,38 @@ def test_public_safe_four_image_mysql_batch_uses_one_snapshot_and_all_claims() -
     assert snapshot.text.index("EXPLAIN 的 key") < snapshot.text.index("來源說明 MySQL")
 
 
+def test_live_shaped_four_image_title_allows_unmatched_general_cjk_anchors() -> None:
+    fixture = next(
+        item
+        for item in _load_fixtures()
+        if item["id"] == "live_shaped_mysql_four_image_title_general_cjk"
+    )
+    source_text = _merge_images(fixture["images"])
+    snapshot = build_screenshot_source_snapshot(source_text)
+    result = validate_screenshot_proposal_with_diagnostics(
+        proposal=SupplementProposalSchema.model_validate(fixture["proposal"]),
+        source_text=snapshot.text,
+        source_snapshot=snapshot,
+    )
+
+    assert result.diagnostics is not None
+    diagnostics = result.diagnostics.as_dict()
+    assert 20 <= len(fixture["proposal"]["title"]) <= 40
+    assert diagnostics["title_anchor_count"] == 4
+    assert diagnostics["matched_title_anchor_count"] == 1
+    assert diagnostics["unmatched_title_anchor_count"] == 3
+    assert diagnostics["numeric_anchor_count"] == 0
+    assert diagnostics["unmatched_numeric_anchor_count"] == 0
+    assert diagnostics["matched_high_specificity_anchor_count"] == 1
+    assert diagnostics["unmatched_high_specificity_anchor_count"] == 0
+    assert diagnostics["matched_general_anchor_count"] == 0
+    assert diagnostics["unmatched_general_anchor_count"] == 3
+    assert diagnostics["matched_technical_identifier_count"] == 0
+    assert diagnostics["unmatched_technical_identifier_count"] == 0
+    assert diagnostics["title_failure_reason"] is None
+    assert diagnostics["title_repair_failure_reason"] is None
+
+
 def test_live_shaped_five_image_title_contract_is_bounded_and_fail_closed() -> None:
     fixture = next(
         item
@@ -124,6 +156,108 @@ def test_live_shaped_five_image_title_contract_is_bounded_and_fail_closed() -> N
         assert diagnostics["unmatched_title_anchor_count"] >= 1
     percentage_diagnostics = exc_info.value.diagnostics
     assert percentage_diagnostics["unmatched_numeric_anchor_count"] >= 1
+
+
+@pytest.mark.parametrize(
+    ("proposal_key", "expected_units", "expected_matched", "expected_failed"),
+    [
+        ("proposal", 15, 7, 8),
+        ("retry_proposal", 16, 9, 7),
+    ],
+)
+def test_workflow_252_255_shape_uses_sentence_and_full_list_item_units(
+    proposal_key: str,
+    expected_units: int,
+    expected_matched: int,
+    expected_failed: int,
+) -> None:
+    fixture = next(
+        item
+        for item in _load_fixtures()
+        if item["id"] == "workflow_252_255_shape_public_safe"
+    )
+    proposal = SupplementProposalSchema.model_validate(fixture[proposal_key])
+
+    with pytest.raises(SupplementProposalValidationError) as exc_info:
+        validate_screenshot_proposal_with_diagnostics(
+            proposal=proposal,
+            source_text=fixture["source"],
+        )
+
+    error = exc_info.value
+    diagnostics = error.diagnostics
+    assert error.field == "summary"
+    assert diagnostics["validation_granularity"] == (
+        "summary_sentence_list_item_v1"
+    )
+    assert diagnostics["validation_unit_count"] == expected_units
+    assert diagnostics["extracted_claim_count"] == expected_units
+    assert diagnostics["matched_validation_unit_count"] == expected_matched
+    assert diagnostics["matched_claim_count"] == expected_matched
+    assert diagnostics["failed_validation_unit_count"] == expected_failed
+    assert diagnostics["unsupported_claim_count"] == expected_failed
+    assert diagnostics["failed_field_count"] == expected_failed
+    assert diagnostics["failed_logical_regions"] == [
+        "concepts",
+        "notes",
+        "summary",
+    ]
+    assert diagnostics["failed_logical_region_count"] == 3
+    assert diagnostics["failed_proposal_field_count"] == 3
+    assert diagnostics["first_unsupported_reason"] == "PARAPHRASE_NOT_GROUNDED"
+    assert diagnostics["summary_repair_eligible"] is False
+    assert diagnostics["body_repair_eligible"] is True
+    assert diagnostics["repair_scope"] == "body"
+    assert diagnostics["unmatched_general_token_count"] >= expected_failed
+    assert len(diagnostics["failed_validation_unit_details"]) == expected_failed
+
+    private_fields = error.private_diagnostics["validation_fields"]
+    assert len(private_fields) == expected_units
+    assert private_fields[0]["field_path"] == "summary"
+    assert private_fields[0]["split_result"] == [proposal.summary]
+    assert private_fields[1]["split_result"] == [proposal.concepts[0]]
+    assert private_fields[-1]["split_result"] == [proposal.notes[-1]]
+    assert private_fields[0]["validation_units"][0]["matched_evidence"]
+    assert proposal.summary not in json.dumps(diagnostics, ensure_ascii=False)
+
+
+@pytest.mark.parametrize(
+    ("title", "expected_reason"),
+    [
+        ("MySQL EXPLAIN 與 Redis 索引", "UNMATCHED_PRODUCT_NAME"),
+        ("MySQL EXPLAIN 與分庫分表", "UNMATCHED_TECHNICAL_IDENTIFIER"),
+        ("MySQL EXPLAIN 索引 30%", "UNMATCHED_NUMBER_OR_VERSION"),
+        ("Screenshot summary", "GENERIC_TITLE_ONLY"),
+        ("招募", "NO_USABLE_TITLE_ANCHOR"),
+    ],
+)
+def test_title_failure_diagnostics_use_fixed_redacted_enums(
+    title: str,
+    expected_reason: str,
+) -> None:
+    fixture = next(
+        item
+        for item in _load_fixtures()
+        if item["id"] == "live_shaped_mysql_five_image_batch"
+    )
+    proposal = SupplementProposalSchema.model_validate(fixture["proposal"]).model_copy(
+        update={"title": title}
+    )
+
+    with pytest.raises(SupplementProposalValidationError) as exc_info:
+        validate_screenshot_proposal_with_diagnostics(
+            proposal=proposal,
+            source_text=_merge_images(fixture["images"]),
+        )
+
+    diagnostics = exc_info.value.diagnostics
+    assert diagnostics["title_failure_reason"] == expected_reason
+    assert diagnostics["title_repair_failure_reason"] is None
+    assert isinstance(diagnostics["matched_high_specificity_anchor_count"], int)
+    assert isinstance(diagnostics["unmatched_general_anchor_count"], int)
+    assert isinstance(diagnostics["matched_technical_identifier_count"], int)
+    assert isinstance(diagnostics["unmatched_technical_identifier_count"], int)
+    assert title not in json.dumps(diagnostics, ensure_ascii=False)
 
 
 @pytest.mark.parametrize(
@@ -226,7 +360,13 @@ def test_summary_claim_extraction_handles_mixed_cjk_punctuation_and_newlines() -
     )
 
     assert result.diagnostics is not None
-    assert result.diagnostics.extracted_claim_count >= 12
+    assert result.diagnostics.validation_granularity == (
+        "summary_sentence_list_item_v1"
+    )
+    assert result.diagnostics.summary_validation_unit_count == 2
+    assert result.diagnostics.concept_validation_unit_count == 5
+    assert result.diagnostics.note_validation_unit_count == 4
+    assert result.diagnostics.extracted_claim_count == 11
     assert result.diagnostics.extracted_claim_count == result.diagnostics.matched_claim_count
     assert result.diagnostics.unsupported_claim_count == 0
 
