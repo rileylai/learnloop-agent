@@ -424,11 +424,15 @@ Design notes:
 - Notion remains the source of truth for note content.
 - For changed pages, reconciliation uses page-level replacement.
 - The schema below matches the SQLAlchemy models and current Alembic head
-  `8a4d1f0c2b3e`.
+  `9c5e7b1a2d4f`.
 - Primary keys are integer `BIGINT` values, except Telegram `update_id`, which
   is the externally supplied primary key.
 - `embedding` is nullable `vector(1536)`. Legacy `embedding_text` remains for
   compatibility; there is no automatic startup backfill.
+- Hierarchy persistence is the minimal additive migration
+  `alembic/versions/9c5e7b1a2d4f_add_notion_page_parent_identity.py`; it adds
+  nullable/indexed `parent_notion_page_id` without changing the unique
+  external page identity. The migration head is `9c5e7b1a2d4f`.
 
 ### 12.1 notion_pages
 | Column | Type | Description |
@@ -437,6 +441,7 @@ Design notes:
 | notion_page_id | VARCHAR(128) (UNIQUE) | External Notion page identifier. |
 | title | VARCHAR(512) | Current page title snapshot. |
 | notion_path | TEXT | Page path used for citation. |
+| parent_notion_page_id | VARCHAR(128) NULL | Canonical external parent page id from Notion `parent.type=page_id`; workspace/database/block/unknown parents are NULL and render as roots. |
 | last_edited_time | TIMESTAMPTZ NULL | Last Notion edit time. |
 | created_at | TIMESTAMPTZ | Created time. |
 | updated_at | TIMESTAMPTZ | Updated time. |
@@ -637,9 +642,10 @@ Metadata note:
 | POST | `/api/telegram/webhook` | Handle Telegram webhook updates for `/help`, `/health`, `/pages`, target-aware `/ingest`, `/retry-proposal`, scoped `/ask`, and text or callback review. |
 
 Telegram ingestion UX contract:
-- Uploads are acknowledged first, then a page picker shows each indexed parent
-  and child page with its full hierarchy path. The user never needs to type a
-  Notion UUID in the primary flow.
+- Uploads are acknowledged first, then a progressive hierarchy picker shows root
+  pages. Opening a page with children browses into that page; each nested level
+  has an explicit `Select this page`, while leaf pages select directly. The user
+  never needs to type a Notion UUID in the primary flow.
 - The Redis upload session is TTL-bound and isolated by chat/user. A media
   group is aggregated by `media_group_id` through the queued settle job.
 - Inline callback data is only an opaque action token. Redis maps it back to
@@ -651,10 +657,16 @@ Telegram ingestion UX contract:
 - Callback Accept and text `/accept` use the same review orchestrator and all
   existing allowed-chat, pending, target, append-only, and re-index guardrails.
   No automatic accept is permitted.
-- Page-picker callback order is: resolve and validate the opaque session/page
-  selection, answer `answerCallbackQuery`, run target-claimed OCR/proposal
-  business work once, commit the source document and pending change request,
-  send the preview, then finalize workflow and update-ledger status. Ack
+- Picker navigation callbacks (`open_page`, `back`, and `root`) resolve only
+  server-side hierarchy context and never claim a target or enter ingestion.
+  New picker views render all direct children without a page indicator or
+  pagination buttons. Legacy `next_page`/`previous_page` mappings may be
+  accepted until TTL expiry and deterministically render the current full
+  view or fail closed. Only final `select_target` follows the existing
+  target-claim path: resolve and validate the opaque session/page selection,
+  answer `answerCallbackQuery`, run target-claimed OCR/proposal business work
+  once, commit the source document and pending change request, send the preview,
+  then finalize workflow and update-ledger status. Ack
   failure is classified as `TELEGRAM_CALLBACK_ACK_FAILED` and does not turn a
   successful business outcome into a failed workflow. Preview send failure is
   `TELEGRAM_PREVIEW_DELIVERY_FAILED`; it does not recreate business rows.

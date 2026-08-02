@@ -51,6 +51,7 @@ class _MockPagePayload(BaseModel):
     page_id: str = Field(min_length=1)
     title: str = Field(min_length=1)
     notion_path: str = Field(min_length=1)
+    parent_notion_page_id: Optional[str] = None
     last_edited_time: Optional[datetime] = None
     demo_metadata: _MockPageMetadata
     blocks: List[_MockBlockPayload] = Field(default_factory=list)
@@ -114,6 +115,7 @@ def _load_mock_page_tree(json_path: Path) -> NotionPageTree:
         page_id=payload.page_id,
         title=payload.title,
         notion_path=payload.notion_path,
+        parent_notion_page_id=payload.parent_notion_page_id,
         last_edited_time=payload.last_edited_time,
         blocks=[_to_notion_block_node(block) for block in block_paths],
     )

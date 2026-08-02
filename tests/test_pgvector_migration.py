@@ -41,6 +41,10 @@ def test_pgvector_migration_upgrades_and_downgrades_fresh_sqlite_db(
     assert "embedding" in column_names
     assert "embedding_text" in column_names
     assert notion_page_columns["last_edited_time"]["nullable"] is True
+    assert notion_page_columns["parent_notion_page_id"]["nullable"] is True
+    assert "ix_notion_pages_parent_notion_page_id" in {
+        index["name"] for index in inspector.get_indexes("notion_pages")
+    }
     assert "ix_knowledge_chunks_source_kind" in knowledge_chunk_indexes
     assert "ix_knowledge_chunks_notion_block_id" in knowledge_chunk_indexes
     assert "ix_knowledge_chunks_notion_path" in knowledge_chunk_indexes
@@ -72,9 +76,17 @@ def test_pgvector_migration_upgrades_and_downgrades_fresh_sqlite_db(
     downgraded_indexes = {
         index["name"] for index in inspector.get_indexes("knowledge_chunks")
     }
+    downgraded_notion_page_columns = {
+        column["name"] for column in inspector.get_columns("notion_pages")
+    }
+    downgraded_notion_page_indexes = {
+        index["name"] for index in inspector.get_indexes("notion_pages")
+    }
 
     assert "embedding" not in downgraded_column_names
     assert "embedding_text" in downgraded_column_names
+    assert "parent_notion_page_id" not in downgraded_notion_page_columns
+    assert "ix_notion_pages_parent_notion_page_id" not in downgraded_notion_page_indexes
     assert "ix_knowledge_chunks_source_kind" not in downgraded_indexes
     assert "ix_knowledge_chunks_notion_block_id" not in downgraded_indexes
     assert "ix_knowledge_chunks_notion_path" not in downgraded_indexes

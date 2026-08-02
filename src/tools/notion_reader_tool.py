@@ -24,6 +24,7 @@ class NotionPageTree:
     notion_path: str
     blocks: List[NotionBlockNode] = field(default_factory=list)
     last_edited_time: Optional[datetime] = None
+    parent_notion_page_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,7 @@ class NotionPageSummary:
     page_id: str
     title: str
     last_edited_time: Optional[datetime] = None
+    parent_notion_page_id: Optional[str] = None
 
 
 class NotionReaderClient:
@@ -62,6 +64,7 @@ class InMemoryNotionReaderClient(NotionReaderClient):
             NotionPageSummary(
                 page_id=page.page_id,
                 title=page.title,
+                parent_notion_page_id=page.parent_notion_page_id,
                 last_edited_time=page.last_edited_time,
             )
             for page in sorted(self._pages.values(), key=lambda item: item.page_id)
@@ -91,6 +94,9 @@ class NotionReaderTool(Tool):
                             "page_id": {"type": "string"},
                             "title": {"type": "string"},
                             "notion_path": {"type": "string"},
+                            "parent_notion_page_id": {
+                                "type": ["string", "null"],
+                            },
                             "last_edited_time": {
                                 "type": ["string", "null"],
                             },
@@ -144,6 +150,7 @@ class NotionReaderTool(Tool):
                     "page_id": page_tree.page_id,
                     "title": page_tree.title,
                     "notion_path": page_tree.notion_path,
+                    "parent_notion_page_id": page_tree.parent_notion_page_id,
                     "last_edited_time": (
                         page_tree.last_edited_time.isoformat()
                         if page_tree.last_edited_time is not None
@@ -171,6 +178,7 @@ class NotionReaderTool(Tool):
             {
                 "page_id": page.page_id,
                 "title": page.title,
+                "parent_notion_page_id": page.parent_notion_page_id,
                 "last_edited_time": (
                     page.last_edited_time.isoformat()
                     if page.last_edited_time is not None

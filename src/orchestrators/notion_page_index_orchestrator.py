@@ -102,6 +102,7 @@ class _ToolPagePayload(BaseModel):
     page_id: str
     title: str
     notion_path: str
+    parent_notion_page_id: Optional[str] = None
     last_edited_time: Optional[datetime] = None
 
 
@@ -428,6 +429,7 @@ class NotionPageIndexOrchestrator:
             notion_page_id=page_payload.page_id,
             title=page_payload.title,
             notion_path=page_payload.notion_path,
+            parent_notion_page_id=page_payload.parent_notion_page_id,
             last_edited_time=page_payload.last_edited_time,
         )
         unit_of_work.chunks.delete_page_chunks(

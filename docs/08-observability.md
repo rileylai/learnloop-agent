@@ -96,6 +96,13 @@ Telegram ingestion observability:
   `preview_delivery_status`. It does not record callback tokens,
   canonical page ids, upload bytes, captions, OCR text, or proposal source
   content.
+- Hierarchy picker navigation records only the normalized allowlisted action
+  (`open_page`, `select_target`, `back`, or `root`; legacy
+  `next_page`/`previous_page` and `change_target_select` mappings remain
+  accepted for compatibility) and safe workflow outcome fields. It never records the
+  server-side page/navigation context, breadcrumb, callback token, or page
+  content. Browse callbacks are expected to have no OCR, provider, source-row,
+  change-request, or target-claim timing fields.
 - Review callback metadata records the normalized action and
   `change_request_status` only. Callback routing uses a server-side
   `callback_kind` (`review` or `picker`); the opaque callback token and raw

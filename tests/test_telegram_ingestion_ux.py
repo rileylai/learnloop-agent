@@ -279,6 +279,44 @@ def _seed_pages(session_factory) -> None:
         session.close()
 
 
+def _seed_hierarchical_pages(session_factory) -> None:
+    session = session_factory()
+    try:
+        session.add_all(
+            [
+                NotionPage(
+                    id=1,
+                    notion_page_id="hierarchy-parent",
+                    title="Parent",
+                    notion_path="Knowledge/Parent",
+                ),
+                NotionPage(
+                    id=2,
+                    notion_page_id="hierarchy-child",
+                    title="Child",
+                    notion_path="Knowledge/Parent/Child",
+                    parent_notion_page_id="hierarchy-parent",
+                ),
+                NotionPage(
+                    id=3,
+                    notion_page_id="hierarchy-grandchild",
+                    title="Grandchild",
+                    notion_path="Knowledge/Parent/Child/Grandchild",
+                    parent_notion_page_id="hierarchy-child",
+                ),
+                NotionPage(
+                    id=4,
+                    notion_page_id="hierarchy-other",
+                    title="Other root",
+                    notion_path="Knowledge/Z Other root",
+                ),
+            ]
+        )
+        session.commit()
+    finally:
+        session.close()
+
+
 def _configure_app(
     *,
     session_factory,
@@ -496,6 +534,146 @@ def test_upload_then_page_button_creates_target_aware_pending_proposal(
                 .one()
             )
             assert ledger.status == "succeeded"
+        finally:
+            session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_hierarchy_picker_browse_is_side_effect_free_and_final_select_runs_once() -> None:
+    session_factory = _session_factory()
+    _seed_hierarchical_pages(session_factory)
+    telegram_client = InMemoryTelegramBotClient()
+    telegram_client.add_file(
+        file_id="hierarchy-pdf",
+        file_bytes=b"telegram-file-bytes",
+        file_name="lesson.pdf",
+    )
+    session_store = InMemoryTelegramSessionStore()
+    _configure_app(
+        session_factory=session_factory,
+        telegram_client=telegram_client,
+        session_store=session_store,
+        source_type="pdf",
+    )
+
+    def callback(update_id: int, callback_id: str, data: str):
+        return client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": update_id,
+                "callback_query": {
+                    "id": callback_id,
+                    "from": {"id": 777},
+                    "data": data,
+                    "message": {"message_id": update_id, "chat": {"id": 555}},
+                },
+            },
+        )
+
+    try:
+        client = TestClient(app)
+        upload = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 9300,
+                "message": {
+                    "message_id": 30,
+                    "chat": {"id": 555},
+                    "from": {"id": 777},
+                    "caption": "/ingest",
+                    "document": {
+                        "file_id": "hierarchy-pdf",
+                        "file_name": "lesson.pdf",
+                        "mime_type": "application/pdf",
+                    },
+                },
+            },
+        )
+        assert upload.status_code == 200
+        root_markup = telegram_client.list_sent_messages()[-1].reply_markup
+        assert [
+            row[0]["text"] for row in root_markup["inline_keyboard"]
+        ] == ["📁 Parent", "📄 Other root"]
+
+        opened_parent = callback(
+            9301,
+            "open-parent",
+            root_markup["inline_keyboard"][0][0]["callback_data"],
+        )
+        assert opened_parent.status_code == 200
+        assert opened_parent.json()["change_request_id"] is None
+        assert "Choose this page or one of its child pages." in opened_parent.json()[
+            "reply_text"
+        ]
+        assert [
+            row[0]["text"]
+            for row in telegram_client.list_sent_messages()[-1].reply_markup[
+                "inline_keyboard"
+            ]
+        ] == ["✅ Select Parent", "📁 Child", "⬅️ Back", "🏠 Root pages"]
+
+        session = session_factory()
+        try:
+            assert session.query(SourceDocument).count() == 0
+            assert session.query(ChangeRequest).count() == 0
+        finally:
+            session.close()
+
+        parent_markup = telegram_client.list_sent_messages()[-1].reply_markup
+        opened_child = callback(
+            9302,
+            "open-child",
+            parent_markup["inline_keyboard"][1][0]["callback_data"],
+        )
+        assert opened_child.status_code == 200
+        child_markup = telegram_client.list_sent_messages()[-1].reply_markup
+        assert [
+            row[0]["text"] for row in child_markup["inline_keyboard"]
+        ] == ["✅ Select Child", "📄 Grandchild", "⬅️ Back", "🏠 Root pages"]
+
+        returned = callback(
+            9303,
+            "back-to-parent",
+            child_markup["inline_keyboard"][2][0]["callback_data"],
+        )
+        assert returned.status_code == 200
+        assert "Parent" in returned.json()["reply_text"]
+        assert "Grandchild" not in returned.json()["reply_text"]
+
+        parent_markup = telegram_client.list_sent_messages()[-1].reply_markup
+        rooted = callback(
+            9304,
+            "root-pages",
+            parent_markup["inline_keyboard"][3][0]["callback_data"],
+        )
+        assert rooted.status_code == 200
+        assert rooted.json()["change_request_id"] is None
+        assert session_store.find_latest_upload(chat_id="555", user_id="777").state == (
+            "awaiting_target"
+        )
+
+        root_markup = telegram_client.list_sent_messages()[-1].reply_markup
+        opened_parent_again = callback(
+            9305,
+            "open-parent-again",
+            root_markup["inline_keyboard"][0][0]["callback_data"],
+        )
+        assert opened_parent_again.status_code == 200
+        parent_markup = telegram_client.list_sent_messages()[-1].reply_markup
+        selected = callback(
+            9306,
+            "select-parent",
+            parent_markup["inline_keyboard"][0][0]["callback_data"],
+        )
+        assert selected.status_code == 200
+        assert selected.json()["target_notion_page_id"] == "hierarchy-parent"
+        assert selected.json()["target_set"] is True
+
+        session = session_factory()
+        try:
+            assert session.query(SourceDocument).count() == 1
+            assert session.query(ChangeRequest).count() == 1
         finally:
             session.close()
     finally:
@@ -1248,9 +1426,22 @@ def test_change_target_button_updates_pending_target_without_accepting() -> None
             },
         )
         assert picker.status_code == 200
-        child_token = telegram_client.list_sent_messages()[-1].reply_markup[
+        assert "Page " not in picker.json()["reply_text"]
+        change_picker_markup = telegram_client.list_sent_messages()[-1].reply_markup
+        assert all(
+            button["text"] not in {"➡️ Next", "⬅️ Previous"}
+            for row in change_picker_markup["inline_keyboard"]
+            for button in row
+        )
+        child_token = change_picker_markup[
             "inline_keyboard"
         ][1][0]["callback_data"]
+        resolved_change_picker = store.resolve_callback(
+            token=child_token[3:], chat_id="558", user_id="780"
+        )
+        assert resolved_change_picker is not None
+        assert resolved_change_picker.action == "select_target"
+        assert resolved_change_picker.picker_mode == "change_target"
         changed = client.post(
             "/api/telegram/webhook",
             json={
@@ -1654,6 +1845,26 @@ def test_redis_session_and_callback_mapping_are_ttl_and_user_scoped() -> None:
     )
     assert legacy is not None
     assert legacy.callback_kind == "review"
+    redis_client.setex(
+        "learnloop:telegram:callback:chat-redis:user-redis:legacy-picker-token",
+        60,
+        json.dumps(
+            {
+                "session_id": "proposal-88",
+                "action": "change_target_select",
+                "change_request_id": 88,
+                "target_notion_page_id": "canonical-external-page-id",
+            }
+        ),
+    )
+    legacy_picker = store.resolve_callback(
+        token="legacy-picker-token",
+        chat_id="chat-redis",
+        user_id="user-redis",
+    )
+    assert legacy_picker is not None
+    assert legacy_picker.callback_kind == "picker"
+    assert legacy_picker.target_notion_page_id == "canonical-external-page-id"
     assert redis_client.ttl("learnloop:telegram:upload:chat-redis:user-redis:redis-session") > 0
 
 

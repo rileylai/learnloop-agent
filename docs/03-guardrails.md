@@ -104,6 +104,16 @@ Telegram ingestion session policy:
   Redis mapping restores the canonical external Notion page id and hierarchy
   path after re-checking chat/user ownership; canonical ids never move into
   the UI short-number mapping or replace backend target identity.
+- Picker navigation mappings are allowlisted (`open_page`, `select_target`,
+  `back`, `root`, `next_page`, `previous_page`) and retain resolved page or
+  navigation context server-side. Browse actions never claim a target, create
+  a source/proposal row, invoke OCR/LLM, or send a review preview. Only final
+  `select_target` enters the existing target claim boundary.
+- Hierarchy parent data is accepted only from a live reader's real
+  `parent.type=page_id` identity. Titles and `notion_path` strings are never
+  used to infer parentage. Missing, workspace, database, block, unknown, and
+  not-yet-indexed parents are safe roots; cycle handling is deterministic and
+  must not recurse indefinitely.
 - Parent and child pages are independent selectable targets. A target-aware
   pending proposal is created only after one page is selected.
 - An unexpired session with no media, an expired session, a cross-user lookup,

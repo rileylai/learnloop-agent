@@ -108,11 +108,13 @@ def test_notion_reader_tool_lists_page_ids_for_full_index_discovery() -> None:
             {
                 "page_id": "page-a",
                 "title": "Earlier Page",
+                "parent_notion_page_id": None,
                 "last_edited_time": None,
             },
             {
                 "page_id": "page-nlp-week5",
                 "title": "NLP Week 5",
+                "parent_notion_page_id": None,
                 "last_edited_time": "2026-07-27T12:00:00+00:00",
             },
         ]

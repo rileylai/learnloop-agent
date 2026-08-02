@@ -1529,7 +1529,7 @@ def test_telegram_pages_targeted_ingest_preview_and_accept_e2e(monkeypatch) -> N
         )
         assert pages_response.status_code == 200
         assert "page-telegram-flow" in pages_response.json()["reply_text"]
-        assert "Knowledge/NLP/Targetable" in pages_response.json()["reply_text"]
+        assert "Knowledge/" not in pages_response.json()["reply_text"]
 
         ingest_response = client.post(
             "/api/telegram/webhook",

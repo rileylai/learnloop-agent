@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from datetime import datetime, timezone
 from types import TracebackType
 from typing import Dict, Optional, Type
@@ -696,6 +697,42 @@ def test_index_page_api_builds_paths_from_block_hierarchy() -> None:
             session.close()
     finally:
         app.dependency_overrides.clear()
+
+
+def test_index_page_snapshot_persists_reader_parent_identity() -> None:
+    session_factory = _build_session_factory()
+    child_tree = replace(
+        _sample_tree_v1(),
+        page_id="page-child",
+        title="Child Page",
+        notion_path="Knowledge/Parent/Child",
+        parent_notion_page_id="page-parent",
+    )
+    orchestrator = NotionPageIndexOrchestrator(
+        tool_registry=_build_tool_registry({"page-child": child_tree}),
+        unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(session_factory),
+        workflow_run_service=WorkflowRunService(session_factory),
+        embedding_client=_FakeEmbeddingClient(),
+    )
+
+    result = asyncio.run(
+        orchestrator.index_page_snapshot(
+            page_id="page-child",
+            request_workflow_id="wf-parent-identity",
+        )
+    )
+
+    assert result.page_title == "Child Page"
+    session = session_factory()
+    try:
+        page = (
+            session.query(NotionPage)
+            .filter(NotionPage.notion_page_id == "page-child")
+            .one()
+        )
+        assert page.parent_notion_page_id == "page-parent"
+    finally:
+        session.close()
 
 
 def test_index_page_api_replaces_existing_page_blocks() -> None:

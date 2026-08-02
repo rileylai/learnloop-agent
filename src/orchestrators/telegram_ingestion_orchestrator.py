@@ -277,6 +277,9 @@ class TelegramIngestionOrchestrator:
         change_request_id: Optional[int] = None,
         target_notion_page_id: Optional[str] = None,
         target_notion_path: Optional[str] = None,
+        picker_mode: str = "upload",
+        navigation_page_id: Optional[str] = None,
+        navigation_page_number: int = 1,
     ) -> str:
         return self._session_store.create_callback(
             session_id=session_id,
@@ -287,6 +290,9 @@ class TelegramIngestionOrchestrator:
             change_request_id=change_request_id,
             target_notion_page_id=target_notion_page_id,
             target_notion_path=target_notion_path,
+            picker_mode=picker_mode,
+            navigation_page_id=navigation_page_id,
+            navigation_page_number=navigation_page_number,
         )
 
     def resolve_callback(self, *, token: str, chat_id: str, user_id: str):

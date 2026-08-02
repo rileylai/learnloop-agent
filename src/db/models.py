@@ -14,6 +14,9 @@ class NotionPage(Base):
     notion_page_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     notion_path: Mapped[str] = mapped_column(Text, nullable=False)
+    parent_notion_page_id: Mapped[Optional[str]] = mapped_column(
+        String(128), nullable=True, index=True
+    )
     last_edited_time: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True),

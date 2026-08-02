@@ -21,6 +21,7 @@ NOTION_READER_TOOL_NAME = "notion_reader"
 class _DiscoveredPagePayload(BaseModel):
     page_id: str
     title: str = ""
+    parent_notion_page_id: Optional[str] = None
 
 
 @dataclass

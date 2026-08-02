@@ -253,6 +253,7 @@ class NotionAPIReaderClient(NotionReaderClient):
             page_id=normalized_page_id,
             title=title,
             notion_path=notion_path,
+            parent_notion_page_id=_extract_parent_page_id(page_payload),
             last_edited_time=_parse_datetime(page_payload.get("last_edited_time")),
             blocks=[_to_notion_block_node(block) for block in block_paths],
         )
@@ -306,6 +307,7 @@ class NotionAPIReaderClient(NotionReaderClient):
                     NotionPageSummary(
                         page_id=normalized_page_id,
                         title=_extract_page_title(item),
+                        parent_notion_page_id=_extract_parent_page_id(item),
                         last_edited_time=_parse_datetime(item.get("last_edited_time")),
                     )
                 )
@@ -476,6 +478,20 @@ def _extract_page_title(page_payload: Mapping[str, Any]) -> str:
                 if title:
                     return title
     return "Untitled Notion Page"
+
+
+def _extract_parent_page_id(page_payload: Mapping[str, Any]) -> Optional[str]:
+    """Return a real page parent; workspace/database/block parents are roots."""
+
+    parent = page_payload.get("parent")
+    if not isinstance(parent, Mapping):
+        return None
+    if str(parent.get("type") or "").strip().lower() != "page_id":
+        return None
+    parent_page_id = parent.get("page_id")
+    if not isinstance(parent_page_id, str) or not parent_page_id.strip():
+        return None
+    return normalize_notion_page_id(parent_page_id)
 
 
 def normalize_notion_page_id(page_id: str) -> str:

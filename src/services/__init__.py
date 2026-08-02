@@ -83,6 +83,16 @@ from src.services.telegram_session_store import (
     TelegramUploadSession,
     infer_telegram_callback_kind,
 )
+from src.services.notion_hierarchy import (
+    HierarchyPickerButton,
+    HierarchyPickerView,
+    NotionHierarchyNode,
+    NotionHierarchyPage,
+    NotionPageHierarchy,
+    NotionHierarchyPicker,
+    TELEGRAM_MESSAGE_MAX_LENGTH,
+    TELEGRAM_PICKER_PAGE_SIZE,
+)
 from src.services.telegram_recovery import (
     RECOVERABLE_TELEGRAM_FAILURES,
     TelegramRecoveryError,
@@ -190,6 +200,14 @@ __all__ = [
     "TelegramUploadAttachment",
     "TelegramUploadSession",
     "infer_telegram_callback_kind",
+    "HierarchyPickerButton",
+    "HierarchyPickerView",
+    "NotionHierarchyNode",
+    "NotionHierarchyPage",
+    "NotionPageHierarchy",
+    "NotionHierarchyPicker",
+    "TELEGRAM_MESSAGE_MAX_LENGTH",
+    "TELEGRAM_PICKER_PAGE_SIZE",
     "RECOVERABLE_TELEGRAM_FAILURES",
     "TelegramRecoveryError",
     "TelegramRecoveryInspection",

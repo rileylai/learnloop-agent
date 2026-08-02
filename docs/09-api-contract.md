@@ -1043,12 +1043,21 @@ Primary target-picker request (`/ingest` in a media caption):
 }
 ```
 
-The primary upload response acknowledges the file and sends an inline page
-picker. Each parent and child page is a separate button labelled with its full
-hierarchy path. The response has `change_request_id: null` and
-`target_set: false` until the user selects a button. The button data is only
-`ll:<opaque_token>`; the Redis session mapping restores the canonical external
-page id after chat/user ownership checks.
+The primary upload response acknowledges the file and sends an inline
+progressive hierarchy picker. The first screen contains root pages only. A
+folder button opens a child screen without selecting a target; a child screen
+contains `Select this page`, child pages, `Back`, `Root pages`, and bounded
+controls. All direct children are shown at once; the new picker has no page
+indicator or pagination buttons. Leaf pages select directly. The response has
+`change_request_id: null` and `target_set: false` until the user selects a
+button. The button data is only `ll:<opaque_token>`; the Redis session mapping
+restores the canonical external page id or navigation context after chat/user
+ownership checks.
+
+The review `Change target` callback opens this same hierarchy picker with
+`picker_mode=change_target`; it does not use a separate flat-list branch.
+Navigation remains browse-only, and only its final `select_target` callback
+updates the pending change request through the existing review orchestrator.
 
 Callback request after page selection:
 
@@ -1075,9 +1084,11 @@ the following allowlisted semantic fields:
 | Field | Values | Meaning |
 | --- | --- | --- |
 | `callback_kind` | `review`, `picker` | Dispatch family; review is checked first. |
-| `action` | `accept`, `reject`, `change_target`, `select_target`, `change_target_select` | Specific operation. |
+| `action` | `accept`, `reject`, `change_target`, `open_page`, `select_target`, `back`, `root`, legacy `next_page`, `previous_page`, `change_target_select` | Specific operation. New picker views emit only `open_page`, `select_target`, `back`, and `root`; old pagination mappings remain TTL-bound compatibility inputs. |
 | `change_request_id` | positive integer or null | Required for review actions. |
-| `target_notion_page_id`, `target_notion_path` | server-resolved values | Required only for page-selection actions. |
+| `target_notion_page_id`, `target_notion_path` | server-resolved values | Required only for final page-selection actions. |
+| `picker_mode` | `upload`, `change_target` | Selects the existing picker business boundary; it does not create a second picker implementation. |
+| `navigation_page_id`, `navigation_page_number` | server-resolved values | Current page/page index used only by navigation callbacks. |
 
 Redis mappings written before `callback_kind` existed are normalized from the
 allowlisted action. Unknown or mismatched mappings fail closed. A
@@ -1089,9 +1100,16 @@ normal Telegram review callbacks.
 
 For a valid callback, the backend first validates callback ownership and the
 mapping family. Review actions dispatch before generic picker/session actions.
-For a page-picker callback, it also validates session state and selected page.
-Then it calls Telegram `answerCallbackQuery` before OCR, provider, or proposal
-work. The response and workflow metadata expose `business_status`,
+For a page-picker callback, it also validates session state and selected
+page/navigation context. `open_page`, `back`, and `root` only render the next
+picker screen; they do not claim a target or run OCR, provider, proposal,
+source persistence, or change-request work. Legacy `next_page` and
+`previous_page` callbacks are accepted only while their opaque mappings remain
+valid and render the same complete direct-child view; they never create new
+pagination controls.
+Only final `select_target` can enter the existing target claim path. Then it
+calls Telegram `answerCallbackQuery` before OCR, provider, or proposal work.
+The response and workflow metadata expose `business_status`,
 `callback_ack_status`, and `preview_delivery_status`. A transient
 acknowledgement failure is classified as `TELEGRAM_CALLBACK_ACK_FAILED` and
 does not fail a legal review/business workflow. A preview `send_message` failure is classified as
@@ -1325,7 +1343,9 @@ Notes:
 - Duplicate running updates return `202`; duplicate succeeded and failed
   updates replay the original result or error. Updates without `update_id` are
   accepted for backward compatibility without deduplication.
-- `/pages` lists indexed external Notion page ids, titles, and paths for target selection.
+- `/pages` renders a deterministic tree of indexed pages with sibling numbering,
+  canonical external ids, and presentation paths. Telegram output is split into
+  bounded messages when the tree exceeds the Telegram message limit.
 - `/ingest --page <page_id>` creates a pending proposal targeted to that external page and returns a deterministic proposal preview with citations and `/accept` usage.
 - `/retry-proposal` retries proposal generation from the latest failed Telegram
   proposal session's existing `source_document_id` and target. It does not

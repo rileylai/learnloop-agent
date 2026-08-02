@@ -6,6 +6,11 @@ Alembic is the only supported schema migration path. A migration must be
 applied to a disposable restore or staging database before the active local
 database. Migrations must not be hidden in application startup.
 
+The current Alembic head is `9c5e7b1a2d4f`. This revision adds the
+nullable/indexed canonical `notion_pages.parent_notion_page_id` used by the
+deterministic Telegram page hierarchy. It preserves the unique
+`notion_page_id` identity and does not infer parentage from titles or paths.
+
 Before applying a migration:
 
 1. Confirm the current database target and stop API/worker writes if the

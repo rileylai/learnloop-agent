@@ -23,7 +23,15 @@ TELEGRAM_REVIEW_CALLBACK_ACTIONS = frozenset(
     {"accept", "reject", "change_target"}
 )
 TELEGRAM_PICKER_CALLBACK_ACTIONS = frozenset(
-    {"select_target", "change_target_select"}
+    {
+        "open_page",
+        "select_target",
+        "back",
+        "root",
+        "next_page",
+        "previous_page",
+        "change_target_select",
+    }
 )
 
 
@@ -82,6 +90,9 @@ class TelegramCallbackAction:
     change_request_id: Optional[int] = None
     target_notion_page_id: Optional[str] = None
     target_notion_path: Optional[str] = None
+    picker_mode: str = "upload"
+    navigation_page_id: Optional[str] = None
+    navigation_page_number: int = 1
 
 
 class TelegramSessionStore(ABC):
@@ -273,6 +284,9 @@ class TelegramSessionStore(ABC):
         change_request_id: Optional[int] = None,
         target_notion_page_id: Optional[str] = None,
         target_notion_path: Optional[str] = None,
+        picker_mode: str = "upload",
+        navigation_page_id: Optional[str] = None,
+        navigation_page_number: int = 1,
     ) -> str:
         raise NotImplementedError
 
@@ -320,14 +334,36 @@ def _callback_from_payload(*, token: str, payload: dict[str, Any]) -> TelegramCa
     callback_kind = str(payload.get("callback_kind") or "").strip().lower()
     if not callback_kind:
         callback_kind = infer_telegram_callback_kind(action)
+    raw_change_request_id = payload.get("change_request_id")
+    try:
+        change_request_id = (
+            int(raw_change_request_id)
+            if raw_change_request_id is not None
+            else None
+        )
+    except (TypeError, ValueError):
+        change_request_id = None
+    raw_page_number = payload.get("navigation_page_number")
+    try:
+        navigation_page_number = max(1, int(raw_page_number or 1))
+    except (TypeError, ValueError):
+        navigation_page_number = 1
+    raw_navigation_page_id = payload.get("navigation_page_id")
     return TelegramCallbackAction(
         token=token,
         session_id=str(payload.get("session_id") or ""),
         action=action,
         callback_kind=callback_kind,
-        change_request_id=payload.get("change_request_id"),
+        change_request_id=change_request_id,
         target_notion_page_id=payload.get("target_notion_page_id"),
         target_notion_path=payload.get("target_notion_path"),
+        picker_mode=str(payload.get("picker_mode") or "upload").strip().lower(),
+        navigation_page_id=(
+            str(raw_navigation_page_id).strip()
+            if raw_navigation_page_id is not None
+            else None
+        ),
+        navigation_page_number=navigation_page_number,
     )
 
 
@@ -642,6 +678,9 @@ class InMemoryTelegramSessionStore(TelegramSessionStore):
                 "change_request_id": kwargs.get("change_request_id"),
                 "target_notion_page_id": kwargs.get("target_notion_page_id"),
                 "target_notion_path": kwargs.get("target_notion_path"),
+                "picker_mode": kwargs.get("picker_mode", "upload"),
+                "navigation_page_id": kwargs.get("navigation_page_id"),
+                "navigation_page_number": kwargs.get("navigation_page_number", 1),
             }
             action = _callback_from_payload(
                 token=token,
@@ -1012,6 +1051,9 @@ class RedisTelegramSessionStore(TelegramSessionStore):
             "change_request_id": kwargs.get("change_request_id"),
             "target_notion_page_id": kwargs.get("target_notion_page_id"),
             "target_notion_path": kwargs.get("target_notion_path"),
+            "picker_mode": kwargs.get("picker_mode", "upload"),
+            "navigation_page_id": kwargs.get("navigation_page_id"),
+            "navigation_page_number": kwargs.get("navigation_page_number", 1),
         }
         self._redis.setex(
             _callback_key(kwargs["chat_id"], kwargs["user_id"], token),

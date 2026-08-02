@@ -152,6 +152,61 @@ def test_notion_api_reader_fetches_paginated_nested_read_only_tree() -> None:
     assert transport.calls[0][2]["Notion-Version"] == "2022-06-28"
 
 
+def test_notion_api_reader_preserves_only_real_page_parent_identity() -> None:
+    transport = _FakeNotionHTTPTransport(
+        [
+            NotionHTTPResponse(
+                status_code=200,
+                payload={
+                    "parent": {"type": "page_id", "page_id": "PARENT"},
+                    "properties": {
+                        "Name": {"title": [{"plain_text": "Child"}]}
+                    },
+                },
+            ),
+            NotionHTTPResponse(
+                status_code=200,
+                payload={"results": [], "has_more": False, "next_cursor": None},
+            ),
+        ]
+    )
+    client = NotionAPIReaderClient(token="secret-token", transport=transport)
+
+    page = client.fetch_page_tree("child")
+
+    assert page is not None
+    assert page.parent_notion_page_id == "PARENT"
+
+    discovery_transport = _FakeNotionHTTPTransport(
+        [
+            NotionHTTPResponse(
+                status_code=200,
+                payload={
+                    "results": [
+                        {
+                            "id": "child",
+                            "parent": {"type": "page_id", "page_id": "parent"},
+                            "properties": {"Name": {"title": [{"plain_text": "Child"}]}},
+                        },
+                        {
+                            "id": "root",
+                            "parent": {"type": "database_id", "database_id": "db"},
+                            "properties": {"Name": {"title": [{"plain_text": "Root"}]}},
+                        },
+                    ],
+                    "has_more": False,
+                    "next_cursor": None,
+                },
+            )
+        ]
+    )
+    discovered = NotionAPIReaderClient(
+        token="secret-token", transport=discovery_transport
+    ).list_pages()
+    assert discovered[0].parent_notion_page_id == "parent"
+    assert discovered[1].parent_notion_page_id is None
+
+
 def test_notion_api_reader_returns_none_for_missing_page() -> None:
     transport = _FakeNotionHTTPTransport(
         [NotionHTTPResponse(status_code=404, payload={"message": "private body"})]

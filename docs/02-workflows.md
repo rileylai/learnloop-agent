@@ -504,12 +504,14 @@ Telegram message or caption with PDF/image
    - media_group_id groups multiple image messages
    - attachment identity deduplicates Telegram retries
 -> media group schedules one idempotent settle job; single media sends one receipt
--> settle job claims the picker and sends full hierarchy-path inline buttons
+-> settle job claims the picker and sends root-page inline buttons
 -> callback_data contains only `ll:<opaque_token>`
--> Redis resolves token by chat/user to the canonical external Notion page id/path
+-> Redis resolves token by chat/user to canonical page/navigation context
 -> callback parser restores callback_kind/action from the server-side mapping
--> callback validates token ownership, session state, and selected page
+-> callback validates token ownership, session state, and selected page/navigation context
 -> answerCallbackQuery immediately; record callback_ack_status separately
+-> browse actions render the next picker screen without claiming a target
+-> final select_target claims the target and enters existing ingestion/proposal flow
 -> review callbacks dispatch before generic picker/session callbacks
    - Accept/Reject -> TelegramReviewOrchestrator
    - Change target -> review target picker
@@ -522,9 +524,25 @@ Telegram message or caption with PDF/image
 ```
 
 Rules:
-- Parent and child pages are separate button targets; hierarchy paths are UI
-  labels, while the external Notion page id remains the canonical backend
-  target.
+- Root pages are shown first. A page with children uses an `open_page` folder
+  button; entering it shows `Select this page`, its children, `Back`, and `Root`.
+  Leaf pages use a direct `select_target` button. Parent and child pages remain
+  separate targets.
+- The same deterministic hierarchy picker renders upload and Change Target
+  flows. Change Target uses the same navigation actions and only its final
+  `select_target` updates the pending request; it never runs OCR or LLM work.
+- Hierarchy paths/breadcrumbs are UI presentation, while the external Notion
+  page id remains the canonical backend target.
+- `notion_pages.parent_notion_page_id` is populated only from a real Notion
+  `parent.type=page_id` identity. Workspace, database, block, unknown, missing,
+  and not-yet-indexed parents render as safe roots. Tree construction breaks
+  cycles deterministically and never guesses from title or path.
+- Each picker level renders all direct children in one keyboard, one button row
+  per child, plus the current-page selector and `Back`/`Root` controls. There is
+  no page indicator or new `next_page`/`previous_page` button. Long titles are
+  deterministically truncated and the breadcrumb supplies context. Existing
+  pagination callbacks may remain valid only through their short TTL and are
+  handled safely without reintroducing pagination.
 - Full external page ids never appear in inline `callback_data`; opaque tokens
   are short-lived Redis mappings isolated by chat and user.
 - Server-side callback mappings carry `callback_kind` (`review` or `picker`)
@@ -542,6 +560,9 @@ Rules:
 - `answerCallbackQuery` is a Telegram UX side effect. After basic callback and
   session validation, its failure is recorded as
   `TELEGRAM_CALLBACK_ACK_FAILED` and does not own or rollback business work.
+- Browse navigation does not claim a target, create a source document, invoke
+  OCR/LLM, persist a proposal, or send a review preview. Only final
+  `select_target` can enter the target claim boundary.
 - Target claim, source/proposal commits, and preview delivery claims are
   separate boundaries. A valid callback runs business work at most once for
   the claimed session; an acknowledged callback may therefore have

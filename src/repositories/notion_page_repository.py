@@ -27,15 +27,15 @@ class NotionPageRepository:
     def get_by_id(self, page_db_id: int) -> Optional[NotionPage]:
         return self._session.get(NotionPage, page_db_id)
 
-    def list_pages(self, *, limit: int = 50) -> List[NotionPage]:
-        if limit <= 0:
-            raise ValueError("limit must be positive")
-        return list(
-            self._session.query(NotionPage)
-            .order_by(NotionPage.title.asc(), NotionPage.notion_page_id.asc())
-            .limit(limit)
-            .all()
+    def list_pages(self, *, limit: Optional[int] = None) -> List[NotionPage]:
+        query = self._session.query(NotionPage).order_by(
+            NotionPage.title.asc(), NotionPage.notion_page_id.asc()
         )
+        if limit is not None:
+            if limit <= 0:
+                raise ValueError("limit must be positive")
+            query = query.limit(limit)
+        return list(query.all())
 
     def lock_page_for_reindex(self, notion_page_id: str) -> None:
         """Serialize same-page writers for the lifetime of the current transaction."""
@@ -65,6 +65,7 @@ class NotionPageRepository:
         notion_page_id: str,
         title: str,
         notion_path: str,
+        parent_notion_page_id: Optional[str] = None,
         last_edited_time: Optional[datetime] = None,
     ) -> NotionPage:
         self.lock_page_for_reindex(notion_page_id)
@@ -75,6 +76,7 @@ class NotionPageRepository:
                 notion_page_id=notion_page_id,
                 title=title,
                 notion_path=notion_path,
+                parent_notion_page_id=parent_notion_page_id,
                 last_edited_time=incoming_edited_time,
             )
             if self._session.bind is not None and self._session.bind.dialect.name == "sqlite":
@@ -90,6 +92,7 @@ class NotionPageRepository:
                 raise StaleNotionPageSnapshotError(notion_page_id=notion_page_id)
             page.title = title
             page.notion_path = notion_path
+            page.parent_notion_page_id = parent_notion_page_id
             if incoming_edited_time is not None:
                 page.last_edited_time = incoming_edited_time
 
