@@ -2,11 +2,12 @@
 
 ## Purpose
 
-This document defines the Step 89-93 contract for operating synchronization,
+This document defines the Step 89-94 contract for operating synchronization,
 indexing, review, cost, workflow, readiness, and knowledge-base status from
 Telegram. Steps 90-93 implement selected-page `/sync`, guarded
 `/index-full`, read-only `/index-status`, `/cost`, `/workflow`, and `/pending`;
-the remaining operator handlers are delivered by Steps 94-95.
+Step 94 implements `/status` and `/stats`; Step 95 covers regression and
+guarded verification.
 
 ## Scope and non-goals
 
@@ -15,10 +16,10 @@ checks the caller boundary, claims update idempotency, and delegates a typed
 intent to an orchestrator. It does not call Notion, PostgreSQL, Redis, an LLM,
 or a provider/tool adapter directly.
 
-Steps 90-93 implement selected-page `/sync`, guarded full indexing, persisted
-index status, bounded cost scopes, redacted workflow queries, and the pending
-review inbox. Readiness/status and stats remain unimplemented until their
-roadmap steps. Existing ingestion, QA, and review behavior remains unchanged.
+Steps 90-94 implement selected-page `/sync`, guarded full indexing, persisted
+index status, bounded cost scopes, redacted workflow queries, the pending
+review inbox, readiness status, and aggregate statistics. Existing ingestion,
+QA, and review behavior remains unchanged.
 
 ## Command registry
 
@@ -186,7 +187,7 @@ Redis callback/session state is ephemeral coordination state. PostgreSQL
 workflow, update-ledger, proposal, and index state remains the durable source
 for operator status. No raw PostgreSQL or Redis client is an LLM-facing tool.
 
-## Steps 90-93 implementation invariants
+## Steps 90-94 implementation invariants
 
 - Live page discovery goes through the read-only Notion tool and can discover
   pages that are not yet in the local derived index.
@@ -218,6 +219,14 @@ for operator status. No raw PostgreSQL or Redis client is an LLM-facing tool.
 - Pending callback mappings keep the change request id server-side, use opaque
   TTL-bound owner-scoped tokens, and one-shot claim only the read-only View
   action. Duplicate or cross-user View callbacks fail closed.
+- `/status` distinguishes process liveness from dependency readiness and
+  reports only fixed states for database, migration, pgvector, provider,
+  Notion configuration, Redis, and RQ scheduler. It never starts, reruns, or
+  reconciles work, and it never exposes raw probe exceptions or credentials.
+- `/stats` reads only repository-backed aggregate counts and safe UTC
+  timestamps for the latest successful full index and manual incremental sync.
+  It never returns page ids, paths, titles, note text, vectors, proposal JSON,
+  or private metadata.
 
 ## Operator contract acceptance invariants
 
@@ -229,6 +238,7 @@ for operator status. No raw PostgreSQL or Redis client is an LLM-facing tool.
   allowlisted.
 - Authorization, confirmation, write safety, RAG exclusion, and state
   transitions remain deterministic backend policy.
-- Step 93 implements the bounded pending review inbox; this contract does not
-  imply live review, readiness, or stats verification. Steps 94-95 remain
-  separate roadmap work.
+- Step 94 implements the bounded readiness and statistics surfaces; this
+  contract does not imply live dependency verification or full-index/append
+  execution. Step 95 remains separate regression and guarded verification
+  work.

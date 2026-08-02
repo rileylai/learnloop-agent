@@ -11,6 +11,7 @@ from src.app.dependencies import (
     get_prompt_template_loader,
     get_provider_router,
     get_queue_client,
+    get_readiness_service,
     get_trust_boundary,
     get_tool_registry,
     get_telegram_session_store,
@@ -43,6 +44,7 @@ from src.services import (
     TelegramSyncSessionStore,
     TelegramIndexSessionStore,
     WorkflowObservabilityService,
+    ReadinessService,
 )
 from src.queue import QueueClient
 from src.tools import ToolRegistry
@@ -78,6 +80,7 @@ async def handle_telegram_webhook(
     workflow_observability_service: WorkflowObservabilityService = Depends(
         get_workflow_observability_service
     ),
+    readiness_service: ReadinessService = Depends(get_readiness_service),
 ) -> TelegramWebhookResponse:
     try:
         trust_boundary.require_telegram_webhook_secret(telegram_webhook_secret)
@@ -106,6 +109,7 @@ async def handle_telegram_webhook(
         telegram_sync_session_store=telegram_sync_session_store,
         telegram_index_session_store=telegram_index_session_store,
         workflow_observability_service=workflow_observability_service,
+        readiness_service=readiness_service,
         queue_client=queue_client,
     )
     request_workflow_id = str(getattr(request.state, "workflow_id", ""))
@@ -207,6 +211,19 @@ async def handle_telegram_webhook(
             "workflow_detail_estimated_cost_usd",
             "workflow_recent_count",
             "pending_count",
+            "status_liveness",
+            "status_readiness",
+            "status_checks",
+            "stats_page_count",
+            "stats_block_count",
+            "stats_chunk_count",
+            "stats_vector_count",
+            "stats_proposal_count",
+            "stats_pending_proposal_count",
+            "stats_accepted_proposal_count",
+            "stats_rejected_proposal_count",
+            "stats_latest_full_index_at",
+            "stats_latest_incremental_sync_at",
         ):
             if key in exc.metadata:
                 detail[key] = exc.metadata[key]
@@ -271,6 +288,19 @@ async def handle_telegram_webhook(
         workflow_detail_estimated_cost_usd=result.workflow_detail_estimated_cost_usd,
         workflow_recent_count=result.workflow_recent_count,
         pending_count=result.pending_count,
+        status_liveness=result.status_liveness,
+        status_readiness=result.status_readiness,
+        status_checks=result.status_checks or {},
+        stats_page_count=result.stats_page_count,
+        stats_block_count=result.stats_block_count,
+        stats_chunk_count=result.stats_chunk_count,
+        stats_vector_count=result.stats_vector_count,
+        stats_proposal_count=result.stats_proposal_count,
+        stats_pending_proposal_count=result.stats_pending_proposal_count,
+        stats_accepted_proposal_count=result.stats_accepted_proposal_count,
+        stats_rejected_proposal_count=result.stats_rejected_proposal_count,
+        stats_latest_full_index_at=result.stats_latest_full_index_at,
+        stats_latest_incremental_sync_at=result.stats_latest_incremental_sync_at,
     )
     if result.status == "running":
         content = (

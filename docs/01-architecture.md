@@ -159,6 +159,15 @@ boundaries and the target MVP integration shape. Current runtime wiring is:
   readiness service, which uses a database readiness probe for connectivity,
   Alembic revision, and pgvector extension checks plus mode-specific provider
   configuration checks.
+- Telegram `/status` reuses that readiness service and exposes liveness
+  separately from readiness. Its detailed checks are fixed safe states for
+  database, migration, pgvector, provider, Notion configuration, Redis, and
+  the RQ scheduler; it does not expose connection strings, credentials, or
+  driver exception text.
+- Telegram `/stats` uses `KnowledgeStatsService` and
+  `KnowledgeStatsRepository` for aggregate page/block/chunk/vector/proposal
+  counts and normalized UTC timestamps for the latest successful full index
+  and manual incremental sync. It never reads or formats note content.
 - `RQQueueClient` is wired behind `QueueClient` for Telegram webhook work when
   `REDIS_URL` is configured. The webhook claims the update ledger, enqueues a
   serializable job, and returns before ingestion, QA, review, or Telegram send

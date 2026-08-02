@@ -649,7 +649,7 @@ Metadata note:
 ### 13.6 Telegram APIs
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/api/telegram/webhook` | Handle Telegram webhook updates for existing commands plus the Step 89-93 operator contract and typed callbacks. |
+| POST | `/api/telegram/webhook` | Handle Telegram webhook updates for existing commands plus the Step 89-94 operator contract and typed callbacks. |
 
 ### 13.7 Telegram Operator Command Contract (Steps 89-93)
 
@@ -658,7 +658,8 @@ The operator command contract is defined in
 `/index-status`, `/cost`, `/pending`, `/workflow`, `/status`, `/stats`, and
 the updated `/help` surface. The `/sync`, `/index-full`, `/index-status`,
 `/cost`, `/workflow`, and `/pending` implementations are delivered in Steps
-90-93; the remaining operator commands are delivered in Step 94.
+90-94; the remaining regression and guarded verification work is delivered in
+Step 95.
 
 Operator commands are classified as read-only or derived-index/review
 mutations. `/index-full` requires an opaque server-side confirmation callback;
@@ -737,6 +738,23 @@ reuse the existing `review` callback family and `TelegramReviewOrchestrator`.
 Only an explicit Accept can enter `Change Request -> Human Accept -> Append to
 AI Supplement Zone -> durable identity verification -> synchronous page
 re-index`; pending and rejected content remains outside production RAG.
+
+### 13.12 Telegram readiness and knowledge statistics (Step 94)
+
+`/status` is a read-only operator view backed by the existing deterministic
+readiness service. It reports process liveness separately from readiness and
+exposes only fixed safe states for database, migration, pgvector, provider,
+Notion configuration, Redis, and the RQ scheduler. It never reports connection
+URLs, tokens, driver exceptions, or raw dependency details. A readiness failure
+does not make liveness fail, and status inspection does not start or reconcile
+work.
+
+`/stats` is a read-only aggregate view backed by
+`KnowledgeStatsService -> KnowledgeStatsRepository`. It reports only page,
+block, chunk, vector, and proposal status counts plus UTC timestamps for the
+latest successful full index and manual incremental sync. It never returns
+page ids, titles, paths, block/chunk text, vectors, proposal content, or source
+metadata.
 
 Telegram ingestion UX contract:
 - Uploads are acknowledged first, then a progressive hierarchy picker shows root

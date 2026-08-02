@@ -159,3 +159,25 @@ def test_ready_reports_scheduler_failure_when_redis_is_available() -> None:
 
     assert report.is_ready is False
     assert report.checks["queue"].failure_reason == "RQ_SCHEDULER_NOT_RUNNING"
+
+
+def test_status_exposes_liveness_and_separate_safe_dependency_states() -> None:
+    service = ReadinessService(
+        probe=_FakeReadinessProbe(failed_check="database"),
+        mode="local",
+        openai_configured=True,
+        queue_client=_FakeQueueClient(available=False),
+        queue_required=True,
+        notion_backend="live",
+        notion_configured=False,
+    )
+
+    report = service.status()
+
+    assert report.liveness.status == "ok"
+    assert report.is_ready is False
+    assert report.checks["database"].failure_reason == "DATABASE_UNAVAILABLE"
+    assert report.checks["provider"].status == "ok"
+    assert report.checks["notion"].failure_reason == "NOTION_TOKEN_NOT_CONFIGURED"
+    assert report.checks["redis"].failure_reason == "REDIS_UNAVAILABLE"
+    assert report.checks["scheduler"].failure_reason == "RQ_SCHEDULER_UNAVAILABLE"

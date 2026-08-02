@@ -4,7 +4,9 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from src.app.config import get_settings
+from src.app.config import get_settings, normalize_notion_backend
+from src.db.readiness import SqlAlchemyReadinessProbe
+from src.db.session import engine
 from src.db.session import SessionFactory, UnitOfWorkFactory
 from src.orchestrators import (
     DocumentIngestionOrchestrator,
@@ -38,6 +40,8 @@ from src.services import (
     CostTracker,
     CostBudgetService,
     DuplicateKnowledgeChecker,
+    KnowledgeStatsService,
+    ReadinessService,
     PromptTemplateLoader,
     TelegramSessionStore,
     TelegramSyncSessionStore,
@@ -68,6 +72,8 @@ def build_telegram_gateway_orchestrator(
     telegram_index_session_store: Optional[TelegramIndexSessionStore] = None,
     workflow_observability_service: Optional[WorkflowObservabilityService] = None,
     queue_client: Optional[QueueClient] = None,
+    readiness_service: Optional[ReadinessService] = None,
+    knowledge_stats_service: Optional[KnowledgeStatsService] = None,
 ) -> TelegramGatewayOrchestrator:
     workflow_run_service = WorkflowRunService(db_session_factory)
     update_idempotency_service = TelegramUpdateIdempotencyService(
@@ -154,6 +160,22 @@ def build_telegram_gateway_orchestrator(
             ),
             stale_after_seconds=settings.workflow_stale_after_seconds,
         )
+    if readiness_service is None:
+        settings = get_settings()
+        notion_backend = normalize_notion_backend(settings.notion_backend)
+        readiness_service = ReadinessService(
+            probe=SqlAlchemyReadinessProbe(engine=engine),
+            mode=settings.app_env,
+            openai_configured=bool(settings.openai_api_key),
+            queue_client=queue_client,
+            queue_required=settings.app_env not in {"test", "demo", "mock"},
+            notion_backend=notion_backend,
+            notion_configured=(
+                notion_backend == "mock" or bool(settings.notion_token)
+            ),
+        )
+    if knowledge_stats_service is None:
+        knowledge_stats_service = KnowledgeStatsService(db_session_factory)
     telegram_index_orchestrator = TelegramIndexOrchestrator(
         full_index_orchestrator=full_index_orchestrator,
         index_session_store=telegram_index_session_store
@@ -163,6 +185,8 @@ def build_telegram_gateway_orchestrator(
     )
     telegram_operator_orchestrator = TelegramOperatorOrchestrator(
         workflow_observability_service=workflow_observability_service,
+        readiness_service=readiness_service,
+        knowledge_stats_service=knowledge_stats_service,
         supplement_query_orchestrator=SupplementQueryOrchestrator(
             change_request_repository=ChangeRequestRepository(db_session),
             notion_page_repository=NotionPageRepository(db_session),

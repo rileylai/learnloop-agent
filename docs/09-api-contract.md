@@ -1418,12 +1418,12 @@ Notes:
 - `/ingest` creates `pending` change requests only; Notion append remains in accept workflow.
 - Telegram QA uses production Notion chunks only; pending and rejected proposals remain excluded.
 
-## Telegram Operator Command Contract (Steps 89-93)
+## Telegram Operator Command Contract (Steps 89-94)
 
 The webhook is the transport for the following operator commands. Step 89
-defines the shared contract, Steps 90-93 implement `/sync`, `/index-full`,
-`/index-status`, `/cost`, `/workflow`, and `/pending`, and the remaining
-command handlers are delivered in Step 94.
+defines the shared contract, Steps 90-94 implement `/sync`, `/index-full`,
+`/index-status`, `/cost`, `/workflow`, `/pending`, `/status`, and `/stats`,
+and Step 95 covers regression and guarded verification.
 The complete registry, callback mapping, authorization, safe-output, and
 queue rules are in `docs/13-telegram-operator-contract.md`.
 
@@ -1497,6 +1497,24 @@ and `TelegramReviewOrchestrator`. Only Accept may append to `AI Supplement
 Zone`, verify durable identity, and synchronously re-index. Pending and
 rejected requests remain excluded from production RAG, and no canonical page
 id, callback token, raw source/OCR text, or citation quote is returned.
+
+### Readiness and statistics runtime contract (Step 94)
+
+`/status` is a read-only Telegram operator command. It calls the existing
+readiness service through the orchestrator boundary and returns separate
+`status_liveness` and `status_readiness` fields plus bounded named check states
+for database, migration, vector, provider, Notion, Redis, and scheduler. The
+command remains a successful read operation even when readiness is
+`not_ready`; liveness remains `ok` unless the process cannot serve the
+request. Failure reasons are deterministic and do not include raw driver,
+connection, or secret values.
+
+`/stats` is a read-only Telegram operator command backed by the aggregate
+repository/service boundary. It may return `stats_page_count`,
+`stats_block_count`, `stats_chunk_count`, `stats_vector_count`, total and
+status-separated proposal counts, and UTC ISO-8601 timestamps for the latest
+successful full index and manual incremental sync. It never returns page ids,
+paths, titles, block/chunk text, vectors, proposal JSON, or source metadata.
 
 ### Operator authorization
 

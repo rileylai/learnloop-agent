@@ -304,7 +304,7 @@ Telegram ingestion observability:
 - Status metadata is recursively redacted for `raw_text`, `source_text`, API
   keys, tokens, authorization values, and webhook secrets.
 
-## Steps 89-93 Telegram Operator Observability Contract
+## Steps 89-94 Telegram Operator Observability Contract
 
 Operator command output and workflow metadata follow the bounded contract in
 `docs/13-telegram-operator-contract.md`:
@@ -341,8 +341,12 @@ Operator command output and workflow metadata follow the bounded contract in
   existing review and append/re-index audit semantics. The outer Telegram
   workflow records only the bounded `pending_count` and review fields, never
   proposal source text or canonical page ids.
-- `/status` and `/stats` expose readiness/aggregate results, never liveness as
-  readiness proof or note content.
+- `/status` exposes liveness separately from readiness and reports only fixed
+  states for database, migration, pgvector, provider, Notion configuration,
+  Redis, and the RQ scheduler. It never exposes URLs, secrets, or raw probe
+  exceptions. `/stats` reports only repository-backed page/block/chunk/vector/
+  proposal counts and normalized UTC timestamps for the latest successful full
+  index and manual incremental sync; it never includes note content.
 - Operator callback tokens, raw callback payloads, Redis keys, canonical page
   ids, and user private content are never logged. Callback ack, business, and
   preview-delivery state remain separate where applicable.
@@ -464,8 +468,10 @@ append evidence.
 - Readiness failures are a separate surface. Its current reasons are
   `DATABASE_UNAVAILABLE`, `MIGRATION_NOT_CURRENT`,
   `VECTOR_EXTENSION_UNAVAILABLE`, `OPENAI_API_KEY_NOT_CONFIGURED`,
-  `REDIS_URL_NOT_CONFIGURED`, `REDIS_UNAVAILABLE`, and
-  `RQ_SCHEDULER_NOT_RUNNING`. They must not be presented as completed workflow
+  `REDIS_URL_NOT_CONFIGURED`, `REDIS_UNAVAILABLE`,
+  `RQ_SCHEDULER_NOT_CONFIGURED`, `RQ_SCHEDULER_UNAVAILABLE`,
+  `RQ_SCHEDULER_NOT_RUNNING`, and `NOTION_TOKEN_NOT_CONFIGURED`. They must not
+  be presented as completed workflow
   outcomes.
 - Telegram recovery CLI eligibility/storage codes are operator-command results,
   not additions to `STANDARD_FAILURE_REASONS`. The CLI reports them in a

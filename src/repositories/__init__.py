@@ -14,6 +14,10 @@ from src.repositories.notion_page_repository import (
     NotionPageRepository,
     StaleNotionPageSnapshotError,
 )
+from src.repositories.knowledge_stats_repository import (
+    KnowledgeStatsRepository,
+    KnowledgeStatsSnapshot,
+)
 from src.repositories.source_document_repository import SourceDocumentRepository
 from src.repositories.synthetic_data_repository import (
     SyntheticDataCounts,
@@ -38,6 +42,8 @@ __all__ = [
     "NotionBlockSnapshot",
     "NotionPageRepository",
     "StaleNotionPageSnapshotError",
+    "KnowledgeStatsRepository",
+    "KnowledgeStatsSnapshot",
     "SourceDocumentRepository",
     "SyntheticDataCounts",
     "SyntheticDataRepository",

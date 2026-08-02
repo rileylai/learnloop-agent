@@ -108,6 +108,9 @@ from src.orchestrators.telegram_operator_orchestrator import (
     TelegramPendingResult,
     TelegramOperatorError,
     TelegramOperatorOrchestrator,
+    TelegramStatsResult,
+    TelegramStatusCheck,
+    TelegramStatusResult,
     TelegramWorkflowResult,
 )
 from src.orchestrators.telegram_page_orchestrator import (
@@ -225,6 +228,9 @@ __all__ = [
     "TelegramPendingResult",
     "TelegramOperatorError",
     "TelegramOperatorOrchestrator",
+    "TelegramStatsResult",
+    "TelegramStatusCheck",
+    "TelegramStatusResult",
     "TelegramWorkflowResult",
     "TelegramPageItem",
     "TelegramPageOrchestrator",

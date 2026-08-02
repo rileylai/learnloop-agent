@@ -17,6 +17,10 @@ from src.services import (
     COST_SCOPE_TODAY,
     COST_SCOPE_WORKFLOW,
     CostScopeSnapshot,
+    KnowledgeStatsResult,
+    KnowledgeStatsService,
+    ReadinessStatusReport,
+    ReadinessService,
     WorkflowObservabilityService,
 )
 from src.services.workflow_observability import WorkflowStatusView
@@ -70,6 +74,38 @@ class TelegramPendingResult:
     items: tuple[TelegramPendingItem, ...]
 
 
+@dataclass(frozen=True)
+class TelegramStatusCheck:
+    name: str
+    status: str
+    failure_reason: Optional[str]
+
+
+@dataclass(frozen=True)
+class TelegramStatusResult:
+    status: str
+    reply_text: str
+    liveness_status: str
+    readiness_status: str
+    checks: tuple[TelegramStatusCheck, ...]
+
+
+@dataclass(frozen=True)
+class TelegramStatsResult:
+    status: str
+    reply_text: str
+    page_count: int
+    block_count: int
+    chunk_count: int
+    vector_count: int
+    proposal_count: int
+    pending_proposal_count: int
+    accepted_proposal_count: int
+    rejected_proposal_count: int
+    latest_successful_full_index_at: Optional[str]
+    latest_successful_incremental_sync_at: Optional[str]
+
+
 class TelegramOperatorError(Exception):
     def __init__(
         self,
@@ -114,9 +150,68 @@ class TelegramOperatorOrchestrator:
         *,
         workflow_observability_service: WorkflowObservabilityService,
         supplement_query_orchestrator: Optional[SupplementQueryOrchestrator] = None,
+        readiness_service: Optional[ReadinessService] = None,
+        knowledge_stats_service: Optional[KnowledgeStatsService] = None,
     ) -> None:
         self._workflow_observability_service = workflow_observability_service
         self._supplement_query_orchestrator = supplement_query_orchestrator
+        self._readiness_service = readiness_service
+        self._knowledge_stats_service = knowledge_stats_service
+
+    def get_status(self, *, command_text: str) -> TelegramStatusResult:
+        self._require_exact_command(command_text, usage="/status")
+        if self._readiness_service is None:
+            raise TelegramOperatorError(
+                error_code="TELEGRAM_OPERATOR_NOT_CONFIGURED",
+                message="Telegram readiness status is not configured",
+                http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                failure_reason="UNKNOWN_ERROR",
+            )
+        report = self._readiness_service.status()
+        checks = tuple(
+            TelegramStatusCheck(
+                name=name,
+                status=check.status,
+                failure_reason=check.failure_reason,
+            )
+            for name, check in report.checks.items()
+        )
+        return TelegramStatusResult(
+            status="ready" if report.is_ready else "not_ready",
+            reply_text=self._status_reply(report),
+            liveness_status=report.liveness.status,
+            readiness_status="ready" if report.is_ready else "not_ready",
+            checks=checks,
+        )
+
+    def get_stats(self, *, command_text: str) -> TelegramStatsResult:
+        self._require_exact_command(command_text, usage="/stats")
+        if self._knowledge_stats_service is None:
+            raise TelegramOperatorError(
+                error_code="TELEGRAM_OPERATOR_NOT_CONFIGURED",
+                message="Telegram knowledge statistics are not configured",
+                http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                failure_reason="UNKNOWN_ERROR",
+            )
+        snapshot = self._knowledge_stats_service.snapshot()
+        return TelegramStatsResult(
+            status="succeeded",
+            reply_text=self._stats_reply(snapshot),
+            page_count=snapshot.page_count,
+            block_count=snapshot.block_count,
+            chunk_count=snapshot.chunk_count,
+            vector_count=snapshot.vector_count,
+            proposal_count=snapshot.proposal_count,
+            pending_proposal_count=snapshot.pending_proposal_count,
+            accepted_proposal_count=snapshot.accepted_proposal_count,
+            rejected_proposal_count=snapshot.rejected_proposal_count,
+            latest_successful_full_index_at=self._safe_timestamp(
+                snapshot.latest_successful_full_index_at
+            ),
+            latest_successful_incremental_sync_at=self._safe_timestamp(
+                snapshot.latest_successful_incremental_sync_at
+            ),
+        )
 
     def get_pending(self, *, command_text: str) -> TelegramPendingResult:
         tokens = self._parse_tokens(command_text, usage="/pending")
@@ -309,6 +404,62 @@ class TelegramOperatorOrchestrator:
             lines.extend(f"- {note}" for note in item.notes)
         lines.append("Status: pending")
         return cls._truncate_reply("\n".join(lines))
+
+    @classmethod
+    def _status_reply(cls, report: ReadinessStatusReport) -> str:
+        lines = [
+            "LearnLoop Agent status",
+            f"Liveness: {report.liveness.status}",
+            f"Readiness: {'ready' if report.is_ready else 'not_ready'}",
+            "Checks:",
+        ]
+        for name, check in report.checks.items():
+            suffix = f" ({check.failure_reason})" if check.failure_reason else ""
+            lines.append(f"- {name}: {check.status}{suffix}")
+        return cls._truncate_reply("\n".join(lines))
+
+    @classmethod
+    def _stats_reply(cls, snapshot: KnowledgeStatsResult) -> str:
+        lines = [
+            "LearnLoop Agent stats",
+            f"Pages: {snapshot.page_count}",
+            f"Blocks: {snapshot.block_count}",
+            f"Chunks: {snapshot.chunk_count}",
+            f"Vectors: {snapshot.vector_count}",
+            f"Proposals: {snapshot.proposal_count}",
+            f"Pending proposals: {snapshot.pending_proposal_count}",
+            f"Accepted proposals: {snapshot.accepted_proposal_count}",
+            f"Rejected proposals: {snapshot.rejected_proposal_count}",
+            "Latest full index: "
+            + (cls._safe_timestamp(snapshot.latest_successful_full_index_at) or "never"),
+            "Latest incremental sync: "
+            + (
+                cls._safe_timestamp(snapshot.latest_successful_incremental_sync_at)
+                or "never"
+            ),
+        ]
+        return cls._truncate_reply("\n".join(lines))
+
+    @staticmethod
+    def _safe_timestamp(value: object) -> Optional[str]:
+        if value is None:
+            return None
+        isoformat = getattr(value, "isoformat", None)
+        if not callable(isoformat):
+            return None
+        rendered = str(isoformat())
+        return rendered.replace("+00:00", "Z")
+
+    @classmethod
+    def _require_exact_command(cls, command_text: str, *, usage: str) -> None:
+        tokens = cls._parse_tokens(command_text, usage=usage)
+        if len(tokens) != 1:
+            raise TelegramOperatorError(
+                error_code="INVALID_ARGUMENT",
+                message=f"Usage: {usage}",
+                http_status_code=HTTPStatus.BAD_REQUEST,
+                failure_reason="INVALID_ARGUMENT",
+            )
 
     @staticmethod
     def _bounded_text(value: object, limit: int) -> str:

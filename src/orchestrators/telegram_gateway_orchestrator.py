@@ -213,6 +213,19 @@ class TelegramGatewayResult:
     workflow_detail_estimated_cost_usd: Optional[float] = None
     workflow_recent_count: Optional[int] = None
     pending_count: Optional[int] = None
+    status_liveness: Optional[str] = None
+    status_readiness: Optional[str] = None
+    status_checks: Optional[dict[str, str]] = None
+    stats_page_count: Optional[int] = None
+    stats_block_count: Optional[int] = None
+    stats_chunk_count: Optional[int] = None
+    stats_vector_count: Optional[int] = None
+    stats_proposal_count: Optional[int] = None
+    stats_pending_proposal_count: Optional[int] = None
+    stats_accepted_proposal_count: Optional[int] = None
+    stats_rejected_proposal_count: Optional[int] = None
+    stats_latest_full_index_at: Optional[str] = None
+    stats_latest_incremental_sync_at: Optional[str] = None
 
 
 @dataclass
@@ -715,6 +728,19 @@ class TelegramGatewayOrchestrator:
         workflow_detail_estimated_cost_usd: Optional[float] = None
         workflow_recent_count: Optional[int] = None
         pending_count: Optional[int] = None
+        status_liveness: Optional[str] = None
+        status_readiness: Optional[str] = None
+        status_checks: Optional[dict[str, str]] = None
+        stats_page_count: Optional[int] = None
+        stats_block_count: Optional[int] = None
+        stats_chunk_count: Optional[int] = None
+        stats_vector_count: Optional[int] = None
+        stats_proposal_count: Optional[int] = None
+        stats_pending_proposal_count: Optional[int] = None
+        stats_accepted_proposal_count: Optional[int] = None
+        stats_rejected_proposal_count: Optional[int] = None
+        stats_latest_full_index_at: Optional[str] = None
+        stats_latest_incremental_sync_at: Optional[str] = None
 
         try:
             normalized_text = (text or "").strip()
@@ -1286,6 +1312,49 @@ class TelegramGatewayOrchestrator:
                 )
                 workflow_recent_count = workflow_result.recent_workflow_count
                 business_status = "succeeded"
+            elif command == "status":
+                if self._telegram_operator_orchestrator is None:
+                    raise TelegramGatewayError(
+                        error_code="TELEGRAM_OPERATOR_NOT_CONFIGURED",
+                        message="Telegram readiness status is not configured",
+                        http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                        failure_reason="UNKNOWN_ERROR",
+                    )
+                status_result = self._telegram_operator_orchestrator.get_status(
+                    command_text=normalized_input_text,
+                )
+                reply_text = status_result.reply_text
+                status_liveness = status_result.liveness_status
+                status_readiness = status_result.readiness_status
+                status_checks = {
+                    check.name: check.status for check in status_result.checks
+                }
+                business_status = "succeeded"
+            elif command == "stats":
+                if self._telegram_operator_orchestrator is None:
+                    raise TelegramGatewayError(
+                        error_code="TELEGRAM_OPERATOR_NOT_CONFIGURED",
+                        message="Telegram knowledge statistics are not configured",
+                        http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                        failure_reason="UNKNOWN_ERROR",
+                    )
+                stats_result = self._telegram_operator_orchestrator.get_stats(
+                    command_text=normalized_input_text,
+                )
+                reply_text = stats_result.reply_text
+                stats_page_count = stats_result.page_count
+                stats_block_count = stats_result.block_count
+                stats_chunk_count = stats_result.chunk_count
+                stats_vector_count = stats_result.vector_count
+                stats_proposal_count = stats_result.proposal_count
+                stats_pending_proposal_count = stats_result.pending_proposal_count
+                stats_accepted_proposal_count = stats_result.accepted_proposal_count
+                stats_rejected_proposal_count = stats_result.rejected_proposal_count
+                stats_latest_full_index_at = stats_result.latest_successful_full_index_at
+                stats_latest_incremental_sync_at = (
+                    stats_result.latest_successful_incremental_sync_at
+                )
+                business_status = "succeeded"
             elif command == "pending":
                 if self._telegram_operator_orchestrator is None:
                     raise TelegramGatewayError(
@@ -1763,6 +1832,19 @@ class TelegramGatewayOrchestrator:
                         "workflow_detail_estimated_cost_usd": workflow_detail_estimated_cost_usd,
                         "workflow_recent_count": workflow_recent_count,
                         "pending_count": pending_count,
+                        "status_liveness": status_liveness,
+                        "status_readiness": status_readiness,
+                        "status_checks": status_checks,
+                        "stats_page_count": stats_page_count,
+                        "stats_block_count": stats_block_count,
+                        "stats_chunk_count": stats_chunk_count,
+                        "stats_vector_count": stats_vector_count,
+                        "stats_proposal_count": stats_proposal_count,
+                        "stats_pending_proposal_count": stats_pending_proposal_count,
+                        "stats_accepted_proposal_count": stats_accepted_proposal_count,
+                        "stats_rejected_proposal_count": stats_rejected_proposal_count,
+                        "stats_latest_full_index_at": stats_latest_full_index_at,
+                        "stats_latest_incremental_sync_at": stats_latest_incremental_sync_at,
                         **latency.as_dict(),
                     },
                     sort_keys=True,
@@ -1825,6 +1907,19 @@ class TelegramGatewayOrchestrator:
                 workflow_detail_estimated_cost_usd=workflow_detail_estimated_cost_usd,
                 workflow_recent_count=workflow_recent_count,
                 pending_count=pending_count,
+                status_liveness=status_liveness,
+                status_readiness=status_readiness,
+                status_checks=status_checks,
+                stats_page_count=stats_page_count,
+                stats_block_count=stats_block_count,
+                stats_chunk_count=stats_chunk_count,
+                stats_vector_count=stats_vector_count,
+                stats_proposal_count=stats_proposal_count,
+                stats_pending_proposal_count=stats_pending_proposal_count,
+                stats_accepted_proposal_count=stats_accepted_proposal_count,
+                stats_rejected_proposal_count=stats_rejected_proposal_count,
+                stats_latest_full_index_at=stats_latest_full_index_at,
+                stats_latest_incremental_sync_at=stats_latest_incremental_sync_at,
             )
         except WorkflowRunAuditUpdateError:
             raise
@@ -3001,6 +3096,8 @@ class TelegramGatewayOrchestrator:
                 "/cost [today|7d|month|workflow <workflow_id>] — show recorded cost and budget status\n"
                 "/pending — review pending proposals with View/Accept/Reject/Change target\n"
                 "/workflow [workflow_id] — show recent or redacted workflow status\n"
+                "/status — show liveness and dependency readiness\n"
+                "/stats — show safe knowledge-base aggregate counts\n"
                 "/ingest — upload a PDF or image, then choose a target page button\n"
                 "/ingest --page <external_page_id> — text fallback for automation\n"
                 "/retry-proposal — retry proposal validation using the existing source\n"
@@ -3015,6 +3112,8 @@ class TelegramGatewayOrchestrator:
                 "persisted workflow state. Cost and workflow commands are read-only "
                 "and do not rerun or reconcile work. Pending is read-only until an "
                 "explicit review action; only Accept can append and re-index. "
+                "Status distinguishes liveness from dependency readiness; stats "
+                "show only aggregate counts and safe timestamps. "
                 "Accept is always an explicit human action; proposals without a "
                 "target cannot be accepted."
             )

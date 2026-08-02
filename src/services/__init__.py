@@ -43,12 +43,15 @@ from src.services.prompt_safety import (
 )
 from src.services.readiness_service import (
     READINESS_FAILED,
+    READINESS_NOT_REQUIRED,
     READINESS_OK,
     ReadinessCheckResult,
     ReadinessProbe,
     ReadinessReport,
+    ReadinessStatusReport,
     ReadinessService,
 )
+from src.services.knowledge_stats import KnowledgeStatsResult, KnowledgeStatsService
 from src.services.workflow_run_service import (
     STANDARD_FAILURE_REASONS,
     WorkflowRunAuditUpdateError,
@@ -195,11 +198,15 @@ __all__ = [
     "normalize_notion_path",
     "normalize_supplement_target_path",
     "READINESS_FAILED",
+    "READINESS_NOT_REQUIRED",
     "READINESS_OK",
     "ReadinessCheckResult",
     "ReadinessProbe",
     "ReadinessReport",
+    "ReadinessStatusReport",
     "ReadinessService",
+    "KnowledgeStatsResult",
+    "KnowledgeStatsService",
     "STANDARD_FAILURE_REASONS",
     "WorkflowRunAuditUpdateError",
     "WORKFLOW_STATUS_FAILED",

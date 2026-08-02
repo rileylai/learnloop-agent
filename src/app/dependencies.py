@@ -81,12 +81,15 @@ def get_business_unit_of_work_factory(
 def get_readiness_service() -> ReadinessService:
     settings = get_settings()
     queue_client = get_queue_client()
+    notion_backend = normalize_notion_backend(settings.notion_backend)
     return ReadinessService(
         probe=SqlAlchemyReadinessProbe(engine=engine),
         mode=settings.app_env,
         openai_configured=bool(settings.openai_api_key),
         queue_client=queue_client,
         queue_required=settings.app_env not in {"test", "demo", "mock"},
+        notion_backend=notion_backend,
+        notion_configured=(notion_backend == "mock" or bool(settings.notion_token)),
     )
 
 

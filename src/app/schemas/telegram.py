@@ -109,3 +109,16 @@ class TelegramWebhookResponse(BaseModel):
     workflow_detail_estimated_cost_usd: Optional[float] = None
     workflow_recent_count: Optional[int] = None
     pending_count: Optional[int] = None
+    status_liveness: Optional[str] = None
+    status_readiness: Optional[str] = None
+    status_checks: dict[str, str] = Field(default_factory=dict)
+    stats_page_count: Optional[int] = None
+    stats_block_count: Optional[int] = None
+    stats_chunk_count: Optional[int] = None
+    stats_vector_count: Optional[int] = None
+    stats_proposal_count: Optional[int] = None
+    stats_pending_proposal_count: Optional[int] = None
+    stats_accepted_proposal_count: Optional[int] = None
+    stats_rejected_proposal_count: Optional[int] = None
+    stats_latest_full_index_at: Optional[str] = None
+    stats_latest_incremental_sync_at: Optional[str] = None
