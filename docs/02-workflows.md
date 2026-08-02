@@ -415,6 +415,26 @@ The indexing workflow and derived PostgreSQL/vector state are durable. A
 partial failure preserves pages committed before the failed page; no Notion
 write is attempted.
 
+### Guarded full-index and status workflow (Step 91)
+
+```text
+/index-full
+-> warning session with duration/cost estimate
+-> owner-bound opaque index_full_confirm or index_full_cancel
+-> atomic confirmation claim
+-> NotionFullIndexOrchestrator
+-> page-level replacement and durable workflow audit
+
+/index-status [workflow_id]
+-> persisted indexing workflow lookup
+-> redacted status/count/cost reply
+```
+
+`/index-status` is read-only and never re-runs discovery or indexing. Full
+index confirmation is one-shot; duplicate update ids replay the Telegram
+ledger result, while a duplicate fresh callback cannot start another indexing
+workflow.
+
 ## API Mutation Idempotency Workflow (Step 76)
 
 ```text

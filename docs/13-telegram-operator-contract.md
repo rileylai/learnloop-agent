@@ -4,8 +4,9 @@
 
 This document defines the Step 89-90 contract for operating synchronization,
 indexing, review, cost, workflow, readiness, and knowledge-base status from
-Telegram. Step 90 implements selected-page `/sync`; the remaining operator
-handlers are delivered by Steps 91-95.
+Telegram. Steps 90-91 implement selected-page `/sync`, guarded
+`/index-full`, and read-only `/index-status`; the remaining operator handlers
+are delivered by Steps 92-95.
 
 ## Scope and non-goals
 
@@ -101,7 +102,7 @@ The server-side `callback_kind` is one of:
 |---|---|---|
 | `picker` | Existing `open_page`, `select_target`, `back`, `root`, and legacy compatibility actions | Upload or review target hierarchy only; navigation is side-effect free |
 | `review` | Existing `accept`, `reject`, `change_target` | Existing proposal review orchestrator; only explicit Accept can append and re-index |
-| `operator` | `sync_toggle`, `sync_confirm`, `sync_cancel`, plus future operator actions | Step 90 selection/confirmation; later steps add the remaining operator flows |
+| `operator` | `sync_toggle`, `sync_confirm`, `sync_cancel`, `index_full_confirm`, `index_full_cancel` | Steps 90-91 selection/confirmation; later steps add the remaining operator flows |
 
 Operator mappings may retain server-side page ids, workflow ids, proposal ids,
 selection sets, chat/user ownership, creation time, expiry, and a one-shot
@@ -137,7 +138,8 @@ commands with guessed ids or by an LLM response:
 - `/index-full` first displays a duration/embedding-cost warning. The full
   index starts only after an unexpired, owner-bound `index_full_confirm`
   callback. Cancel is side-effect free. Unknown embedding pricing remains
-  unknown; it never becomes a guessed estimate.
+  unknown; it never becomes a guessed estimate. `/index-status` reads the
+  persisted workflow and cannot trigger discovery or indexing.
 - `/pending` View is read-only. Accept, Reject, and Change target callbacks
   remain explicit review actions. Accept delegates to
   `SupplementReviewOrchestrator` and preserves
@@ -181,7 +183,7 @@ Redis callback/session state is ephemeral coordination state. PostgreSQL
 workflow, update-ledger, proposal, and index state remains the durable source
 for operator status. No raw PostgreSQL or Redis client is an LLM-facing tool.
 
-## Step 90 implementation invariants
+## Steps 90-91 implementation invariants
 
 - Live page discovery goes through the read-only Notion tool and can discover
   pages that are not yet in the local derived index.
@@ -191,6 +193,10 @@ for operator status. No raw PostgreSQL or Redis client is an LLM-facing tool.
   commits remain durable when a later page fails.
 - The Telegram outer workflow reports only bounded sync status/count fields;
   original Notion notes and `AI Supplement Zone` are never written.
+- Full-index confirmation is represented by an expiring, owner-bound session;
+  only the one-shot confirm callback starts `NotionFullIndexOrchestrator`.
+- `/index-status` exposes bounded persisted workflow fields and never calls
+  the Notion reader or indexing orchestrator.
 
 ## Step 89 acceptance invariants
 
@@ -202,5 +208,5 @@ for operator status. No raw PostgreSQL or Redis client is an LLM-facing tool.
   allowlisted.
 - Authorization, confirmation, write safety, RAG exclusion, and state
   transitions remain deterministic backend policy.
-- This contract does not implement the remaining Steps 91-94 or imply live
-  full-index, cost, review-inbox, readiness, or stats verification.
+- This contract does not implement the remaining Steps 92-94 or imply live
+  cost, review-inbox, readiness, or stats verification.

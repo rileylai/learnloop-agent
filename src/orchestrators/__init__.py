@@ -96,6 +96,12 @@ from src.orchestrators.telegram_ingestion_orchestrator import (
     TelegramIngestionOrchestrator,
     TelegramPhotoAttachment,
 )
+from src.orchestrators.telegram_index_orchestrator import (
+    TelegramFullIndexView,
+    TelegramIndexError,
+    TelegramIndexOrchestrator,
+    TelegramIndexResult,
+)
 from src.orchestrators.telegram_page_orchestrator import (
     TelegramPageItem,
     TelegramPageOrchestrator,
@@ -202,6 +208,10 @@ __all__ = [
     "TelegramIngestionError",
     "TelegramIngestionOrchestrator",
     "TelegramPhotoAttachment",
+    "TelegramFullIndexView",
+    "TelegramIndexError",
+    "TelegramIndexOrchestrator",
+    "TelegramIndexResult",
     "TelegramPageItem",
     "TelegramPageOrchestrator",
     "TelegramPagesResult",

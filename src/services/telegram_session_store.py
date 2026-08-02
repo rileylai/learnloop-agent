@@ -35,7 +35,13 @@ TELEGRAM_PICKER_CALLBACK_ACTIONS = frozenset(
     }
 )
 TELEGRAM_OPERATOR_CALLBACK_ACTIONS = frozenset(
-    {"sync_toggle", "sync_confirm", "sync_cancel"}
+    {
+        "sync_toggle",
+        "sync_confirm",
+        "sync_cancel",
+        "index_full_confirm",
+        "index_full_cancel",
+    }
 )
 
 

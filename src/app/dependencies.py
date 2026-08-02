@@ -40,6 +40,9 @@ from src.services import (
     InMemoryTelegramSyncSessionStore,
     RedisTelegramSyncSessionStore,
     TelegramSyncSessionStore,
+    InMemoryTelegramIndexSessionStore,
+    RedisTelegramIndexSessionStore,
+    TelegramIndexSessionStore,
     WorkflowObservabilityService,
 )
 from src.tools import (
@@ -127,6 +130,16 @@ def get_telegram_sync_session_store() -> TelegramSyncSessionStore:
 
         return RedisTelegramSyncSessionStore(redis_client=Redis.from_url(settings.redis_url))
     return InMemoryTelegramSyncSessionStore()
+
+
+@lru_cache(maxsize=1)
+def get_telegram_index_session_store() -> TelegramIndexSessionStore:
+    settings = get_settings()
+    if settings.redis_url:
+        from redis import Redis
+
+        return RedisTelegramIndexSessionStore(redis_client=Redis.from_url(settings.redis_url))
+    return InMemoryTelegramIndexSessionStore()
 
 
 def get_cost_budget_service() -> CostBudgetService:

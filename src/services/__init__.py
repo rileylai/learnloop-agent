@@ -95,6 +95,13 @@ from src.services.telegram_sync_session_store import (
     TelegramSyncSession,
     TelegramSyncSessionStore,
 )
+from src.services.telegram_index_session_store import (
+    TELEGRAM_INDEX_SESSION_TTL_SECONDS,
+    InMemoryTelegramIndexSessionStore,
+    RedisTelegramIndexSessionStore,
+    TelegramFullIndexSession,
+    TelegramIndexSessionStore,
+)
 from src.services.notion_hierarchy import (
     HierarchyPickerButton,
     HierarchyPickerView,
@@ -222,6 +229,11 @@ __all__ = [
     "TelegramSyncPage",
     "TelegramSyncSession",
     "TelegramSyncSessionStore",
+    "TELEGRAM_INDEX_SESSION_TTL_SECONDS",
+    "InMemoryTelegramIndexSessionStore",
+    "RedisTelegramIndexSessionStore",
+    "TelegramFullIndexSession",
+    "TelegramIndexSessionStore",
     "HierarchyPickerButton",
     "HierarchyPickerView",
     "NotionHierarchyNode",

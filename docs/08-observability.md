@@ -304,7 +304,7 @@ Telegram ingestion observability:
 - Status metadata is recursively redacted for `raw_text`, `source_text`, API
   keys, tokens, authorization values, and webhook secrets.
 
-## Step 89 Telegram Operator Observability Contract
+## Steps 89-91 Telegram Operator Observability Contract
 
 Operator command output and workflow metadata follow the bounded contract in
 `docs/13-telegram-operator-contract.md`:
@@ -323,6 +323,9 @@ Operator command output and workflow metadata follow the bounded contract in
 - `/index-status` reads persisted indexing workflow state and does not contact
   Notion. `/cost` and `/workflow` reuse redacted aggregation/status services;
   neither emits prompts, OCR, source text, provider exceptions, or secrets.
+- `/index-full` warning/confirmation state is held in ephemeral operator
+  session storage. The durable indexing workflow records page counts and
+  deterministic failure state; Telegram output keeps only safe bounded fields.
 - `/pending` records bounded review action/status and safe proposal display
   fields only. Accept/reject/change-target actions retain existing review and
   append/re-index audit semantics.

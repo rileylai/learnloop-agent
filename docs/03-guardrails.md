@@ -141,11 +141,12 @@ Valid user actions include:
 After those manual actions, the user must run `/api/notion/index/incremental`.
 The system must reconcile derived PostgreSQL and vector state by page-level replacement from current Notion content.
 
-## Telegram Operator Guardrails (Steps 89-90)
+## Telegram Operator Guardrails (Steps 89-91)
 
 The operator command contract is defined in
-`docs/13-telegram-operator-contract.md`. Step 90 adds selected-page `/sync`;
-the remaining rules become executable as Steps 91-94 add their handlers:
+`docs/13-telegram-operator-contract.md`. Steps 90-91 add selected-page sync,
+full-index confirmation, and persisted index status; the remaining rules become
+executable as Steps 92-94 add their handlers:
 
 - `/sync` and `/index-full` may mutate only derived PostgreSQL/vector index
   state through the existing indexing orchestrators. They never write Notion.
@@ -154,7 +155,8 @@ the remaining rules become executable as Steps 91-94 add their handlers:
 - `/index-full` requires an opaque, expiring, owner-bound confirmation
   callback after a bounded duration/cost warning. `/sync` requires explicit
   final selection confirmation. A typed text command, LLM output, or guessed
-  identifier cannot bypass either gate.
+  identifier cannot bypass either gate. `/index-status` is read-only and
+  never triggers Notion discovery or indexing.
 - `/pending` is PostgreSQL read-only until an explicit review action. View,
   Reject, and Change target do not append; only Accept enters the existing
   human-accept append/re-index transaction. Pending and rejected requests stay

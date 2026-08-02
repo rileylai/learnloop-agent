@@ -15,6 +15,7 @@ from src.app.dependencies import (
     get_queue_client,
     get_telegram_session_store,
     get_telegram_sync_session_store,
+    get_telegram_index_session_store,
 )
 from src.db.session import (
     get_db_session_factory,
@@ -66,6 +67,7 @@ def process_telegram_webhook_job(
             trust_boundary=get_trust_boundary(),
             telegram_session_store=get_telegram_session_store(),
             telegram_sync_session_store=get_telegram_sync_session_store(),
+            telegram_index_session_store=get_telegram_index_session_store(),
             queue_client=get_queue_client(),
         )
         result = asyncio.run(
@@ -127,6 +129,7 @@ def process_telegram_upload_settle_job(
             trust_boundary=get_trust_boundary(),
             telegram_session_store=get_telegram_session_store(),
             telegram_sync_session_store=get_telegram_sync_session_store(),
+            telegram_index_session_store=get_telegram_index_session_store(),
             queue_client=get_queue_client(),
         )
         settle_status = asyncio.run(

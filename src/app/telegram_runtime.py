@@ -11,6 +11,7 @@ from src.orchestrators import (
     ImageOCRIngestionOrchestrator,
     NotionPageIndexOrchestrator,
     NotionIncrementalIndexOrchestrator,
+    NotionFullIndexOrchestrator,
     QAOrchestrator,
     SupplementProposeOrchestrator,
     SupplementReviewOrchestrator,
@@ -21,6 +22,7 @@ from src.orchestrators import (
     TelegramQAOrchestrator,
     TelegramReviewOrchestrator,
     TelegramSyncOrchestrator,
+    TelegramIndexOrchestrator,
 )
 from src.providers import EmbeddingClient, ProviderRouter
 from src.queue import QueueClient
@@ -33,14 +35,18 @@ from src.repositories import (
 )
 from src.services import (
     CostTracker,
+    CostBudgetService,
     DuplicateKnowledgeChecker,
     PromptTemplateLoader,
     TelegramSessionStore,
     TelegramSyncSessionStore,
     InMemoryTelegramSyncSessionStore,
+    TelegramIndexSessionStore,
+    InMemoryTelegramIndexSessionStore,
     TelegramUpdateIdempotencyService,
     TrustBoundaryService,
     WorkflowRunService,
+    WorkflowObservabilityService,
 )
 from src.tools import ToolRegistry
 
@@ -58,6 +64,8 @@ def build_telegram_gateway_orchestrator(
     trust_boundary: TrustBoundaryService,
     telegram_session_store: Optional[TelegramSessionStore] = None,
     telegram_sync_session_store: Optional[TelegramSyncSessionStore] = None,
+    telegram_index_session_store: Optional[TelegramIndexSessionStore] = None,
+    workflow_observability_service: Optional[WorkflowObservabilityService] = None,
     queue_client: Optional[QueueClient] = None,
 ) -> TelegramGatewayOrchestrator:
     workflow_run_service = WorkflowRunService(db_session_factory)
@@ -130,6 +138,28 @@ def build_telegram_gateway_orchestrator(
         page_index_orchestrator=notion_page_index_orchestrator,
         workflow_run_service=workflow_run_service,
     )
+    full_index_orchestrator = NotionFullIndexOrchestrator(
+        tool_registry=tool_registry,
+        page_index_orchestrator=notion_page_index_orchestrator,
+        workflow_run_service=workflow_run_service,
+    )
+    if workflow_observability_service is None:
+        settings = get_settings()
+        workflow_observability_service = WorkflowObservabilityService(
+            db_session_factory,
+            cost_budget_service=CostBudgetService(
+                daily_budget_usd=settings.max_daily_cost_usd,
+                workflow_budget_usd=settings.max_workflow_cost_usd,
+            ),
+            stale_after_seconds=settings.workflow_stale_after_seconds,
+        )
+    telegram_index_orchestrator = TelegramIndexOrchestrator(
+        full_index_orchestrator=full_index_orchestrator,
+        index_session_store=telegram_index_session_store
+        or InMemoryTelegramIndexSessionStore(),
+        workflow_run_service=workflow_run_service,
+        workflow_observability_service=workflow_observability_service,
+    )
     telegram_sync_orchestrator = TelegramSyncOrchestrator(
         tool_registry=tool_registry,
         session_store=telegram_sync_session_store
@@ -149,7 +179,9 @@ def build_telegram_gateway_orchestrator(
         telegram_review_orchestrator=telegram_review_orchestrator,
         telegram_page_orchestrator=telegram_page_orchestrator,
         telegram_sync_orchestrator=telegram_sync_orchestrator,
+        telegram_index_orchestrator=telegram_index_orchestrator,
         telegram_session_store=telegram_session_store,
+        telegram_index_session_store=telegram_index_session_store,
         trust_boundary=trust_boundary,
         update_idempotency_service=update_idempotency_service,
         queue_client=queue_client,

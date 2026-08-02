@@ -656,8 +656,9 @@ Metadata note:
 The operator command contract is defined in
 `docs/13-telegram-operator-contract.md`. It covers `/sync`, `/index-full`,
 `/index-status`, `/cost`, `/pending`, `/workflow`, `/status`, `/stats`, and
-the updated `/help` surface. The `/sync` implementation is delivered in Step
-90; the remaining operator commands are delivered in Steps 91-94.
+the updated `/help` surface. The `/sync`, `/index-full`, and `/index-status`
+implementations are delivered in Steps 90-91; the remaining operator commands
+are delivered in Steps 92-94.
 
 Operator commands are classified as read-only or derived-index/review
 mutations. `/index-full` requires an opaque server-side confirmation callback;
@@ -688,6 +689,21 @@ and commits independently, so completed pages remain durable when a later
 selected page fails. The Telegram outer workflow exposes only bounded counts,
 status, and the child indexing workflow reference. `/sync` never calls a
 Notion writer and never changes original notes or `AI Supplement Zone`.
+
+### 13.9 Telegram guarded full index and status (Step 91)
+
+`/index-full` creates a short-lived, exact chat/user-owned warning session and
+renders an opaque `index_full_confirm` and `index_full_cancel` callback pair.
+Only the atomically claimed confirm callback calls the existing
+`NotionFullIndexOrchestrator`; cancel and expired/duplicate callbacks never
+start indexing. Full indexing remains derived-index-only and page-level
+commits preserve completed pages when a later page fails.
+
+`/index-status [workflow_id]` reads the persisted `indexing` workflow through
+the workflow observability service. It never discovers pages or calls Notion.
+Telegram receives only workflow reference, status, bounded page counts,
+remaining/failed counts, deterministic failure reason, stale state, and known
+or `unknown` embedding cost.
 
 Telegram ingestion UX contract:
 - Uploads are acknowledged first, then a progressive hierarchy picker shows root

@@ -32,6 +32,12 @@ from src.orchestrators.telegram_sync_orchestrator import (
     TelegramSyncOrchestrator,
     TelegramSyncView,
 )
+from src.orchestrators.telegram_index_orchestrator import (
+    TelegramIndexError,
+    TelegramIndexOrchestrator,
+    TelegramIndexResult,
+    TelegramFullIndexView,
+)
 from src.services import (
     STANDARD_FAILURE_REASONS,
     WorkflowRunAuditUpdateError,
@@ -49,6 +55,7 @@ from src.services import (
     TELEGRAM_REVIEW_CALLBACK_ACTIONS,
     TelegramSessionStore,
     TELEGRAM_SYNC_MAX_SELECTED_PAGES,
+    TelegramIndexSessionStore,
 )
 from src.services.latency_evidence import LatencyEvidence, elapsed_ms
 from src.tools import ToolContext, ToolRegistry
@@ -173,6 +180,15 @@ class TelegramGatewayResult:
     sync_selected_page_count: Optional[int] = None
     sync_succeeded_page_count: Optional[int] = None
     sync_failed_page_count: Optional[int] = None
+    index_workflow_run_id: Optional[int] = None
+    index_status: Optional[str] = None
+    index_discovered_page_count: Optional[int] = None
+    index_processed_page_count: Optional[int] = None
+    index_failed_page_count: Optional[int] = None
+    index_remaining_page_count: Optional[int] = None
+    index_failure_reason: Optional[str] = None
+    index_estimated_cost_usd: Optional[float] = None
+    index_stale: Optional[bool] = None
 
 
 @dataclass
@@ -213,6 +229,8 @@ class TelegramGatewayOrchestrator:
         telegram_page_orchestrator: Optional[TelegramPageOrchestrator] = None,
         telegram_sync_orchestrator: Optional[TelegramSyncOrchestrator] = None,
         telegram_session_store: Optional[TelegramSessionStore] = None,
+        telegram_index_orchestrator: Optional[TelegramIndexOrchestrator] = None,
+        telegram_index_session_store: Optional[TelegramIndexSessionStore] = None,
         trust_boundary: Optional[TrustBoundaryService] = None,
         update_idempotency_service: Optional[TelegramUpdateIdempotencyService] = None,
         queue_client: Optional[QueueClient] = None,
@@ -225,6 +243,8 @@ class TelegramGatewayOrchestrator:
         self._telegram_page_orchestrator = telegram_page_orchestrator
         self._telegram_sync_orchestrator = telegram_sync_orchestrator
         self._telegram_session_store = telegram_session_store
+        self._telegram_index_orchestrator = telegram_index_orchestrator
+        self._telegram_index_session_store = telegram_index_session_store
         self._trust_boundary = trust_boundary
         self._update_idempotency_service = update_idempotency_service
         self._queue_client = queue_client
@@ -641,6 +661,15 @@ class TelegramGatewayOrchestrator:
         sync_selected_page_count: Optional[int] = None
         sync_succeeded_page_count: Optional[int] = None
         sync_failed_page_count: Optional[int] = None
+        index_workflow_run_id: Optional[int] = None
+        index_status: Optional[str] = None
+        index_discovered_page_count: Optional[int] = None
+        index_processed_page_count: Optional[int] = None
+        index_failed_page_count: Optional[int] = None
+        index_remaining_page_count: Optional[int] = None
+        index_failure_reason: Optional[str] = None
+        index_estimated_cost_usd: Optional[float] = None
+        index_stale: Optional[bool] = None
 
         try:
             normalized_text = (text or "").strip()
@@ -805,6 +834,55 @@ class TelegramGatewayOrchestrator:
                         sync_selected_page_count = sync_result.selected_page_count
                         sync_succeeded_page_count = sync_result.succeeded_page_count
                         sync_failed_page_count = sync_result.failed_page_count
+                        business_status = "succeeded"
+                    elif callback_action.action == "index_full_confirm":
+                        if self._telegram_index_orchestrator is None:
+                            raise TelegramGatewayError(
+                                error_code="TELEGRAM_INDEX_NOT_CONFIGURED",
+                                message="Telegram full indexing is not configured",
+                                http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                                failure_reason="UNKNOWN_ERROR",
+                            )
+                        index_result = await self._telegram_index_orchestrator.confirm_full_index(
+                            session_id=callback_action.session_id,
+                            chat_id=normalized_chat_id,
+                            user_id=normalized_user_id,
+                            request_workflow_id=request_workflow_id,
+                        )
+                        reply_text = index_result.reply_text
+                        index_workflow_run_id = index_result.workflow_run_id
+                        index_status = index_result.status
+                        index_discovered_page_count = index_result.discovered_page_count
+                        index_processed_page_count = index_result.processed_page_count
+                        index_failed_page_count = index_result.failed_page_count
+                        index_remaining_page_count = index_result.remaining_page_count
+                        index_failure_reason = index_result.failure_reason
+                        index_estimated_cost_usd = index_result.estimated_cost_usd
+                        index_stale = index_result.stale
+                        business_status = "succeeded"
+                    elif callback_action.action == "index_full_cancel":
+                        if self._telegram_index_orchestrator is None:
+                            raise TelegramGatewayError(
+                                error_code="TELEGRAM_INDEX_NOT_CONFIGURED",
+                                message="Telegram full indexing is not configured",
+                                http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                                failure_reason="UNKNOWN_ERROR",
+                            )
+                        index_result = self._telegram_index_orchestrator.cancel_full_index(
+                            session_id=callback_action.session_id,
+                            chat_id=normalized_chat_id,
+                            user_id=normalized_user_id,
+                        )
+                        reply_text = index_result.reply_text
+                        index_workflow_run_id = index_result.workflow_run_id
+                        index_status = index_result.status
+                        index_discovered_page_count = index_result.discovered_page_count
+                        index_processed_page_count = index_result.processed_page_count
+                        index_failed_page_count = index_result.failed_page_count
+                        index_remaining_page_count = index_result.remaining_page_count
+                        index_failure_reason = index_result.failure_reason
+                        index_estimated_cost_usd = index_result.estimated_cost_usd
+                        index_stale = index_result.stale
                         business_status = "succeeded"
                 # Review callbacks are a distinct protocol family. Dispatch them
                 # before the generic picker/session branch so a restored or legacy
@@ -1040,6 +1118,47 @@ class TelegramGatewayOrchestrator:
                 sync_status = sync_view.state
                 sync_discovered_page_count = sync_view.discovered_page_count
                 sync_selected_page_count = sync_view.selected_page_count
+                business_status = "succeeded"
+            elif command == "index-full":
+                if self._telegram_index_orchestrator is None:
+                    raise TelegramGatewayError(
+                        error_code="TELEGRAM_INDEX_NOT_CONFIGURED",
+                        message="Telegram full indexing is not configured",
+                        http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                        failure_reason="UNKNOWN_ERROR",
+                    )
+                index_view = self._telegram_index_orchestrator.start_full_index_session(
+                    chat_id=normalized_chat_id,
+                    user_id=normalized_user_id,
+                )
+                reply_text, reply_markup = self._build_full_index_warning(
+                    view=index_view,
+                    chat_id=normalized_chat_id,
+                    user_id=normalized_user_id,
+                )
+                index_status = index_view.state
+                business_status = "succeeded"
+            elif command == "index-status":
+                if self._telegram_index_orchestrator is None:
+                    raise TelegramGatewayError(
+                        error_code="TELEGRAM_INDEX_NOT_CONFIGURED",
+                        message="Telegram index status is not configured",
+                        http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                        failure_reason="UNKNOWN_ERROR",
+                    )
+                index_result = self._telegram_index_orchestrator.get_index_status(
+                    command_text=normalized_input_text,
+                )
+                reply_text = index_result.reply_text
+                index_workflow_run_id = index_result.workflow_run_id
+                index_status = index_result.status
+                index_discovered_page_count = index_result.discovered_page_count
+                index_processed_page_count = index_result.processed_page_count
+                index_failed_page_count = index_result.failed_page_count
+                index_remaining_page_count = index_result.remaining_page_count
+                index_failure_reason = index_result.failure_reason
+                index_estimated_cost_usd = index_result.estimated_cost_usd
+                index_stale = index_result.stale
                 business_status = "succeeded"
             elif command == "pages":
                 if self._telegram_page_orchestrator is None:
@@ -1471,6 +1590,15 @@ class TelegramGatewayOrchestrator:
                         "sync_selected_page_count": sync_selected_page_count,
                         "sync_succeeded_page_count": sync_succeeded_page_count,
                         "sync_failed_page_count": sync_failed_page_count,
+                        "index_workflow_run_id": index_workflow_run_id,
+                        "index_status": index_status,
+                        "index_discovered_page_count": index_discovered_page_count,
+                        "index_processed_page_count": index_processed_page_count,
+                        "index_failed_page_count": index_failed_page_count,
+                        "index_remaining_page_count": index_remaining_page_count,
+                        "index_failure_reason": index_failure_reason,
+                        "index_estimated_cost_usd": index_estimated_cost_usd,
+                        "index_stale": index_stale,
                         **latency.as_dict(),
                     },
                     sort_keys=True,
@@ -1505,6 +1633,15 @@ class TelegramGatewayOrchestrator:
                 sync_selected_page_count=sync_selected_page_count,
                 sync_succeeded_page_count=sync_succeeded_page_count,
                 sync_failed_page_count=sync_failed_page_count,
+                index_workflow_run_id=index_workflow_run_id,
+                index_status=index_status,
+                index_discovered_page_count=index_discovered_page_count,
+                index_processed_page_count=index_processed_page_count,
+                index_failed_page_count=index_failed_page_count,
+                index_remaining_page_count=index_remaining_page_count,
+                index_failure_reason=index_failure_reason,
+                index_estimated_cost_usd=index_estimated_cost_usd,
+                index_stale=index_stale,
             )
         except WorkflowRunAuditUpdateError:
             raise
@@ -1564,6 +1701,40 @@ class TelegramGatewayOrchestrator:
                 metadata=failure_metadata,
             ) from exc
 
+        except TelegramIndexError as exc:
+            failure_metadata = {
+                "business_status": "failed",
+                "callback_action": callback_action_name,
+                "callback_ack_status": callback_ack_status,
+                "preview_delivery_status": preview_delivery_status,
+                **{
+                    key: value
+                    for key, value in exc.metadata.items()
+                    if key
+                    in {
+                        "index_workflow_run_id",
+                        "index_status",
+                        "index_discovered_page_count",
+                        "index_processed_page_count",
+                        "index_failed_page_count",
+                        "index_remaining_page_count",
+                    }
+                },
+            }
+            self._mark_failed_workflow(
+                workflow_run_id=workflow_run.id,
+                failure_reason=exc.failure_reason,
+                error_code=exc.error_code,
+                metadata=failure_metadata,
+            )
+            raise TelegramGatewayError(
+                error_code=exc.error_code,
+                message=exc.message,
+                http_status_code=exc.http_status_code,
+                failure_reason=self._normalize_failure_reason(exc.failure_reason),
+                workflow_run_id=workflow_run.id,
+                metadata=failure_metadata,
+            ) from exc
         except TelegramSyncError as exc:
             failure_metadata = {
                 "business_status": "failed",
@@ -2275,6 +2446,41 @@ class TelegramGatewayOrchestrator:
         buttons.append([{"text": "Cancel", "callback_data": f"ll:{cancel_token}"}])
         return "\n".join(lines), {"inline_keyboard": buttons}
 
+    def _build_full_index_warning(
+        self,
+        *,
+        view: TelegramFullIndexView,
+        chat_id: str,
+        user_id: str,
+    ) -> tuple[str, dict[str, Any]]:
+        if self._telegram_session_store is None:
+            raise TelegramGatewayError(
+                error_code="TELEGRAM_INDEX_NOT_CONFIGURED",
+                message="Telegram index callback store is not configured",
+                http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                failure_reason="UNKNOWN_ERROR",
+            )
+        confirm_token = self._telegram_session_store.create_callback(
+            session_id=view.session_id,
+            chat_id=chat_id,
+            user_id=user_id,
+            action="index_full_confirm",
+            callback_kind=TELEGRAM_CALLBACK_KIND_OPERATOR,
+        )
+        cancel_token = self._telegram_session_store.create_callback(
+            session_id=view.session_id,
+            chat_id=chat_id,
+            user_id=user_id,
+            action="index_full_cancel",
+            callback_kind=TELEGRAM_CALLBACK_KIND_OPERATOR,
+        )
+        return view.reply_text, {
+            "inline_keyboard": [
+                [{"text": "Confirm full index", "callback_data": f"ll:{confirm_token}"}],
+                [{"text": "Cancel", "callback_data": f"ll:{cancel_token}"}],
+            ]
+        }
+
     def _build_hierarchy_picker(
         self,
         *,
@@ -2456,6 +2662,8 @@ class TelegramGatewayOrchestrator:
                 "/start or /help — show this guide\n"
                 "/pages — list indexed Notion pages with full hierarchy paths\n"
                 "/sync — discover accessible Notion pages and select pages to re-index\n"
+                "/index-full — review a warning, then rebuild the full derived index\n"
+                "/index-status [workflow_id] — show persisted index workflow status\n"
                 "/ingest — upload a PDF or image, then choose a target page button\n"
                 "/ingest --page <external_page_id> — text fallback for automation\n"
                 "/retry-proposal — retry proposal validation using the existing source\n"
@@ -2466,6 +2674,8 @@ class TelegramGatewayOrchestrator:
                 "You do not need to type a Notion UUID for ingestion. "
                 "After upload, choose the parent or child page from the buttons. "
                 "Sync is read-only for Notion and requires explicit confirmation. "
+                "Full index also requires explicit confirmation; status only reads "
+                "persisted workflow state. "
                 "Accept is always an explicit human action; proposals without a "
                 "target cannot be accepted."
             )

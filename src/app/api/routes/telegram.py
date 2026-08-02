@@ -15,6 +15,8 @@ from src.app.dependencies import (
     get_tool_registry,
     get_telegram_session_store,
     get_telegram_sync_session_store,
+    get_telegram_index_session_store,
+    get_workflow_observability_service,
 )
 from src.app.telegram_runtime import build_telegram_gateway_orchestrator
 from src.app.schemas import TelegramWebhookRequest, TelegramWebhookResponse
@@ -39,6 +41,8 @@ from src.services import (
     TrustBoundaryService,
     TelegramSessionStore,
     TelegramSyncSessionStore,
+    TelegramIndexSessionStore,
+    WorkflowObservabilityService,
 )
 from src.queue import QueueClient
 from src.tools import ToolRegistry
@@ -68,6 +72,12 @@ async def handle_telegram_webhook(
     telegram_sync_session_store: TelegramSyncSessionStore = Depends(
         get_telegram_sync_session_store
     ),
+    telegram_index_session_store: TelegramIndexSessionStore = Depends(
+        get_telegram_index_session_store
+    ),
+    workflow_observability_service: WorkflowObservabilityService = Depends(
+        get_workflow_observability_service
+    ),
 ) -> TelegramWebhookResponse:
     try:
         trust_boundary.require_telegram_webhook_secret(telegram_webhook_secret)
@@ -94,6 +104,8 @@ async def handle_telegram_webhook(
         trust_boundary=trust_boundary,
         telegram_session_store=telegram_session_store,
         telegram_sync_session_store=telegram_sync_session_store,
+        telegram_index_session_store=telegram_index_session_store,
+        workflow_observability_service=workflow_observability_service,
         queue_client=queue_client,
     )
     request_workflow_id = str(getattr(request.state, "workflow_id", ""))
@@ -171,6 +183,11 @@ async def handle_telegram_webhook(
             "business_status",
             "callback_ack_status",
             "preview_delivery_status",
+            "index_status",
+            "index_discovered_page_count",
+            "index_processed_page_count",
+            "index_failed_page_count",
+            "index_remaining_page_count",
         ):
             if key in exc.metadata:
                 detail[key] = exc.metadata[key]
@@ -207,6 +224,15 @@ async def handle_telegram_webhook(
         sync_selected_page_count=result.sync_selected_page_count,
         sync_succeeded_page_count=result.sync_succeeded_page_count,
         sync_failed_page_count=result.sync_failed_page_count,
+        index_workflow_run_id=result.index_workflow_run_id,
+        index_status=result.index_status,
+        index_discovered_page_count=result.index_discovered_page_count,
+        index_processed_page_count=result.index_processed_page_count,
+        index_failed_page_count=result.index_failed_page_count,
+        index_remaining_page_count=result.index_remaining_page_count,
+        index_failure_reason=result.index_failure_reason,
+        index_estimated_cost_usd=result.index_estimated_cost_usd,
+        index_stale=result.index_stale,
     )
     if result.status == "running":
         content = (

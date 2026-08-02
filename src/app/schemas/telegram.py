@@ -81,3 +81,12 @@ class TelegramWebhookResponse(BaseModel):
     sync_selected_page_count: Optional[int] = None
     sync_succeeded_page_count: Optional[int] = None
     sync_failed_page_count: Optional[int] = None
+    index_workflow_run_id: Optional[int] = None
+    index_status: Optional[str] = None
+    index_discovered_page_count: Optional[int] = None
+    index_processed_page_count: Optional[int] = None
+    index_failed_page_count: Optional[int] = None
+    index_remaining_page_count: Optional[int] = None
+    index_failure_reason: Optional[str] = None
+    index_estimated_cost_usd: Optional[float] = None
+    index_stale: Optional[bool] = None
