@@ -48,6 +48,8 @@ It indexes existing Notion notes as read-only knowledge, generates AI supplement
 - `docs/10-deployment.md`: local-first deployment and future V2 cloud.
 - `docs/11-coding-style.md`: coding and documentation style.
 - `docs/12-github-collaboration-rules.md`: GitHub workflow, branch, commit, and push rules.
+- `docs/13-telegram-operator-contract.md`: Telegram operator commands,
+  callbacks, authorization, safe output, and queue boundaries.
 - `docs/prompts/`: prompt templates.
 - `docs/decisions/`: ADRs.
 

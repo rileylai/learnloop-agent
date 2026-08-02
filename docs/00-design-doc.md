@@ -649,7 +649,29 @@ Metadata note:
 ### 13.6 Telegram APIs
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/api/telegram/webhook` | Handle Telegram webhook updates for `/help`, `/health`, `/pages`, target-aware `/ingest`, `/retry-proposal`, scoped `/ask`, and text or callback review. |
+| POST | `/api/telegram/webhook` | Handle Telegram webhook updates for existing commands plus the Step 89 operator command contract and typed callbacks. |
+
+### 13.7 Telegram Operator Command Contract (Step 89)
+
+The operator command contract is defined in
+`docs/13-telegram-operator-contract.md`. It covers `/sync`, `/index-full`,
+`/index-status`, `/cost`, `/pending`, `/workflow`, `/status`, `/stats`, and
+the updated `/help` surface. The contract is intentionally separate from the
+future command implementations in Steps 90-94.
+
+Operator commands are classified as read-only or derived-index/review
+mutations. `/index-full` requires an opaque server-side confirmation callback;
+`/sync` requires a final bounded selection confirmation; and `/pending` Accept
+reuses the existing explicit human review path. The Telegram payload remains
+`ll:<opaque_token>`, while callback kind/action, ownership, scope, expiry, and
+server-side ids remain in the scoped session store.
+
+Webhook secret validation, configured allowed-chat policy, and exact
+chat/user callback ownership happen before a workflow starts. Routes and
+handlers do not call Notion, PostgreSQL, Redis, OpenAI, or other external
+clients. Queued work uses `QueueClient` and the `telegram` queue; status,
+cost, workflow, readiness, and stats surfaces expose only bounded redacted
+fields. Pending and rejected proposals remain excluded from production RAG.
 
 Telegram ingestion UX contract:
 - Uploads are acknowledged first, then a progressive hierarchy picker shows root

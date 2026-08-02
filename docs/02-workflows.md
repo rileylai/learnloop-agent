@@ -358,6 +358,45 @@ Rules:
   replay. Operators inspect them with the read-only queue inspector instead
   of deleting or cleaning a registry.
 
+## Telegram Operator Command Contract (Step 89)
+
+The command and callback contract is defined in
+`docs/13-telegram-operator-contract.md`. The workflow boundary for the next
+operator phase is:
+
+```text
+Telegram update
+-> webhook secret and allowed-chat checks
+-> telegram_update_ledger claim
+-> typed command/callback intent
+-> QueueClient -> telegram worker when configured
+-> operator orchestrator
+-> service / tool / repository
+-> safe bounded Telegram response
+```
+
+Rules:
+
+- `/sync` and `/index-full` are derived-index mutations, not Notion writes.
+  `/sync` requires final bounded page-selection confirmation. `/index-full`
+  requires an opaque, owner-bound confirmation callback after its duration and
+  cost warning.
+- `/index-status`, `/cost`, `/workflow`, `/status`, and `/stats` are read-only
+  and never re-read Notion or expose direct rerun/reconcile controls.
+- `/pending` reads pending proposals from PostgreSQL only. View is read-only;
+  Accept, Reject, and Change target remain explicit callbacks and reuse the
+  existing review workflow. Only Accept can append to `AI Supplement Zone`.
+- Operator callbacks use a typed server-side `operator` family and cannot fall
+  through to existing upload `picker` or proposal `review` handling. Callback
+  data stays opaque and mappings are TTL-bound, owner-bound, allowlisted, and
+  atomically claimed for one-shot mutations.
+- Duplicate update ids replay the durable Telegram ledger outcome. Duplicate
+  confirmation callbacks do not repeat indexing, synchronization, append,
+  provider, or Notion work.
+- Route and gateway layers do not call SQL, Redis, Notion, OpenAI, or Telegram
+  SDKs directly. Queue, provider, tool, repository, and deterministic policy
+  boundaries remain unchanged.
+
 ## API Mutation Idempotency Workflow (Step 76)
 
 ```text

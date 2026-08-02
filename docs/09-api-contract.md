@@ -1417,3 +1417,64 @@ Notes:
   repeated.` Model output and canonical paths are not sent to the user.
 - `/ingest` creates `pending` change requests only; Notion append remains in accept workflow.
 - Telegram QA uses production Notion chunks only; pending and rejected proposals remain excluded.
+
+## Telegram Operator Command Contract (Step 89)
+
+The webhook is the transport for the following operator commands. Step 89
+defines their contract; the command handlers are delivered by Steps 90-94.
+The complete registry, callback mapping, authorization, safe-output, and
+queue rules are in `docs/13-telegram-operator-contract.md`.
+
+| Command | Contract | Side effect |
+|---|---|---|
+| `/sync` | Start a bounded page hierarchy selection; final `sync_confirm` is required | Page-level replacement of derived index state only |
+| `/index-full` | Show duration/cost warning; only `index_full_confirm` starts work | Full derived index mutation; never a Notion write |
+| `/index-status [workflow_id]` | Show persisted indexing state, counts, remaining work, failure reason, and known cost | Read-only; no Notion read |
+| `/cost [today\|7d\|month\|workflow <workflow_id>]` | Show bounded aggregate and budget state; unknown pricing stays `unknown` | Read-only |
+| `/pending` | Show bounded pending proposal inbox with View, Accept, Reject, and Change target actions | Read-only until explicit review action; only Accept may append/re-index |
+| `/workflow [workflow_id]` | Show redacted recent workflow summary/detail | Read-only; no rerun or stale reconciliation |
+| `/status` | Show readiness-aware dependency states | Read-only; `/health` remains liveness |
+| `/stats` | Show supported aggregate knowledge-base counts and safe timestamps | Read-only |
+
+The updated `/help` lists these commands and states the confirmation/acceptance
+rules. It never instructs users to type a Notion UUID, callback token, or
+secret.
+
+### Operator authorization
+
+The existing Telegram trust boundary applies before operator workflow creation:
+configured webhook secret, configured allowed chat id, then exact callback
+ownership by `(chat_id, user_id)`. Authorization failures return the existing
+redacted `TELEGRAM_WEBHOOK_FORBIDDEN` or `TELEGRAM_CHAT_NOT_ALLOWED` result and
+do not enqueue or acknowledge work. Usernames and display names are not
+authorization identifiers.
+
+### Operator callbacks
+
+Telegram carries only `ll:<opaque_token>`. Server-side mappings classify each
+callback as `picker`, `review`, or `operator`. The new `operator` action
+allowlist is `sync_open`, `sync_toggle`, `sync_confirm`, `sync_cancel`,
+`index_full_confirm`, `index_full_cancel`, and `pending_view`; existing review
+actions remain `accept`, `reject`, and `change_target`. Mappings are scoped to
+chat/user, TTL-bound, allowlisted, and atomically claimed for one-shot
+mutations. Server-side page/workflow/proposal ids and selection state never
+enter callback data or logs. Unknown or cross-family actions fail closed with
+`INVALID_CALLBACK`.
+
+### Route and queue boundary
+
+The API route validates the Telegram envelope, applies trust checks, claims the
+update ledger, enqueues one serializable envelope through `QueueClient` when
+Redis is configured, and maps the result. The gateway/orchestrator owns command
+classification and delegates to services, tools, repositories, and existing
+indexing/review orchestrators. No route or handler calls Notion, PostgreSQL,
+Redis, OpenAI, Telegram SDKs, or external APIs directly. Duplicate
+`update_id` deliveries replay the ledger result and duplicate confirmation
+callbacks do not repeat business work.
+
+Operator output is bounded and redacted. It may include status, operation,
+workflow reference, safe counts, display names/paths, target path, deterministic
+failure reason, and known or `unknown` cost. It must exclude raw source/OCR
+text, prompts, embeddings, secrets, callback tokens, Redis keys, raw exceptions,
+and private metadata. `/workflow` is not a rerun/reconcile control and
+`/index-status` does not re-read Notion.

@@ -304,6 +304,31 @@ Telegram ingestion observability:
 - Status metadata is recursively redacted for `raw_text`, `source_text`, API
   keys, tokens, authorization values, and webhook secrets.
 
+## Step 89 Telegram Operator Observability Contract
+
+Operator command output and workflow metadata follow the bounded contract in
+`docs/13-telegram-operator-contract.md`:
+
+- Safe fields include normalized operation, command family, workflow id,
+  status, requested scope, bounded counts, remaining work, deterministic
+  failure reason, and known or `unknown` cost. Workflow ids are references,
+  not rerun instructions.
+- `/sync` records operation/scope/count/outcome fields only. It does not record
+  page ids, hierarchy paths, source text, embeddings, or raw Notion payloads.
+- `/index-full` records confirmation state, idempotency outcome, indexing
+  counts, and known embedding cost. An unknown estimate remains unknown.
+- `/index-status` reads persisted indexing workflow state and does not contact
+  Notion. `/cost` and `/workflow` reuse redacted aggregation/status services;
+  neither emits prompts, OCR, source text, provider exceptions, or secrets.
+- `/pending` records bounded review action/status and safe proposal display
+  fields only. Accept/reject/change-target actions retain existing review and
+  append/re-index audit semantics.
+- `/status` and `/stats` expose readiness/aggregate results, never liveness as
+  readiness proof or note content.
+- Operator callback tokens, raw callback payloads, Redis keys, canonical page
+  ids, and user private content are never logged. Callback ack, business, and
+  preview-delivery state remain separate where applicable.
+
 ## Step 85 Recovery Evidence
 
 - Backup/restore evidence contains fixed check names, migration revision,
