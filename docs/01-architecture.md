@@ -11,8 +11,10 @@ Draft
 The route, orchestrator, provider, tool, queue, repository, and adapter
 boundaries below are implemented and deterministic test verified. Real Notion
 read/index/QA and append have bounded opt-in live evidence from Steps 82 and
-83. PostgreSQL cleanup/release gating has bounded Step 87 live evidence. A
-complete Telegram-to-Notion live E2E is not verified.
+83. PostgreSQL cleanup/release gating has bounded Step 87 live evidence. Step
+88 was subsequently user-confirmed as a completed guarded Telegram-to-Notion
+live E2E. This is bounded live evidence and does not establish arbitrary
+production-workspace readiness.
 
 What belongs here:
 - Layer boundaries and dependency rules.
@@ -170,12 +172,14 @@ boundaries and the target MVP integration shape. Current runtime wiring is:
 - `pypdf`, trafilatura, Tesseract, YouTube transcript, Telegram HTTP, Notion
   REST, and OpenAI adapters exist. Adapter-fixture tests do not prove the live
   services. The current host passes the Tesseract `eng`, `chi_tra`, and
-  `chi_sim` preflight and adapter fixture, but a real user-screenshot live
-  retest and full Telegram live E2E remain release work.
+  `chi_sim` preflight and adapter fixture. The user-confirmed guarded Step 88
+  live E2E covers the Telegram path; this does not establish broader
+  production-workspace or deployment readiness.
 
-These gaps are tracked in the `Real-World Usability + Release Hardening` phase
-of `dev_state/PROJECT_ROADMAP.md`. They must be closed through the existing
-provider, tool, queue, repository, and deterministic policy boundaries.
+Remaining gaps and the next Telegram operator capability are tracked in the
+`Telegram Operations + Knowledge Maintenance` phase of
+`dev_state/PROJECT_ROADMAP.md`. They must use the existing provider, tool,
+queue, repository, and deterministic policy boundaries.
 
 ## Real-Library Adapter Smoke Boundary
 

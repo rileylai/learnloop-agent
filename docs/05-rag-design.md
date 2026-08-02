@@ -12,7 +12,9 @@ Chunking, page replacement, embedding generation, pgvector cosine retrieval,
 lexical fallback, citation construction, and synthetic-data filtering are
 implemented and deterministic test verified. Step 82 provides bounded live
 Notion read/index/QA evidence. Live OpenAI plus PostgreSQL vector smoke remains
-opt-in and was not run in the latest audit; a full live E2E is not verified.
+opt-in and was not run as an independent vector smoke in the latest audit. The
+user-confirmed guarded Step 88 Telegram live E2E is recorded separately and
+does not widen production-RAG eligibility or workspace scope.
 
 ## Citation Path Builder (Step 12)
 

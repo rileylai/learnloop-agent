@@ -24,11 +24,11 @@ Current evidence is deliberately narrower than production readiness:
 |---|---|---|
 | FastAPI routes, orchestrators, repositories, migrations, idempotency, and deterministic guardrails | Implemented; deterministic test verified | The default suite uses controlled dependencies and skips opt-in PostgreSQL tests when no live database is configured. |
 | PDF, URL, and OCR adapters | Adapter integration verified | The 2026-08-01 `pypdf`, trafilatura, and Tesseract fixture checks passed. |
-| YouTube, Telegram, LLM, and embedding adapters | Implemented; deterministic test verified | Their opt-in live checks were not run in the current audit. |
+| YouTube, LLM, and embedding adapters | Implemented; deterministic test verified | Their opt-in live checks were not run in the current audit; Telegram live E2E is recorded separately below. |
 | Notion read/index/QA | Opt-in live dependency verified | Step 82 passed a bounded, read-only sandbox canary. It is not workspace-wide production verification. |
 | Human-approved Notion append | Opt-in live dependency verified | Step 83 passed a bounded append-only sandbox canary with explicit approval. |
 | PostgreSQL cleanup and release gate | Opt-in live dependency verified | Step 87 passed against the configured live PostgreSQL target. |
-| Telegram upload through accept, Notion append, and re-index | Release gap / not verified | The complete live E2E chain has not been recorded. Step 88 remains `doing`. |
+| Telegram upload through accept, Notion append, and re-index | Live E2E verified | User-confirmed guarded live evidence for the documented Telegram-to-Notion path; it remains bounded evidence rather than production-wide readiness. |
 | Cloud deployment and always-on sync | Not implemented in MVP | The current deployment is local-only. |
 
 ## 2. Core Harness Engineering Principles

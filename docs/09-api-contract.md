@@ -28,7 +28,9 @@ Current contract gaps:
   setting `NOTION_BACKEND=live` selects the read-only Notion REST adapter and
   append-only writer together, and requires `NOTION_TOKEN` without fallback.
   Step 82 verified a bounded live read/index/QA canary and Step 83 verified a
-  separate approved sandbox append. Neither is complete live E2E evidence.
+  separate approved sandbox append. Step 88 separately received user
+  confirmation for the guarded Telegram live E2E; the canaries remain bounded
+  evidence and neither is being relabeled as the complete workflow.
 - API routes and the Telegram webhook have optional configured trust boundaries:
   API bearer authentication, Telegram webhook secret validation, and an
   allowed-chat policy. Missing optional settings preserve local/test

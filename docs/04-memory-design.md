@@ -13,8 +13,9 @@ Draft
 
 The memory and synchronization paths below are implemented and deterministic
 test verified. Steps 82 and 83 provide bounded opt-in live Notion evidence.
-There is no always-on Notion sync, cloud memory service, or live E2E evidence
-for the complete Telegram workflow.
+Step 88 was user-confirmed as a completed guarded Telegram live E2E. There is
+still no always-on Notion sync or cloud memory service, and the Step 88 result
+is bounded live evidence rather than production-wide readiness.
 
 ## Memory Ownership
 

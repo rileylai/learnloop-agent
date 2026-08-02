@@ -13,13 +13,17 @@ runtime selects mock Notion clients by default, or the live read-only and
 append-only REST adapters when `NOTION_BACKEND=live` and `NOTION_TOKEN` are
 configured. Step 82 passed a bounded live read/index/QA canary, and Step 83
 passed a separately approved append-only sandbox canary. These results do not
-verify an arbitrary production workspace or the complete Telegram live E2E.
+verify an arbitrary production workspace. Step 88 separately received user
+confirmation for the guarded Telegram live E2E; that evidence remains bounded
+and does not establish production-wide readiness.
 
 Telegram long work is queued through `QueueClient`/RQ when `REDIS_URL` is
 configured; without Redis, the webhook uses a synchronous compatibility path.
 The worker, scheduler, callbacks, target picker, media-group settle flow, and
 recovery command are deterministic test verified. Live Telegram delivery from
-upload through Notion append and re-index remains a Step 88 release gap.
+upload through Notion append and re-index is covered by the user-confirmed
+guarded Step 88 live E2E. It remains subject to the existing redaction,
+idempotency, append-only, and human-acceptance rules.
 
 The deterministic write policy, state-transition, transaction, RAG-exclusion,
 and retry rules remain mandatory for every configured adapter.

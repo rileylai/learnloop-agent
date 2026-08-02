@@ -38,11 +38,13 @@ Not yet available as a real-user flow:
   are implemented. API/webhook authentication, persistent Telegram update idempotency, and `/ready` are
   implemented; `/ready` now provides
   dependency-aware readiness; it is distinct from the shallow `/health` route.
-- Telegram transport and target-aware `/ingest` are mock-tested, but live
-  Telegram delivery still requires operator configuration and verification.
+- Telegram transport and target-aware `/ingest` are mock-tested. Step 88 also
+  has user-confirmed guarded Telegram live E2E evidence; future live runs still
+  require explicit operator configuration and opt-in.
 - A complete Notion indexing -> QA -> proposal -> accept -> append -> re-index
-  flow has been verified only in the dedicated sandbox canary; the full
-  Telegram live E2E remains unverified.
+  flow has been verified in the dedicated sandbox canary, and Step 88 has
+  separately completed the guarded Telegram live path. Neither establishes
+  arbitrary production-workspace, cloud, or always-on sync readiness.
 
 See `dev_state/PROJECT_ROADMAP.md` for the local
 `Real-World Usability + Release Hardening` plan.

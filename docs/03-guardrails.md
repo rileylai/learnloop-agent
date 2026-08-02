@@ -20,8 +20,10 @@ injected transports. Step 82 passed a bounded live read/index/QA canary, and
 Step 83 passed a separately approved append-only sandbox canary with durable
 identity verification and re-index. Those are opt-in live dependency results,
 not arbitrary workspace or complete Telegram live E2E evidence. Future live
-verification must preserve every invariant below and must not replace
-deterministic policy with prompt behavior.
+verification, including the user-confirmed guarded Step 88 live E2E, must
+preserve every invariant below and must not replace deterministic policy with
+prompt behavior. Step 88 is bounded evidence and does not promote these rules
+or the local MVP to production-wide readiness.
 
 ## Safety Invariants
 | Guardrail | Rule |

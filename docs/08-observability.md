@@ -48,6 +48,24 @@ used as release-readiness evidence. `/ready` is the dependency-aware readiness
 surface and returns 503 when database, migration, pgvector, or required
 mode-specific provider configuration is unavailable.
 
+## Step 88 Guarded Telegram Live E2E Evidence
+
+The user explicitly confirmed completion of the guarded Telegram live E2E path
+through the documented Telegram update, webhook, API, Redis/RQ worker,
+PostgreSQL, OpenAI, Notion, and Telegram reply boundaries. This is bounded live
+verification evidence, not a claim of cloud deployment, always-on sync,
+production-wide readiness, or a new observability backend.
+
+- The evidence boundary is recorded at status level only. This documentation
+  does not add workflow identifiers, credentials, private content, cost,
+  latency, test-count, or release-report figures.
+- `workflow_runs`, redacted workflow metadata, `/metrics`, and the existing
+  cost aggregation remain the sources for workflow and cost evidence. Unknown
+  model pricing remains `estimated_cost=null`; no cost is inferred from the
+  Step 88 confirmation.
+- Existing redaction, callback/idempotency metadata, liveness/readiness
+  distinction, and explicit operator recovery rules remain unchanged.
+
 ## Readiness Checks
 
 - `database` runs a safe `SELECT 1` through the database readiness probe.

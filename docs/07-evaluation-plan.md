@@ -487,6 +487,10 @@ citation. A human-confirmed dedicated sandbox run passed during Step 83. It is
 opt-in live dependency evidence only; it does not prove Telegram delivery,
 OpenAI behavior, arbitrary workspace permissions, or full live E2E.
 
+Step 88 was subsequently user-confirmed as a completed guarded Telegram live
+E2E. That evidence is recorded separately from the Step 83 canary and remains
+bounded to the guarded local live path.
+
 ## Synthetic Data Hygiene Gate (Step 87)
 
 `tests/test_synthetic_data_hygiene.py` verifies the fixed allowlist, dry-run
@@ -511,13 +515,17 @@ gate execution for a later release candidate.
 
 ## Current Release Verification Gaps
 
-- No complete Telegram update -> HTTPS webhook -> API -> Redis/RQ worker ->
-  PostgreSQL -> OpenAI -> Notion -> Telegram reply E2E has passed.
-- The latest audit did not run live OpenAI vector smoke, YouTube transcript,
-  Telegram send, or adapter live checks.
+- Step 88 now has user-confirmed guarded evidence for the complete Telegram
+  update -> HTTPS webhook -> API -> Redis/RQ worker -> PostgreSQL -> OpenAI ->
+  Notion -> Telegram reply path. This is bounded evidence, not production-wide
+  readiness.
+- The latest audit did not run independent live OpenAI vector smoke, YouTube
+  transcript, or unrelated adapter live checks; Step 88 provides separate
+  guarded Telegram live E2E evidence.
 - The current host passes the `eng`, `chi_tra`, and `chi_sim` OCR preflight and
-  real-adapter fixture. A live retest with real user screenshots has not been
-  run, so recognition quality and Telegram upload behavior remain unverified.
+  real-adapter fixture. The prior guarded Telegram upload-path gap is closed by
+  Step 88 confirmation; no broader OCR corpus or recognition benchmark is
+  inferred.
 - Step 82/83 cover dedicated Notion canaries, not formal behavior across the
   user's full workspace.
 - The PostgreSQL restore drill has deterministic coverage, but no recorded

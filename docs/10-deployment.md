@@ -14,8 +14,9 @@ What belongs here:
 ## Current Deployment Readiness
 
 The repository has a working local architecture and a green deterministic
-suite, but it is not release-ready. Roadmap Step 88 is `doing`; the complete
-guarded Telegram live E2E and final pre-release verification are still missing.
+suite. Step 88 is now complete based on user-confirmed guarded Telegram live
+E2E evidence. The repository remains local-only and this bounded evidence does
+not establish production-wide or cloud deployment readiness.
 
 - Docker Compose starts PostgreSQL/pgvector and Redis only. It does not define
   the FastAPI app or worker service; start the latter with
@@ -66,7 +67,8 @@ guarded Telegram live E2E and final pre-release verification are still missing.
   expected Telegram/domain failures are persisted as terminal ledger outcomes.
 - Tesseract OCR requires all three traineddata languages `eng`, `chi_tra`, and
   `chi_sim`. The current host passes this preflight and the real-adapter
-  fixture. A live retest with real user screenshots is still not verified.
+  fixture. Step 88 provides user-confirmed guarded Telegram live E2E evidence;
+  no broader OCR corpus or recognition benchmark is inferred.
 - Upload limits are enforced in API routes, orchestrators, and parser adapters;
   changing them requires updating the shared `upload_limits` policy and its
   deterministic tests. The limits bound parser/OCR memory and CPU exposure but
@@ -82,9 +84,9 @@ guarded Telegram live E2E and final pre-release verification are still missing.
   require applying the latest Alembic migration before starting the API.
 
 Portable preflight, live Notion wiring, authentication, worker, recovery, and
-synthetic-data gate implementations exist. Release sign-off remains blocked on
-Step 88 live E2E evidence, a passing release-time dependency/gate run, and any
-environment-specific OCR or restore evidence required by the operator.
+synthetic-data gate implementations exist. Step 88 evidence is complete, but
+release sign-off still depends on a passing release-time dependency/gate run
+and any environment-specific OCR or restore evidence required by the operator.
 
 ### Current Verification Boundary
 
@@ -94,8 +96,8 @@ environment-specific OCR or restore evidence required by the operator.
 | Step 82 Notion canary | Passed | Dedicated read-only sandbox; deterministic embedding/answer and ephemeral SQLite. |
 | Step 83 Notion append canary | Passed | Dedicated approved sandbox append; deterministic embedding/answer and ephemeral SQLite. |
 | Step 87 PostgreSQL gate | Passed | Bounded inspection of the configured database at that run. |
-| OCR host preflight and adapter fixture | Passed | All three required languages are available; real user screenshots were not tested. |
-| Telegram live E2E | Not verified | No complete live upload-to-accept chain is recorded. |
+| OCR host preflight and adapter fixture | Passed | All three required languages are available; no broader OCR corpus or benchmark is claimed. |
+| Telegram live E2E | Passed (user-confirmed guarded evidence) | Bounded local live path; this does not establish production-wide readiness. |
 | Live restore drill | Not verified | Only deterministic dry-run/test coverage is recorded. |
 
 Docker Compose remains local infrastructure only and starts PostgreSQL and
@@ -242,8 +244,8 @@ counts and operation classes.
 
 This evidence confirms the bounded sandbox append contract only. It is not a
 complete production Notion workspace E2E or the complete Telegram-to-Notion
-`live_e2e` chain. Step 88 is currently `doing`; its guarded live verification
-is not run by default.
+`live_e2e` chain by itself. Step 88 separately has user-confirmed guarded live
+evidence, and its live actions remain opt-in rather than running by default.
 
 ## Local Secret Handling
 
