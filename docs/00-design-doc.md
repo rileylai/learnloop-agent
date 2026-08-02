@@ -649,17 +649,17 @@ Metadata note:
 ### 13.6 Telegram APIs
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/api/telegram/webhook` | Handle Telegram webhook updates for existing commands plus the Step 89-94 operator contract and typed callbacks. |
+| POST | `/api/telegram/webhook` | Handle Telegram webhook updates for existing commands plus the Step 89-95 operator contract and typed callbacks. |
 
-### 13.7 Telegram Operator Command Contract (Steps 89-93)
+### 13.7 Telegram Operator Command Contract (Steps 89-95)
 
 The operator command contract is defined in
 `docs/13-telegram-operator-contract.md`. It covers `/sync`, `/index-full`,
 `/index-status`, `/cost`, `/pending`, `/workflow`, `/status`, `/stats`, and
 the updated `/help` surface. The `/sync`, `/index-full`, `/index-status`,
 `/cost`, `/workflow`, and `/pending` implementations are delivered in Steps
-90-94; the remaining regression and guarded verification work is delivered in
-Step 95.
+90-94; Step 95 records deterministic regression and guarded-verification
+evidence.
 
 Operator commands are classified as read-only or derived-index/review
 mutations. `/index-full` requires an opaque server-side confirmation callback;

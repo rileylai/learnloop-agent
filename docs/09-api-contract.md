@@ -1418,7 +1418,7 @@ Notes:
 - `/ingest` creates `pending` change requests only; Notion append remains in accept workflow.
 - Telegram QA uses production Notion chunks only; pending and rejected proposals remain excluded.
 
-## Telegram Operator Command Contract (Steps 89-94)
+## Telegram Operator Command Contract (Steps 89-95)
 
 The webhook is the transport for the following operator commands. Step 89
 defines the shared contract, Steps 90-94 implement `/sync`, `/index-full`,
@@ -1515,6 +1515,20 @@ repository/service boundary. It may return `stats_page_count`,
 status-separated proposal counts, and UTC ISO-8601 timestamps for the latest
 successful full index and manual incremental sync. It never returns page ids,
 paths, titles, block/chunk text, vectors, proposal JSON, or source metadata.
+
+### Step 95 verification contract
+
+The operator regression suite verifies parsing, trust boundaries, typed
+callbacks, exact callback ownership, TTL/expiry, duplicate update and callback
+claims, confirmation gates, partial incremental outcomes, cost unknowns,
+workflow redaction, pending review safety, readiness/liveness, stats safety,
+help output, ingestion, review, queue, worker, and ledger behavior through
+controlled dependencies. These checks do not constitute live Telegram,
+Notion, Redis, PostgreSQL, or provider evidence.
+
+Live verification is separately opt-in and must use dedicated resources with
+redacted status/count/workflow/cost output. It must not default to full index,
+append, Accept, or Telegram send.
 
 ### Operator authorization
 

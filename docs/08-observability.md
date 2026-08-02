@@ -304,7 +304,7 @@ Telegram ingestion observability:
 - Status metadata is recursively redacted for `raw_text`, `source_text`, API
   keys, tokens, authorization values, and webhook secrets.
 
-## Steps 89-94 Telegram Operator Observability Contract
+## Steps 89-95 Telegram Operator Observability Contract
 
 Operator command output and workflow metadata follow the bounded contract in
 `docs/13-telegram-operator-contract.md`:
@@ -350,6 +350,18 @@ Operator command output and workflow metadata follow the bounded contract in
 - Operator callback tokens, raw callback payloads, Redis keys, canonical page
   ids, and user private content are never logged. Callback ack, business, and
   preview-delivery state remain separate where applicable.
+
+### Step 95 regression and live-evidence boundary
+
+The Step 95 deterministic regression matrix verifies operator parsing,
+authorization, callback ownership/TTL, duplicate claims, confirmation gates,
+redaction, review safety, readiness/liveness, aggregate stats, help output,
+queue/worker behavior, and existing ingestion/review paths with controlled
+dependencies. It does not establish live external-dependency readiness.
+
+Live Telegram/Notion/Redis/OpenAI verification remains explicit opt-in work
+with dedicated resources and redacted status/count/workflow/cost evidence. It
+must not default to full index, append, Accept, or Telegram send.
 
 ## Step 85 Recovery Evidence
 

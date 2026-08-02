@@ -2,12 +2,12 @@
 
 ## Purpose
 
-This document defines the Step 89-94 contract for operating synchronization,
+This document defines the Step 89-95 contract for operating synchronization,
 indexing, review, cost, workflow, readiness, and knowledge-base status from
 Telegram. Steps 90-93 implement selected-page `/sync`, guarded
 `/index-full`, read-only `/index-status`, `/cost`, `/workflow`, and `/pending`;
-Step 94 implements `/status` and `/stats`; Step 95 covers regression and
-guarded verification.
+Step 94 implements `/status` and `/stats`; Step 95 records deterministic
+regression and guarded-verification evidence.
 
 ## Scope and non-goals
 
@@ -228,6 +228,22 @@ for operator status. No raw PostgreSQL or Redis client is an LLM-facing tool.
   It never returns page ids, paths, titles, note text, vectors, proposal JSON,
   or private metadata.
 
+## Step 95 verification boundary
+
+The deterministic regression matrix covers command parsing, webhook/chat
+authorization, typed callback routing, exact `(chat_id, user_id)` ownership,
+TTL and expiry, duplicate update/callback claims, `/sync` and `/index-full`
+confirmation gates, partial incremental failure, unknown cost, workflow
+redaction, pending review safety, `/status` liveness/readiness, `/stats`
+aggregates, `/help`, ingestion, review, queue, worker, and update-ledger
+behavior. The matrix uses controlled SQLite, in-memory/fakeredis, and adapter
+fixtures; it does not claim external live evidence.
+
+Live verification remains a separately approved operation. It requires
+dedicated resources, explicit opt-in, redacted reporting, and must not default
+to full index, append, Accept, or Telegram send. A skipped live run is not a
+passing external-dependency result.
+
 ## Operator contract acceptance invariants
 
 - Every new command has one documented syntax, read/mutation class, safe output
@@ -240,5 +256,5 @@ for operator status. No raw PostgreSQL or Redis client is an LLM-facing tool.
   transitions remain deterministic backend policy.
 - Step 94 implements the bounded readiness and statistics surfaces; this
   contract does not imply live dependency verification or full-index/append
-  execution. Step 95 remains separate regression and guarded verification
-  work.
+  execution. Step 95 verifies the deterministic matrix and preserves the
+  separate live-verification boundary.

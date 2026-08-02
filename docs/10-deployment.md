@@ -324,6 +324,19 @@ The release evidence for this step is the redacted drill result, migration
 revision, readiness result, re-index result, and scoped QA citation. Secrets,
 connection URLs, page ids, and private source content are not evidence fields.
 
+## Step 95 Telegram operator verification boundary
+
+The deterministic operator regression suite is release evidence for bounded
+command behavior only. It covers parsing, authorization, callbacks, ownership,
+TTL/expiry, duplicate claims, confirmation gates, redaction, review safety,
+readiness/liveness, aggregate stats, help output, ingestion, review, queue,
+worker, and update-ledger paths through controlled dependencies.
+
+Live Telegram/Notion/Redis/OpenAI verification is separate opt-in evidence.
+It requires dedicated resources and redacted status/count/workflow/cost
+reporting, and must not default to full index, append, Accept, or Telegram
+send. A skipped live run remains unverified external evidence.
+
 ## Step 87 Synthetic Data Release Gate
 
 Before a release, inspect the configured PostgreSQL database and fail closed

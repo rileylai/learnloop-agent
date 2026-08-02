@@ -400,6 +400,14 @@ def test_telegram_webhook_help_command_sends_reply() -> None:
         assert payload["reply_text"].startswith("LearnLoop Agent commands:")
         assert "/pages" in payload["reply_text"]
         assert "/ingest" in payload["reply_text"]
+        assert "/status" in payload["reply_text"]
+        assert "/stats" in payload["reply_text"]
+        assert "Status distinguishes liveness from dependency readiness" in payload[
+            "reply_text"
+        ]
+        assert "stats show only aggregate counts and safe timestamps" in payload[
+            "reply_text"
+        ]
         assert "do not need to type a Notion UUID" in payload["reply_text"]
         assert payload["telegram_message_id"] == 1
         assert payload["skipped_reason"] is None

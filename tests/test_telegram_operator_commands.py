@@ -565,6 +565,31 @@ def test_telegram_stats_returns_only_aggregate_counts_and_safe_timestamps() -> N
     assert "stats-block-1" not in payload["reply_text"]
 
 
+def test_telegram_status_and_stats_reject_extra_arguments() -> None:
+    session_factory = _session_factory()
+    observability_service = WorkflowObservabilityService(
+        session_factory,
+        cost_budget_service=CostBudgetService(),
+    )
+    _configure(
+        session_factory=session_factory,
+        telegram_client=InMemoryTelegramBotClient(),
+        observability_service=observability_service,
+    )
+
+    try:
+        client = TestClient(app)
+        for update_id, command_text in ((7152, "/status extra"), (7153, "/stats extra")):
+            response = client.post(
+                "/api/telegram/webhook",
+                json=_telegram_update(update_id, command_text),
+            )
+            assert response.status_code == 400
+            assert response.json()["detail"]["error_code"] == "INVALID_ARGUMENT"
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_telegram_pending_inbox_is_bounded_and_reuses_review_callbacks() -> None:
     session_factory = _session_factory()
     _seed_pending_proposal(session_factory)
