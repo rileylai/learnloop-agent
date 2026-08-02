@@ -506,10 +506,7 @@ def test_supplement_propose_api_creates_pending_change_request() -> None:
             assert change_request.source_document_id == 1
             proposal_payload = json.loads(change_request.proposal_json)
             assert proposal_payload["title"] == "Positional Encoding Supplement"
-            assert (
-                proposal_payload["target_path"]
-                == "Knowledge/NLP/Week5/AI Supplement Zone/Positional Encoding"
-            )
+            assert proposal_payload["target_path"] == "NONE (no selected target page)"
 
             workflow_run = verify_session.get(WorkflowRun, payload["workflow_run_id"])
             assert workflow_run is not None
@@ -520,7 +517,7 @@ def test_supplement_propose_api_creates_pending_change_request() -> None:
             assert metadata["provider_name"] == "openai"
             assert metadata["model"] == "gpt-4o-mini"
             assert metadata["prompt_id"] == "supplement_proposal"
-            assert metadata["prompt_version"] == "supplement_proposal_v6"
+            assert metadata["prompt_version"] == "supplement_proposal_v7"
             assert metadata["estimated_cost"] == pytest.approx(0.000072)
 
             # Step 28 must not write to Notion.
@@ -1140,7 +1137,7 @@ def test_supplement_propose_api_uses_duplicate_reference_without_provider() -> N
             assert metadata["provider_name"] == "openai"
             assert metadata["model"] == "gpt-4o-mini"
             assert metadata["prompt_id"] == "supplement_proposal"
-            assert metadata["prompt_version"] == "supplement_proposal_v6"
+            assert metadata["prompt_version"] == "supplement_proposal_v7"
             assert metadata["estimated_cost"] is None
 
             # No Notion write should happen. Existing seeded rows remain unchanged.
@@ -1207,7 +1204,9 @@ def test_supplement_propose_api_returns_llm_output_invalid() -> None:
             assert metadata["provider_name"] == "openai"
             assert metadata["model"] == "gpt-4o-mini"
             assert metadata["prompt_id"] == "supplement_proposal"
-            assert metadata["prompt_version"] == "supplement_proposal_v6"
+            assert metadata["prompt_version"] == "supplement_proposal_v7"
+            assert metadata["failure_stage"] == "provider_output_validation"
+            assert metadata["validation_field"] == "provider_output"
             assert metadata["estimated_cost"] == pytest.approx(0.000072)
             assert verify_session.query(ChangeRequest).count() == 0
         finally:
@@ -1275,7 +1274,7 @@ def test_supplement_propose_api_returns_provider_not_found_when_provider_missing
             assert metadata["provider_name"] == "openai"
             assert metadata["model"] == "gpt-4o-mini"
             assert metadata["prompt_id"] == "supplement_proposal"
-            assert metadata["prompt_version"] == "supplement_proposal_v6"
+            assert metadata["prompt_version"] == "supplement_proposal_v7"
             assert metadata["estimated_cost"] is None
             assert verify_session.query(ChangeRequest).count() == 0
         finally:

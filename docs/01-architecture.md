@@ -82,6 +82,19 @@ Backend-owned deterministic logic:
 - Proposal state transitions.
 - Audit logging decisions.
 
+Proposal ownership boundary:
+- The provider-output schema contains only generated content: `title`,
+  `summary`, `concepts`, and `notes`.
+- `source`, `target_path`, citations, source-document identity, attachment
+  counts, and target identity are deterministic backend fields. The
+  orchestrator builds `SupplementProposalSourceSchema` from the persisted
+  `SourceDocument` and merges it with validated provider content before a
+  change request is persisted.
+- The provider boundary explicitly drops legacy backend-owned keys so an old
+  model response cannot override them; all other unknown provider keys remain
+  strict schema failures. The backend never parses a source display string to
+  recover identity.
+
 ## Current Interface Skeletons (Implemented)
 Provider boundary (Step 6.1):
 - `src/providers/models.py`: `LLMMessage`, `LLMRequest`, `LLMResponse`.

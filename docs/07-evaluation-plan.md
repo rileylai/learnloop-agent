@@ -386,6 +386,14 @@ The fixtures cover:
   rewrite, and pagination concepts, a three-sentence summary, bounded
   engineering context, unsupported initial product title, and source-faithful
   repaired title.
+- a public-safe seven-attachment source-ownership fixture where a legacy
+  provider returns a display-string `source`; the provider schema drops only
+  backend-owned fields and final validation proves the persisted SourceDocument
+  supplies the structured source for screenshot, PDF, URL, YouTube, and chat
+  text proposals.
+- provider-output tests prove fabricated source identity, attachment count,
+  citation, and target fields cannot override backend state, and invalid
+  non-owned fields fail at the safe provider-output validation stage.
 
 Run:
 

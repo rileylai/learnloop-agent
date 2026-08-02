@@ -163,6 +163,21 @@ Backend code owns:
 - Audit logging decisions.
 - Failure reason mapping.
 
+Proposal source ownership:
+- `SupplementProposalSourceSchema` is a final persisted-proposal schema, not a
+  provider-generation contract. Its `source_type` and `source_display_name`
+  come from the persisted SourceDocument.
+- Provider output contains only generated content (`title`, `summary`,
+  `concepts`, and `notes`). The backend owns source, target, citations,
+  source-document identity, attachment count, and target identity.
+- A transitional provider boundary may drop exactly those known legacy
+  backend-owned keys so old output cannot break or override canonical state;
+  arbitrary unknown keys remain a strict failure. No string/object union and no
+  parsing of display strings into source identity are allowed.
+- Title, summary, and body repairs replace only their allowed generated fields.
+  They merge with the unchanged deterministic source and target and rerun
+  final validation.
+
 Provider and tool boundaries may execute requests, but they do not decide whether a write is allowed.
 
 ## Screenshot Grounding and Bounded Engineering Context

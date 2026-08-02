@@ -55,6 +55,7 @@ class SupplementProposalValidationError(Exception):
         message: str,
         *,
         field: Optional[str] = None,
+        failure_stage: str = "proposal_validation",
         diagnostics: Optional[Dict[str, Any]] = None,
         private_diagnostics: Optional[Dict[str, Any]] = None,
     ) -> None:
@@ -63,6 +64,7 @@ class SupplementProposalValidationError(Exception):
         self.failure_reason = "LLM_OUTPUT_INVALID"
         self.message = message
         self.field = field
+        self.failure_stage = failure_stage
         self.diagnostics = dict(diagnostics or {})
         # Private diagnostics may contain proposal text. They are available
         # only to an explicit in-process diagnostic caller and must never be
@@ -103,16 +105,20 @@ class SupplementProposalCitationSchema(BaseModel):
         return self
 
 
-class SupplementProposalSchema(BaseModel):
+class SupplementProposalGeneratedSchema(BaseModel):
+    """Provider-owned content that can be merged into a final proposal.
+
+    Source, target, and citation fields deliberately do not belong here.  The
+    parser below tolerates legacy backend-owned keys at the provider boundary
+    and drops them before this strict model is validated.
+    """
+
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     title: str = Field(min_length=1, max_length=MAX_SUPPLEMENT_TITLE_CHARS)
-    target_path: str = Field(min_length=1)
-    source: SupplementProposalSourceSchema
     summary: str = Field(min_length=1, max_length=MAX_SUPPLEMENT_SUMMARY_CHARS)
     concepts: List[str] = Field(min_length=1, max_length=MAX_SUPPLEMENT_CONCEPTS)
     notes: List[str] = Field(min_length=1, max_length=MAX_SUPPLEMENT_NOTES)
-    citations: List[SupplementProposalCitationSchema] = Field(default_factory=list)
 
     @field_validator("concepts")
     @classmethod
@@ -132,6 +138,14 @@ class SupplementProposalSchema(BaseModel):
             max_item_chars=MAX_SUPPLEMENT_NOTE_CHARS,
         )
 
+
+class SupplementProposalSchema(SupplementProposalGeneratedSchema):
+    """Final business proposal with deterministic backend-owned fields."""
+
+    target_path: str = Field(min_length=1)
+    source: SupplementProposalSourceSchema
+    citations: List[SupplementProposalCitationSchema] = Field(default_factory=list)
+
     @model_validator(mode="after")
     def _validate_total_text_bound(self) -> "SupplementProposalSchema":
         total_chars = sum(
@@ -150,6 +164,70 @@ class SupplementProposalSchema(BaseModel):
                 "proposal text exceeds the configured total character bound"
             )
         return self
+
+
+# These keys were historically requested from the model, but their values are
+# backend-owned.  They are explicitly removed at the provider boundary so a
+# legacy model response cannot override the persisted source or target.  Any
+# other unknown key remains a strict provider-output schema failure.
+BACKEND_OWNED_PROVIDER_FIELDS = frozenset(
+    {
+        "source",
+        "target_path",
+        "citations",
+        "source_document_id",
+        "source_attachment_count",
+        "target_notion_page_id",
+        "target_notion_path",
+    }
+)
+
+
+def build_deterministic_supplement_source(
+    *,
+    source_type: str,
+    source_display_name: str,
+) -> SupplementProposalSourceSchema:
+    """Build canonical proposal source metadata from persisted backend state."""
+
+    return SupplementProposalSourceSchema(
+        source_type=source_type,
+        source_display_name=source_display_name,
+    )
+
+
+def merge_generated_supplement_proposal(
+    *,
+    generated: SupplementProposalGeneratedSchema,
+    source: SupplementProposalSourceSchema,
+    target_path: str,
+    citations: Optional[List[SupplementProposalCitationSchema]] = None,
+) -> SupplementProposalSchema:
+    """Compose provider content with deterministic source/target ownership."""
+
+    try:
+        return SupplementProposalSchema.model_validate(
+            {
+                **generated.model_dump(),
+                "source": source.model_dump(),
+                "target_path": target_path,
+                "citations": [
+                    citation.model_dump()
+                    if isinstance(citation, SupplementProposalCitationSchema)
+                    else citation
+                    for citation in (citations or [])
+                ],
+            }
+        )
+    except ValidationError as exc:
+        first_error = exc.errors()[0]
+        error_loc = ".".join(str(part) for part in first_error.get("loc", []))
+        error_message = first_error.get("msg", "schema validation failed")
+        raise SupplementProposalValidationError(
+            f"LLM provider output failed final schema validation at '{error_loc}': {error_message}",
+            field="provider_output",
+            failure_stage="provider_output_validation",
+        ) from exc
 
 
 class SupplementTitleRepairSchema(BaseModel):
@@ -221,6 +299,54 @@ def parse_supplement_proposal_json(llm_output: str) -> SupplementProposalSchema:
         error_message = first_error.get("msg", "schema validation failed")
         raise SupplementProposalValidationError(
             f"LLM output schema validation failed at '{error_loc}': {error_message}"
+        ) from exc
+
+
+def parse_supplement_generated_json(
+    llm_output: str,
+) -> SupplementProposalGeneratedSchema:
+    """Parse provider-generated content without accepting source ownership."""
+
+    normalized_output = llm_output.strip()
+    if not normalized_output:
+        raise SupplementProposalValidationError(
+            "LLM provider output is empty",
+            field="provider_output",
+            failure_stage="provider_output_validation",
+        )
+
+    json_payload = _extract_json_payload(normalized_output)
+    try:
+        parsed_value = json.loads(json_payload)
+    except json.JSONDecodeError as exc:
+        raise SupplementProposalValidationError(
+            "LLM provider output is not valid JSON",
+            field="provider_output",
+            failure_stage="provider_output_validation",
+        ) from exc
+
+    if not isinstance(parsed_value, dict):
+        raise SupplementProposalValidationError(
+            "LLM provider output JSON must be an object",
+            field="provider_output",
+            failure_stage="provider_output_validation",
+        )
+
+    generated_payload = {
+        key: value
+        for key, value in parsed_value.items()
+        if key not in BACKEND_OWNED_PROVIDER_FIELDS
+    }
+    try:
+        return SupplementProposalGeneratedSchema.model_validate(generated_payload)
+    except ValidationError as exc:
+        first_error = exc.errors()[0]
+        error_loc = ".".join(str(part) for part in first_error.get("loc", []))
+        error_message = first_error.get("msg", "schema validation failed")
+        raise SupplementProposalValidationError(
+            f"LLM provider output schema validation failed at '{error_loc}': {error_message}",
+            field="provider_output",
+            failure_stage="provider_output_validation",
         ) from exc
 
 

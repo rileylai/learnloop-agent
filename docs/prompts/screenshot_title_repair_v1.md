@@ -1,6 +1,6 @@
 ---
 prompt_id: screenshot_title_repair
-version: screenshot_title_repair_v2
+version: screenshot_title_repair_v1
 ---
 
 ## System

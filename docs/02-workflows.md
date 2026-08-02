@@ -91,13 +91,18 @@ POST /api/supplement/propose
 -> Load source document
 -> Run duplicate check on production chunks
 -> If duplicate: build citation-first proposal
--> Else: call ProviderRouter and validate proposal JSON
+-> Else: call ProviderRouter for generated content only
+-> Drop legacy backend-owned provider keys, reject other unknown keys
+-> Build deterministic source and target fields from backend state
+-> Merge generated content with source/target and run final schema validation
 -> Create change request with status=pending
 -> Mark workflow succeeded
 ```
 
 Failure path:
-- If provider output JSON is invalid, fail workflow with `LLM_OUTPUT_INVALID`.
+- If provider output JSON or generated-field schema is invalid, fail workflow
+  with `LLM_OUTPUT_INVALID` at `provider_output_validation`; source/target
+  fields are not repaired by title/summary/body repair.
 - If a selected-page proposal target is missing `AI Supplement Zone`, points to
   another page, or is otherwise not the backend-derived exact target, fail with
   `LLM_OUTPUT_INVALID`.
@@ -107,6 +112,14 @@ State notes:
 - New proposals are saved as `pending` change requests.
 - Proposal generation does not write to Notion.
 - Source prompt-injection text cannot change proposal target or write policy.
+- The provider output contract is `title`, `summary`, `concepts`, and `notes`
+  only. The final proposal gets `source` from the persisted SourceDocument and
+  `target_path` from the selected backend target. Legacy `source`, target, or
+  citation keys are ignored only at this explicit ownership boundary and are
+  never persisted.
+- The final structured source is shared by PDF, URL, YouTube, chat text, and
+  screenshot proposals. Presentation strings remain deterministic renderings;
+  they are not source identity.
 - When the workflow reaches the LLM path, workflow metadata records
   `provider_name`, `model`, `prompt_id`, `prompt_version`, and
   `prompt_safety_version`.

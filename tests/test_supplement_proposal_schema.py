@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from src.orchestrators import (
+    SupplementProposalGeneratedSchema,
     SupplementProposalValidationError,
+    build_deterministic_supplement_source,
+    merge_generated_supplement_proposal,
+    parse_supplement_generated_json,
     parse_supplement_body_repair_json,
     parse_supplement_proposal_json,
+    parse_supplement_title_repair_json,
 )
 
 
@@ -140,3 +148,153 @@ def test_parse_supplement_proposal_json_rejects_non_string_list_item() -> None:
 
     assert exc_info.value.error_code == "LLM_OUTPUT_INVALID"
     assert "concepts" in exc_info.value.message
+
+
+def test_provider_output_schema_ignores_only_legacy_backend_owned_fields() -> None:
+    generated = parse_supplement_generated_json(
+        json.dumps(
+            {
+                "title": "Generated title",
+                "summary": "Grounded summary.",
+                "concepts": ["Index"],
+                "notes": ["Index supports the query access path."],
+                "source": "Screenshot batch (7 images)",
+                "target_path": "Fabricated target",
+                "citations": [{"notion_path": "Fabricated path"}],
+            }
+        )
+    )
+
+    assert isinstance(generated, SupplementProposalGeneratedSchema)
+    assert generated.model_dump() == {
+        "title": "Generated title",
+        "summary": "Grounded summary.",
+        "concepts": ["Index"],
+        "notes": ["Index supports the query access path."],
+    }
+
+
+def test_provider_output_schema_accepts_generated_fields_only() -> None:
+    generated = parse_supplement_generated_json(
+        json.dumps(
+            {
+                "title": "Generated title",
+                "summary": "Grounded summary.",
+                "concepts": ["Index"],
+                "notes": ["Index supports the query access path."],
+            }
+        )
+    )
+
+    assert generated.title == "Generated title"
+    assert generated.concepts == ["Index"]
+
+
+def test_provider_output_unknown_fields_remain_strict() -> None:
+    with pytest.raises(SupplementProposalValidationError) as exc_info:
+        parse_supplement_generated_json(
+            json.dumps(
+                {
+                    "title": "Generated title",
+                    "summary": "Grounded summary.",
+                    "concepts": ["Index"],
+                    "notes": ["Index supports the query access path."],
+                    "unowned_field": "must fail",
+                }
+            )
+        )
+
+    assert exc_info.value.failure_stage == "provider_output_validation"
+    assert exc_info.value.field == "provider_output"
+
+
+def test_public_safe_source_ownership_fixture_merges_canonical_source() -> None:
+    fixture_path = (
+        Path(__file__).resolve().parent
+        / "fixtures"
+        / "supplement_source_ownership_regression.json"
+    )
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    source_document = fixture["source_document"]
+
+    with pytest.raises(SupplementProposalValidationError):
+        parse_supplement_proposal_json(json.dumps(fixture["provider_output"]))
+
+    generated = parse_supplement_generated_json(
+        json.dumps(fixture["provider_output"])
+    )
+    canonical_source = build_deterministic_supplement_source(
+        source_type=source_document["source_type"],
+        source_display_name=source_document["source_display_name"],
+    )
+    final_proposal = merge_generated_supplement_proposal(
+        generated=generated,
+        source=canonical_source,
+        target_path=fixture["expected_target_path"],
+    )
+
+    assert final_proposal.source.source_type == "screenshot"
+    assert final_proposal.source.source_display_name == "Screenshot batch (7 images)"
+    assert final_proposal.target_path == fixture["expected_target_path"]
+
+
+def test_fabricated_structured_source_identity_and_target_cannot_override_backend() -> None:
+    generated_payload = {
+        "title": "Generated title",
+        "summary": "Grounded summary.",
+        "concepts": ["Index"],
+        "notes": ["Index supports the query access path."],
+        "source": {
+            "source_type": "pdf",
+            "source_display_name": "fabricated.pdf",
+            "source_document_id": 999999,
+        },
+        "source_document_id": 999999,
+        "source_attachment_count": 999,
+        "target_path": "Fabricated target",
+    }
+
+    generated = parse_supplement_generated_json(json.dumps(generated_payload))
+    final_proposal = merge_generated_supplement_proposal(
+        generated=generated,
+        source=build_deterministic_supplement_source(
+            source_type="screenshot",
+            source_display_name="Screenshot batch (7 images)",
+        ),
+        target_path="Knowledge/Database/AI Supplement Zone",
+    )
+
+    assert final_proposal.source.source_type == "screenshot"
+    assert final_proposal.source.source_display_name == "Screenshot batch (7 images)"
+    assert final_proposal.target_path == "Knowledge/Database/AI Supplement Zone"
+
+
+@pytest.mark.parametrize(
+    ("source_type", "source_display_name"),
+    [
+        ("pdf", "lecture.pdf"),
+        ("url", "https://example.test/article"),
+        ("youtube", "YouTube transcript (synthetic-video)"),
+        ("chat_text", "chat-synthetic"),
+    ],
+)
+def test_deterministic_source_renderer_supports_all_source_types(
+    source_type: str,
+    source_display_name: str,
+) -> None:
+    source = build_deterministic_supplement_source(
+        source_type=source_type,
+        source_display_name=source_display_name,
+    )
+
+    assert source.model_dump() == {
+        "source_type": source_type,
+        "source_display_name": source_display_name,
+    }
+
+
+def test_repair_schemas_do_not_accept_or_mutate_source() -> None:
+    with pytest.raises(SupplementProposalValidationError):
+        parse_supplement_title_repair_json(
+            json.dumps({"title": "Index", "source": "fabricated"})
+        )

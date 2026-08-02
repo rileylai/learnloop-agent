@@ -719,6 +719,15 @@ Notes:
 - Orchestrator must call `ProviderRouter` for proposal generation and deterministic schema validation.
 - Orchestrator creates one `change_requests` row with `status=pending`.
 - This endpoint does not perform Notion write operations.
+- Provider output contains only `title`, `summary`, `concepts`, and `notes`.
+  The backend creates final `source` metadata from the persisted
+  `source_documents` row and derives `target_path` from the selected target.
+  Legacy provider `source`/target/citation keys are ignored at that explicit
+  boundary; arbitrary unknown keys fail with safe provider-output validation.
+- Source display values used by Telegram and Notion are deterministic
+  renderings and are never parsed to recover source identity.
+- Title, summary, and body repair outputs cannot contain or mutate `source` or
+  target fields; final validation runs again after each allowed merge.
 - Screenshot summaries prefer 2–4 coherent sentences but sentence count is not
   an acceptance requirement. Every sentence is still grounding-validated.
   Screenshot concepts remain 3–30 items; notes are 1–12 distinct items with

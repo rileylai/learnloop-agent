@@ -746,6 +746,7 @@ class TelegramIngestionOrchestrator:
             ingestion_summary,
             f"Proposal ready for review (change_request_id={item.change_request_id})",
             f"Title: {item.proposal.title}",
+            f"Source: {item.proposal.source_display_name}",
             f"Target Notion page: {target}",
             f"Summary: {item.proposal.summary}",
             "Key Concepts: " + ", ".join(item.proposal.concepts),

@@ -43,9 +43,11 @@ def test_prompt_template_loader_loads_and_renders_supplement_prompt() -> None:
     )
 
     assert bundle.prompt_id == PROMPT_ID_SUPPLEMENT_PROPOSAL
-    assert bundle.version == "supplement_proposal_v6"
+    assert bundle.version == "supplement_proposal_v7"
+    assert bundle.path.name == "supplement_proposal_v7.md"
     assert "Return strict JSON only" in system_message
-    assert "exact" in system_message
+    assert "generated fields listed below" in system_message
+    assert "source`, `target_path`" in system_message
     assert "source_type=chat_text" in user_message
     assert "chat-2026-06-17" in user_message
     assert "Knowledge/NLP/Week5/AI Supplement Zone" in user_message
@@ -67,6 +69,7 @@ def test_prompt_template_loader_loads_title_repair_prompt() -> None:
 
     assert bundle.prompt_id == PROMPT_ID_SCREENSHOT_TITLE_REPAIR
     assert bundle.version == "screenshot_title_repair_v3"
+    assert bundle.path.name == "screenshot_title_repair_v3.md"
     assert "exactly one field" in system_message
     assert "MySQL EXPLAIN" in user_message
 

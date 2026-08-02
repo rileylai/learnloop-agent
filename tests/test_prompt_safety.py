@@ -4,10 +4,7 @@ import json
 
 import pytest
 
-from src.orchestrators import (
-    SupplementProposeOrchestrator,
-    SupplementProposalValidationError,
-)
+from src.orchestrators import SupplementProposeOrchestrator
 from src.services import (
     PROMPT_ID_QA_ANSWER,
     PROMPT_ID_SUPPLEMENT_PROPOSAL,
@@ -141,7 +138,7 @@ def test_selected_page_has_one_normalized_supplement_target(
     )
 
 
-def test_supplement_orchestrator_rejects_injected_target_path() -> None:
+def test_supplement_orchestrator_ignores_injected_target_path() -> None:
     orchestrator = object.__new__(SupplementProposeOrchestrator)
     malicious_output = json.dumps(
         {
@@ -157,12 +154,11 @@ def test_supplement_orchestrator_rejects_injected_target_path() -> None:
         }
     )
 
-    with pytest.raises(SupplementProposalValidationError) as exc_info:
-        orchestrator._validate_llm_output(
-            llm_output=malicious_output,
-            source_type="chat_text",
-            source_display_name="adversarial-source",
-            target_page_path="Knowledge/NLP/Week5",
-        )
+    proposal = orchestrator._validate_llm_output(
+        llm_output=malicious_output,
+        source_type="chat_text",
+        source_display_name="adversarial-source",
+        target_page_path="Knowledge/NLP/Week5",
+    )
 
-    assert "AI Supplement Zone" in str(exc_info.value)
+    assert proposal.target_path == "Knowledge/NLP/Week5/AI Supplement Zone"

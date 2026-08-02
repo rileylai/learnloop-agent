@@ -155,9 +155,13 @@ Telegram ingestion observability:
   picker callback use that existing source without download/OCR. Redacted
   workflow metadata still records only stage identifiers, counts, and latency
   fields.
-- Proposal validation failures record `failure_stage=proposal_validation` and
-  a safe `validation_field` such as `summary` or `title`, plus the source id
-  and already-measured latency fields. They never record OCR or proposal text.
+- Provider-output schema failures record
+  `failure_stage=provider_output_validation` and the safe field
+  `provider_output`; later deterministic proposal/grounding failures retain
+  `failure_stage=proposal_validation` and a safe field such as `summary` or
+  `title`. Both paths include only source id and already-measured latency
+  fields. They never record OCR, provider output, candidate source text, or
+  proposal text.
 - Screenshot grounding diagnostics also record only deterministic evidence:
   `source_normalized_char_count`, `candidate_field_char_count`,
   `evidence_claim_count`, `unsupported_claim_count`, `validator_version`,
@@ -208,10 +212,13 @@ Telegram ingestion observability:
   only when code explicitly loads them.
 - Prompt version tracking must be deterministic so prompt changes can be tied
   to workflow results during debugging and evaluation.
-- The screenshot generation prompt is `supplement_proposal_v6`; title,
+- The screenshot generation prompt is `supplement_proposal_v7`; title,
   summary, and body repair prompts are separately versioned. The bounded call
   budget is one full proposal call, at most one title-only call, and at most
   one eligible summary/body call; sentence count alone never causes a call.
+- Provider output is generated-content-only. Source and target are merged from
+  persisted backend state before final proposal validation; deterministic
+  source display rendering is never treated as source identity.
 - QA and supplement proposal workflows also record `token_input`,
   `token_output`, and `estimated_cost` when token usage is available.
 - Cost estimates are computed from a small model-pricing catalog inside the

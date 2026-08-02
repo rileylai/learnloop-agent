@@ -1097,7 +1097,7 @@ def test_redis_upload_picker_callback_restores_session_in_worker_and_creates_pen
         app.dependency_overrides.clear()
 
 
-def test_invalid_target_callback_reports_redacted_failure_without_retry_duplicates() -> None:
+def test_fabricated_provider_target_is_ignored_without_retry_duplicates() -> None:
     session_factory = _session_factory()
     _seed_pages(session_factory)
     telegram_client = InMemoryTelegramBotClient()
@@ -1151,33 +1151,32 @@ def test_invalid_target_callback_reports_redacted_failure_without_retry_duplicat
                 },
             },
         )
-        assert callback_response.status_code == 502
-        detail = callback_response.json()["detail"]
-        assert detail["error_code"] == "LLM_OUTPUT_INVALID"
-        assert detail["failure_reason"] == "LLM_OUTPUT_INVALID"
-        assert "Knowledge/Other Page" not in detail["message"]
+        assert callback_response.status_code == 200
+        result = callback_response.json()
+        assert result["change_request_id"] is not None
         assert telegram_client.list_callback_answers() == [
             {"callback_query_id": "invalid-target-callback", "text": None}
         ]
-        assert any(
-            message.text
-            == (
-                "Proposal validation failed for the existing source. "
-                "Use /retry-proposal to retry the proposal only; upload and OCR will not be repeated."
-            )
-            for message in telegram_client.list_sent_messages()
-        )
 
         session = session_factory()
         try:
             assert session.query(SourceDocument).count() == 1
-            assert session.query(ChangeRequest).count() == 0
-            failed_ledger = (
+            assert session.query(ChangeRequest).count() == 1
+            proposal = session.query(ChangeRequest).one()
+            proposal_payload = json.loads(proposal.proposal_json)
+            assert proposal_payload["source"] == {
+                "source_type": "pdf",
+                "source_display_name": "lesson.pdf",
+            }
+            assert proposal_payload["target_path"] == (
+                "Knowledge/Parent/AI Supplement Zone"
+            )
+            succeeded_ledger = (
                 session.query(TelegramUpdateLedger)
                 .filter(TelegramUpdateLedger.update_id == 9601)
                 .one()
             )
-            assert failed_ledger.status == "failed"
+            assert succeeded_ledger.status == "succeeded"
         finally:
             session.close()
 
@@ -1193,11 +1192,11 @@ def test_invalid_target_callback_reports_redacted_failure_without_retry_duplicat
                 },
             },
         )
-        assert duplicate_callback_response.status_code == 502
+        assert duplicate_callback_response.status_code == 200
         session = session_factory()
         try:
             assert session.query(SourceDocument).count() == 1
-            assert session.query(ChangeRequest).count() == 0
+            assert session.query(ChangeRequest).count() == 1
         finally:
             session.close()
     finally:

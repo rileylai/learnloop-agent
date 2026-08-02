@@ -98,6 +98,13 @@ Rules:
   `LearnLoop Change Request: change-request-<id>`.
 - The identity line is used for bounded read-after-write verification and
   durable retry detection across writer/client instances.
+- Proposal source and target fields are backend-owned. The provider generates
+  only proposal content (`title`, `summary`, `concepts`, and `notes`); the
+  backend builds the final structured source from the persisted
+  `SourceDocument` and derives the target path from the selected page.
+- A source display string such as `Screenshot batch (7 images)` is a rendering
+  value, not a source identity. It is never parsed back into a source document
+  id or attachment count.
 - `Source` display rules:
 - PDF: show PDF filename.
 - URL source: show full URL.

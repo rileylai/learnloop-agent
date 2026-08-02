@@ -10,8 +10,10 @@ from src.db.unit_of_work import UnitOfWorkFactory
 from src.orchestrators.supplement_proposal_schema import (
     SupplementProposalSchema,
     SupplementProposalValidationError,
+    build_deterministic_supplement_source,
+    merge_generated_supplement_proposal,
     parse_supplement_body_repair_json,
-    parse_supplement_proposal_json,
+    parse_supplement_generated_json,
     parse_supplement_summary_repair_json,
     parse_supplement_title_repair_json,
 )
@@ -728,7 +730,7 @@ class SupplementProposeOrchestrator:
                 failure_reason="LLM_OUTPUT_INVALID",
                 error_code="LLM_OUTPUT_INVALID",
                 source_document_id=source_document_id,
-                failure_stage="proposal_validation",
+                failure_stage=exc.failure_stage,
                 validation_field=exc.field,
                 latency_metadata=latency.as_dict(),
                 validation_diagnostics=effective_validation_diagnostics,
@@ -759,7 +761,7 @@ class SupplementProposeOrchestrator:
                     "source_document_id": source_document_id,
                     **exc.diagnostics,
                     "proposal_workflow_run_id": workflow_run.id,
-                    "failure_stage": "proposal_validation",
+                    "failure_stage": exc.failure_stage,
                     "validation_field": exc.field,
                     "title_repair_attempted": title_repair_attempted,
                     "title_repair_succeeded": title_repair_succeeded,
@@ -1115,21 +1117,31 @@ class SupplementProposeOrchestrator:
         source_display_name: str,
         target_page_path: Optional[str],
     ) -> SupplementProposalSchema:
-        proposal = parse_supplement_proposal_json(llm_output)
-        if proposal.source.source_type != source_type:
+        generated = parse_supplement_generated_json(llm_output)
+        deterministic_source = build_deterministic_supplement_source(
+            source_type=source_type,
+            source_display_name=source_display_name,
+        )
+        deterministic_target_path = (
+            build_supplement_target_path(target_page_path=target_page_path)
+            if target_page_path is not None
+            else "NONE (no selected target page)"
+        )
+        if deterministic_target_path is None:
             raise SupplementProposalValidationError(
-                "LLM output source.source_type does not match input source"
+                "backend target page has no safe AI Supplement Zone path"
             )
-        if proposal.source.source_display_name != source_display_name:
-            raise SupplementProposalValidationError(
-                "LLM output source.source_display_name does not match input source"
-            )
+        proposal = merge_generated_supplement_proposal(
+            generated=generated,
+            source=deterministic_source,
+            target_path=deterministic_target_path,
+        )
         if not is_safe_supplement_target_path(
             target_path=proposal.target_path,
             target_page_path=target_page_path,
         ):
             raise SupplementProposalValidationError(
-                "LLM output target_path must equal the selected page's AI Supplement Zone"
+                "backend target path failed deterministic validation"
             )
         normalized_target_path = normalize_supplement_target_path(
             target_path=proposal.target_path,
@@ -1137,7 +1149,7 @@ class SupplementProposeOrchestrator:
         )
         if normalized_target_path is None:
             raise SupplementProposalValidationError(
-                "LLM output target_path must equal the selected page's AI Supplement Zone"
+                "backend target path failed deterministic validation"
             )
         return proposal.model_copy(update={"target_path": normalized_target_path})
 
