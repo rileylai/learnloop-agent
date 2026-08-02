@@ -313,8 +313,11 @@ Operator command output and workflow metadata follow the bounded contract in
   status, requested scope, bounded counts, remaining work, deterministic
   failure reason, and known or `unknown` cost. Workflow ids are references,
   not rerun instructions.
-- `/sync` records operation/scope/count/outcome fields only. It does not record
-  page ids, hierarchy paths, source text, embeddings, or raw Notion payloads.
+- `/sync` records operation/scope/count/outcome fields only in the outer
+  Telegram workflow. It does not record page ids, hierarchy paths, source
+  text, embeddings, or raw Notion payloads there. The child indexing workflow
+  retains the existing page-level reconciliation metadata needed to explain a
+  partial failure.
 - `/index-full` records confirmation state, idempotency outcome, indexing
   counts, and known embedding cost. An unknown estimate remains unknown.
 - `/index-status` reads persisted indexing workflow state and does not contact

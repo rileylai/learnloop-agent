@@ -14,6 +14,7 @@ from src.app.dependencies import (
     get_trust_boundary,
     get_tool_registry,
     get_telegram_session_store,
+    get_telegram_sync_session_store,
 )
 from src.app.telegram_runtime import build_telegram_gateway_orchestrator
 from src.app.schemas import TelegramWebhookRequest, TelegramWebhookResponse
@@ -37,6 +38,7 @@ from src.services import (
     TrustBoundaryError,
     TrustBoundaryService,
     TelegramSessionStore,
+    TelegramSyncSessionStore,
 )
 from src.queue import QueueClient
 from src.tools import ToolRegistry
@@ -63,6 +65,9 @@ async def handle_telegram_webhook(
     ),
     trust_boundary: TrustBoundaryService = Depends(get_trust_boundary),
     telegram_session_store: TelegramSessionStore = Depends(get_telegram_session_store),
+    telegram_sync_session_store: TelegramSyncSessionStore = Depends(
+        get_telegram_sync_session_store
+    ),
 ) -> TelegramWebhookResponse:
     try:
         trust_boundary.require_telegram_webhook_secret(telegram_webhook_secret)
@@ -88,6 +93,7 @@ async def handle_telegram_webhook(
         prompt_template_loader=prompt_template_loader,
         trust_boundary=trust_boundary,
         telegram_session_store=telegram_session_store,
+        telegram_sync_session_store=telegram_sync_session_store,
         queue_client=queue_client,
     )
     request_workflow_id = str(getattr(request.state, "workflow_id", ""))
@@ -195,6 +201,12 @@ async def handle_telegram_webhook(
         business_status=result.business_status,
         callback_ack_status=result.callback_ack_status,
         preview_delivery_status=result.preview_delivery_status,
+        sync_workflow_run_id=result.sync_workflow_run_id,
+        sync_status=result.sync_status,
+        sync_discovered_page_count=result.sync_discovered_page_count,
+        sync_selected_page_count=result.sync_selected_page_count,
+        sync_succeeded_page_count=result.sync_succeeded_page_count,
+        sync_failed_page_count=result.sync_failed_page_count,
     )
     if result.status == "running":
         content = (

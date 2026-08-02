@@ -10,6 +10,7 @@ from src.orchestrators import (
     DocumentIngestionOrchestrator,
     ImageOCRIngestionOrchestrator,
     NotionPageIndexOrchestrator,
+    NotionIncrementalIndexOrchestrator,
     QAOrchestrator,
     SupplementProposeOrchestrator,
     SupplementReviewOrchestrator,
@@ -19,6 +20,7 @@ from src.orchestrators import (
     TelegramPageOrchestrator,
     TelegramQAOrchestrator,
     TelegramReviewOrchestrator,
+    TelegramSyncOrchestrator,
 )
 from src.providers import EmbeddingClient, ProviderRouter
 from src.queue import QueueClient
@@ -34,6 +36,8 @@ from src.services import (
     DuplicateKnowledgeChecker,
     PromptTemplateLoader,
     TelegramSessionStore,
+    TelegramSyncSessionStore,
+    InMemoryTelegramSyncSessionStore,
     TelegramUpdateIdempotencyService,
     TrustBoundaryService,
     WorkflowRunService,
@@ -53,6 +57,7 @@ def build_telegram_gateway_orchestrator(
     prompt_template_loader: PromptTemplateLoader,
     trust_boundary: TrustBoundaryService,
     telegram_session_store: Optional[TelegramSessionStore] = None,
+    telegram_sync_session_store: Optional[TelegramSyncSessionStore] = None,
     queue_client: Optional[QueueClient] = None,
 ) -> TelegramGatewayOrchestrator:
     workflow_run_service = WorkflowRunService(db_session_factory)
@@ -91,6 +96,14 @@ def build_telegram_gateway_orchestrator(
         ),
         session_store=telegram_session_store,
     )
+    notion_page_index_orchestrator = NotionPageIndexOrchestrator(
+        tool_registry=tool_registry,
+        unit_of_work_factory=unit_of_work_factory,
+        workflow_run_service=workflow_run_service,
+        embedding_client=embedding_client,
+        cost_tracker=cost_tracker,
+        source_is_synthetic=get_settings().notion_backend == "mock",
+    )
     telegram_qa_orchestrator = TelegramQAOrchestrator(
         qa_orchestrator=QAOrchestrator(
             retriever=ProductionChunkRetriever(
@@ -109,16 +122,20 @@ def build_telegram_gateway_orchestrator(
             notion_page_repository=NotionPageRepository(db_session),
             unit_of_work_factory=unit_of_work_factory,
             tool_registry=tool_registry,
-            page_index_orchestrator=NotionPageIndexOrchestrator(
-                tool_registry=tool_registry,
-                unit_of_work_factory=unit_of_work_factory,
-                workflow_run_service=workflow_run_service,
-                embedding_client=embedding_client,
-                cost_tracker=cost_tracker,
-                source_is_synthetic=get_settings().notion_backend == "mock",
-            ),
+            page_index_orchestrator=notion_page_index_orchestrator,
             workflow_run_service=workflow_run_service,
         )
+    )
+    incremental_index_orchestrator = NotionIncrementalIndexOrchestrator(
+        page_index_orchestrator=notion_page_index_orchestrator,
+        workflow_run_service=workflow_run_service,
+    )
+    telegram_sync_orchestrator = TelegramSyncOrchestrator(
+        tool_registry=tool_registry,
+        session_store=telegram_sync_session_store
+        or InMemoryTelegramSyncSessionStore(),
+        incremental_index_orchestrator=incremental_index_orchestrator,
+        workflow_run_service=workflow_run_service,
     )
     telegram_page_orchestrator = TelegramPageOrchestrator(
         notion_page_repository=NotionPageRepository(db_session)
@@ -131,6 +148,8 @@ def build_telegram_gateway_orchestrator(
         telegram_qa_orchestrator=telegram_qa_orchestrator,
         telegram_review_orchestrator=telegram_review_orchestrator,
         telegram_page_orchestrator=telegram_page_orchestrator,
+        telegram_sync_orchestrator=telegram_sync_orchestrator,
+        telegram_session_store=telegram_session_store,
         trust_boundary=trust_boundary,
         update_idempotency_service=update_idempotency_service,
         queue_client=queue_client,

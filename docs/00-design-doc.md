@@ -649,15 +649,15 @@ Metadata note:
 ### 13.6 Telegram APIs
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/api/telegram/webhook` | Handle Telegram webhook updates for existing commands plus the Step 89 operator command contract and typed callbacks. |
+| POST | `/api/telegram/webhook` | Handle Telegram webhook updates for existing commands plus the Step 89-90 operator contract and typed callbacks. |
 
-### 13.7 Telegram Operator Command Contract (Step 89)
+### 13.7 Telegram Operator Command Contract (Steps 89-90)
 
 The operator command contract is defined in
 `docs/13-telegram-operator-contract.md`. It covers `/sync`, `/index-full`,
 `/index-status`, `/cost`, `/pending`, `/workflow`, `/status`, `/stats`, and
-the updated `/help` surface. The contract is intentionally separate from the
-future command implementations in Steps 90-94.
+the updated `/help` surface. The `/sync` implementation is delivered in Step
+90; the remaining operator commands are delivered in Steps 91-94.
 
 Operator commands are classified as read-only or derived-index/review
 mutations. `/index-full` requires an opaque server-side confirmation callback;
@@ -672,6 +672,22 @@ handlers do not call Notion, PostgreSQL, Redis, OpenAI, or other external
 clients. Queued work uses `QueueClient` and the `telegram` queue; status,
 cost, workflow, readiness, and stats surfaces expose only bounded redacted
 fields. Pending and rejected proposals remain excluded from production RAG.
+
+### 13.8 Telegram selected-page `/sync` (Step 90)
+
+`/sync` discovers current accessible Notion page summaries through the
+read-only `notion_reader` tool, builds a deterministic parent/child display
+hierarchy, and stores the bounded selection in a TTL-bound, exact
+`(chat_id, user_id)` session. Telegram carries only opaque callback tokens.
+Each page toggle and the final `sync_confirm` callback is validated by the
+gateway; the confirm callback is atomically claimed before work starts.
+
+Confirmed page ids flow through the existing
+`NotionIncrementalIndexOrchestrator`. Each page uses page-level replacement
+and commits independently, so completed pages remain durable when a later
+selected page fails. The Telegram outer workflow exposes only bounded counts,
+status, and the child indexing workflow reference. `/sync` never calls a
+Notion writer and never changes original notes or `AI Supplement Zone`.
 
 Telegram ingestion UX contract:
 - Uploads are acknowledged first, then a progressive hierarchy picker shows root

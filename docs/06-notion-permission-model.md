@@ -116,8 +116,13 @@ Manual user actions are valid, including:
 - Moving or merging AI supplement content into original notes.
 - Deleting AI supplement blocks.
 
-Because there is no always-on sync in MVP, manual changes require `/api/notion/index/incremental`.
+Because there is no always-on sync in MVP, manual changes require
+`/api/notion/index/incremental` or the Telegram `/sync` selected-page flow.
 The incremental sync must treat current Notion content as authoritative and reconcile derived PostgreSQL and vector state by page-level replacement.
+
+Telegram `/sync` is still read-only with respect to Notion. It discovers live
+page summaries, requires explicit page selection confirmation, and delegates
+only to the existing derived-index reconciliation path.
 
 ## RAG Eligibility
 Production RAG may include:

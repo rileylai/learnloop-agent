@@ -75,3 +75,9 @@ class TelegramWebhookResponse(BaseModel):
     business_status: str = "not_started"
     callback_ack_status: Optional[str] = None
     preview_delivery_status: Optional[str] = None
+    sync_workflow_run_id: Optional[int] = None
+    sync_status: Optional[str] = None
+    sync_discovered_page_count: Optional[int] = None
+    sync_selected_page_count: Optional[int] = None
+    sync_succeeded_page_count: Optional[int] = None
+    sync_failed_page_count: Optional[int] = None

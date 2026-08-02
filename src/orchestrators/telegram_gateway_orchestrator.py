@@ -27,6 +27,11 @@ from src.orchestrators.telegram_review_orchestrator import (
     TelegramReviewOrchestrator,
 )
 from src.orchestrators.telegram_page_orchestrator import TelegramPageOrchestrator
+from src.orchestrators.telegram_sync_orchestrator import (
+    TelegramSyncError,
+    TelegramSyncOrchestrator,
+    TelegramSyncView,
+)
 from src.services import (
     STANDARD_FAILURE_REASONS,
     WorkflowRunAuditUpdateError,
@@ -37,9 +42,13 @@ from src.services import (
     TelegramUpdateIdempotencyError,
     TelegramUpdateIdempotencyService,
     TELEGRAM_CALLBACK_KIND_PICKER,
+    TELEGRAM_CALLBACK_KIND_OPERATOR,
     TELEGRAM_CALLBACK_KIND_REVIEW,
     TELEGRAM_PICKER_CALLBACK_ACTIONS,
+    TELEGRAM_OPERATOR_CALLBACK_ACTIONS,
     TELEGRAM_REVIEW_CALLBACK_ACTIONS,
+    TelegramSessionStore,
+    TELEGRAM_SYNC_MAX_SELECTED_PAGES,
 )
 from src.services.latency_evidence import LatencyEvidence, elapsed_ms
 from src.tools import ToolContext, ToolRegistry
@@ -158,6 +167,12 @@ class TelegramGatewayResult:
     business_status: str = "not_started"
     callback_ack_status: Optional[str] = None
     preview_delivery_status: Optional[str] = None
+    sync_workflow_run_id: Optional[int] = None
+    sync_status: Optional[str] = None
+    sync_discovered_page_count: Optional[int] = None
+    sync_selected_page_count: Optional[int] = None
+    sync_succeeded_page_count: Optional[int] = None
+    sync_failed_page_count: Optional[int] = None
 
 
 @dataclass
@@ -196,6 +211,8 @@ class TelegramGatewayOrchestrator:
         telegram_qa_orchestrator: Optional[TelegramQAOrchestrator] = None,
         telegram_review_orchestrator: Optional[TelegramReviewOrchestrator] = None,
         telegram_page_orchestrator: Optional[TelegramPageOrchestrator] = None,
+        telegram_sync_orchestrator: Optional[TelegramSyncOrchestrator] = None,
+        telegram_session_store: Optional[TelegramSessionStore] = None,
         trust_boundary: Optional[TrustBoundaryService] = None,
         update_idempotency_service: Optional[TelegramUpdateIdempotencyService] = None,
         queue_client: Optional[QueueClient] = None,
@@ -206,6 +223,8 @@ class TelegramGatewayOrchestrator:
         self._telegram_qa_orchestrator = telegram_qa_orchestrator
         self._telegram_review_orchestrator = telegram_review_orchestrator
         self._telegram_page_orchestrator = telegram_page_orchestrator
+        self._telegram_sync_orchestrator = telegram_sync_orchestrator
+        self._telegram_session_store = telegram_session_store
         self._trust_boundary = trust_boundary
         self._update_idempotency_service = update_idempotency_service
         self._queue_client = queue_client
@@ -616,6 +635,12 @@ class TelegramGatewayOrchestrator:
         preview_session_id: Optional[str] = None
         preview_delivery_required = False
         callback_action_name: Optional[str] = None
+        sync_workflow_run_id: Optional[int] = None
+        sync_status: Optional[str] = None
+        sync_discovered_page_count: Optional[int] = None
+        sync_selected_page_count: Optional[int] = None
+        sync_succeeded_page_count: Optional[int] = None
+        sync_failed_page_count: Optional[int] = None
 
         try:
             normalized_text = (text or "").strip()
@@ -697,6 +722,18 @@ class TelegramGatewayOrchestrator:
                     chat_id=normalized_chat_id,
                     user_id=normalized_user_id,
                 )
+                if callback_action.callback_kind == TELEGRAM_CALLBACK_KIND_OPERATOR:
+                    if self._telegram_session_store is None or not self._telegram_session_store.claim_callback(
+                        token=callback_action.token,
+                        chat_id=normalized_chat_id,
+                        user_id=normalized_user_id,
+                    ):
+                        raise TelegramGatewayError(
+                            error_code="INVALID_CALLBACK",
+                            message="This sync button was already used or has expired.",
+                            http_status_code=HTTPStatus.GONE,
+                            failure_reason="INVALID_CALLBACK",
+                        )
                 callback_ack_status, callback_ack_failure_reason = (
                     "succeeded",
                     None,
@@ -709,10 +746,70 @@ class TelegramGatewayOrchestrator:
                 if not ack_ok:
                     callback_ack_status = "failed"
                     callback_ack_failure_reason = ack_failure_reason
+                if callback_action.callback_kind == TELEGRAM_CALLBACK_KIND_OPERATOR:
+                    if self._telegram_sync_orchestrator is None:
+                        raise TelegramGatewayError(
+                            error_code="TELEGRAM_SYNC_NOT_CONFIGURED",
+                            message="Telegram sync is not configured",
+                            http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                            failure_reason="UNKNOWN_ERROR",
+                        )
+                    if callback_action.action == "sync_toggle":
+                        if not callback_action.target_notion_page_id:
+                            raise TelegramGatewayError(
+                                error_code="INVALID_CALLBACK",
+                                message="This sync page selection is invalid.",
+                                http_status_code=HTTPStatus.BAD_REQUEST,
+                                failure_reason="INVALID_CALLBACK",
+                            )
+                        sync_view = self._telegram_sync_orchestrator.toggle_page(
+                            session_id=callback_action.session_id,
+                            chat_id=normalized_chat_id,
+                            user_id=normalized_user_id,
+                            page_id=callback_action.target_notion_page_id,
+                        )
+                        reply_text, reply_markup = self._build_sync_picker(
+                            view=sync_view,
+                            chat_id=normalized_chat_id,
+                            user_id=normalized_user_id,
+                        )
+                        sync_status = sync_view.state
+                        sync_discovered_page_count = sync_view.discovered_page_count
+                        sync_selected_page_count = sync_view.selected_page_count
+                        business_status = "succeeded"
+                    elif callback_action.action == "sync_confirm":
+                        sync_result = await self._telegram_sync_orchestrator.confirm_session(
+                            session_id=callback_action.session_id,
+                            chat_id=normalized_chat_id,
+                            user_id=normalized_user_id,
+                            request_workflow_id=request_workflow_id,
+                        )
+                        reply_text = sync_result.reply_text
+                        sync_workflow_run_id = sync_result.workflow_run_id
+                        sync_status = sync_result.status
+                        sync_discovered_page_count = sync_result.discovered_page_count
+                        sync_selected_page_count = sync_result.selected_page_count
+                        sync_succeeded_page_count = sync_result.succeeded_page_count
+                        sync_failed_page_count = sync_result.failed_page_count
+                        business_status = "succeeded"
+                    elif callback_action.action == "sync_cancel":
+                        sync_result = self._telegram_sync_orchestrator.cancel_session(
+                            session_id=callback_action.session_id,
+                            chat_id=normalized_chat_id,
+                            user_id=normalized_user_id,
+                        )
+                        reply_text = sync_result.reply_text
+                        sync_workflow_run_id = sync_result.workflow_run_id
+                        sync_status = sync_result.status
+                        sync_discovered_page_count = sync_result.discovered_page_count
+                        sync_selected_page_count = sync_result.selected_page_count
+                        sync_succeeded_page_count = sync_result.succeeded_page_count
+                        sync_failed_page_count = sync_result.failed_page_count
+                        business_status = "succeeded"
                 # Review callbacks are a distinct protocol family. Dispatch them
                 # before the generic picker/session branch so a restored or legacy
                 # review button can never be treated as "ready for review" again.
-                if (
+                elif (
                     callback_action.callback_kind == TELEGRAM_CALLBACK_KIND_REVIEW
                     and callback_action.action in {"accept", "reject"}
                 ):
@@ -922,6 +1019,28 @@ class TelegramGatewayOrchestrator:
                 reply_text = self._build_reply_for_command(command)
             elif command == "help":
                 reply_text = self._build_reply_for_command(command)
+            elif command == "sync":
+                if self._telegram_sync_orchestrator is None:
+                    raise TelegramGatewayError(
+                        error_code="TELEGRAM_SYNC_NOT_CONFIGURED",
+                        message="Telegram sync is not configured",
+                        http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                        failure_reason="UNKNOWN_ERROR",
+                    )
+                sync_view = await self._telegram_sync_orchestrator.start_session(
+                    chat_id=normalized_chat_id,
+                    user_id=normalized_user_id,
+                    request_workflow_id=request_workflow_id,
+                )
+                reply_text, reply_markup = self._build_sync_picker(
+                    view=sync_view,
+                    chat_id=normalized_chat_id,
+                    user_id=normalized_user_id,
+                )
+                sync_status = sync_view.state
+                sync_discovered_page_count = sync_view.discovered_page_count
+                sync_selected_page_count = sync_view.selected_page_count
+                business_status = "succeeded"
             elif command == "pages":
                 if self._telegram_page_orchestrator is None:
                     raise TelegramGatewayError(
@@ -1346,6 +1465,12 @@ class TelegramGatewayOrchestrator:
                         "callback_ack_status": callback_ack_status,
                         "callback_ack_failure_reason": callback_ack_failure_reason,
                         "preview_delivery_status": preview_delivery_status,
+                        "sync_workflow_run_id": sync_workflow_run_id,
+                        "sync_status": sync_status,
+                        "sync_discovered_page_count": sync_discovered_page_count,
+                        "sync_selected_page_count": sync_selected_page_count,
+                        "sync_succeeded_page_count": sync_succeeded_page_count,
+                        "sync_failed_page_count": sync_failed_page_count,
                         **latency.as_dict(),
                     },
                     sort_keys=True,
@@ -1374,6 +1499,12 @@ class TelegramGatewayOrchestrator:
                 business_status=business_status,
                 callback_ack_status=callback_ack_status,
                 preview_delivery_status=preview_delivery_status,
+                sync_workflow_run_id=sync_workflow_run_id,
+                sync_status=sync_status,
+                sync_discovered_page_count=sync_discovered_page_count,
+                sync_selected_page_count=sync_selected_page_count,
+                sync_succeeded_page_count=sync_succeeded_page_count,
+                sync_failed_page_count=sync_failed_page_count,
             )
         except WorkflowRunAuditUpdateError:
             raise
@@ -1433,6 +1564,36 @@ class TelegramGatewayOrchestrator:
                 metadata=failure_metadata,
             ) from exc
 
+        except TelegramSyncError as exc:
+            failure_metadata = {
+                "business_status": "failed",
+                "callback_action": callback_action_name,
+                "callback_ack_status": callback_ack_status,
+                "preview_delivery_status": preview_delivery_status,
+                **{
+                    key: value
+                    for key, value in exc.metadata.items()
+                    if key
+                    in {
+                        "sync_discovered_page_count",
+                        "sync_selected_page_count",
+                    }
+                },
+            }
+            self._mark_failed_workflow(
+                workflow_run_id=workflow_run.id,
+                failure_reason=exc.failure_reason,
+                error_code=exc.error_code,
+                metadata=failure_metadata,
+            )
+            raise TelegramGatewayError(
+                error_code=exc.error_code,
+                message=exc.message,
+                http_status_code=exc.http_status_code,
+                failure_reason=self._normalize_failure_reason(exc.failure_reason),
+                workflow_run_id=workflow_run.id,
+                metadata=failure_metadata,
+            ) from exc
         except TelegramQAError as exc:
             self._mark_failed_workflow(
                 workflow_run_id=workflow_run.id,
@@ -1792,18 +1953,27 @@ class TelegramGatewayOrchestrator:
                 failure_reason="INVALID_CALLBACK",
             )
         token = raw_data[3:].strip()
-        if not token or self._telegram_ingestion_orchestrator is None:
+        if not token:
             raise TelegramGatewayError(
                 error_code="INVALID_CALLBACK",
                 message="This button is invalid or expired. Please upload the file again.",
                 http_status_code=HTTPStatus.BAD_REQUEST,
                 failure_reason="INVALID_CALLBACK",
             )
-        action = self._telegram_ingestion_orchestrator.resolve_callback(
-            token=token,
-            chat_id=chat_id,
-            user_id=user_id,
-        )
+        if self._telegram_session_store is not None:
+            action = self._telegram_session_store.resolve_callback(
+                token=token,
+                chat_id=chat_id,
+                user_id=user_id,
+            )
+        elif self._telegram_ingestion_orchestrator is not None:
+            action = self._telegram_ingestion_orchestrator.resolve_callback(
+                token=token,
+                chat_id=chat_id,
+                user_id=user_id,
+            )
+        else:
+            action = None
         if action is None:
             raise TelegramGatewayError(
                 error_code="INVALID_CALLBACK",
@@ -1837,6 +2007,30 @@ class TelegramGatewayOrchestrator:
                 raise TelegramGatewayError(
                     error_code="INVALID_CALLBACK",
                     message="This review action is invalid.",
+                    http_status_code=HTTPStatus.BAD_REQUEST,
+                    failure_reason="INVALID_CALLBACK",
+                )
+            return
+
+        if callback_action.callback_kind == TELEGRAM_CALLBACK_KIND_OPERATOR:
+            if callback_action.action not in TELEGRAM_OPERATOR_CALLBACK_ACTIONS:
+                raise TelegramGatewayError(
+                    error_code="INVALID_CALLBACK",
+                    message="This sync action is invalid.",
+                    http_status_code=HTTPStatus.BAD_REQUEST,
+                    failure_reason="INVALID_CALLBACK",
+                )
+            if not callback_action.session_id:
+                raise TelegramGatewayError(
+                    error_code="INVALID_CALLBACK",
+                    message="This sync session is invalid.",
+                    http_status_code=HTTPStatus.BAD_REQUEST,
+                    failure_reason="INVALID_CALLBACK",
+                )
+            if callback_action.action == "sync_toggle" and not callback_action.target_notion_page_id:
+                raise TelegramGatewayError(
+                    error_code="INVALID_CALLBACK",
+                    message="This sync page selection is invalid.",
                     http_status_code=HTTPStatus.BAD_REQUEST,
                     failure_reason="INVALID_CALLBACK",
                 )
@@ -2019,6 +2213,68 @@ class TelegramGatewayOrchestrator:
             page_number=1,
         )
 
+    def _build_sync_picker(
+        self,
+        *,
+        view: TelegramSyncView,
+        chat_id: str,
+        user_id: str,
+    ) -> tuple[str, dict[str, Any]]:
+        if self._telegram_session_store is None:
+            raise TelegramGatewayError(
+                error_code="TELEGRAM_SYNC_NOT_CONFIGURED",
+                message="Telegram sync session store is not configured",
+                http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                failure_reason="UNKNOWN_ERROR",
+            )
+        selected = set(view.selected_page_ids)
+        lines = [
+            "🔄 Select Notion pages to synchronize",
+            "",
+            (
+                f"Selected {view.selected_page_count}/{TELEGRAM_SYNC_MAX_SELECTED_PAGES}. "
+                "This reads Notion and replaces only derived index data."
+            ),
+            "Confirm when ready; no Notion content will be written.",
+            "",
+        ]
+        buttons: list[list[dict[str, str]]] = []
+        for page in view.pages:
+            marker = "☑" if page.page_id in selected else "☐"
+            lines.append(f"{marker} {page.display_path}")
+            token = self._telegram_session_store.create_callback(
+                session_id=view.session_id,
+                chat_id=chat_id,
+                user_id=user_id,
+                action="sync_toggle",
+                callback_kind=TELEGRAM_CALLBACK_KIND_OPERATOR,
+                target_notion_page_id=page.page_id,
+                target_notion_path=page.display_path,
+            )
+            buttons.append(
+                [{"text": f"{marker} {page.display_path}", "callback_data": f"ll:{token}"}]
+            )
+        if view.selected_page_count:
+            confirm_token = self._telegram_session_store.create_callback(
+                session_id=view.session_id,
+                chat_id=chat_id,
+                user_id=user_id,
+                action="sync_confirm",
+                callback_kind=TELEGRAM_CALLBACK_KIND_OPERATOR,
+            )
+            buttons.append(
+                [{"text": "Confirm sync", "callback_data": f"ll:{confirm_token}"}]
+            )
+        cancel_token = self._telegram_session_store.create_callback(
+            session_id=view.session_id,
+            chat_id=chat_id,
+            user_id=user_id,
+            action="sync_cancel",
+            callback_kind=TELEGRAM_CALLBACK_KIND_OPERATOR,
+        )
+        buttons.append([{"text": "Cancel", "callback_data": f"ll:{cancel_token}"}])
+        return "\n".join(lines), {"inline_keyboard": buttons}
+
     def _build_hierarchy_picker(
         self,
         *,
@@ -2199,6 +2455,7 @@ class TelegramGatewayOrchestrator:
                 "LearnLoop Agent commands:\n"
                 "/start or /help — show this guide\n"
                 "/pages — list indexed Notion pages with full hierarchy paths\n"
+                "/sync — discover accessible Notion pages and select pages to re-index\n"
                 "/ingest — upload a PDF or image, then choose a target page button\n"
                 "/ingest --page <external_page_id> — text fallback for automation\n"
                 "/retry-proposal — retry proposal validation using the existing source\n"
@@ -2208,6 +2465,7 @@ class TelegramGatewayOrchestrator:
                 "/health — check bot status\n\n"
                 "You do not need to type a Notion UUID for ingestion. "
                 "After upload, choose the parent or child page from the buttons. "
+                "Sync is read-only for Notion and requires explicit confirmation. "
                 "Accept is always an explicit human action; proposals without a "
                 "target cannot be accepted."
             )

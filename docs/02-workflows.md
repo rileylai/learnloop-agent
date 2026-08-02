@@ -358,7 +358,7 @@ Rules:
   replay. Operators inspect them with the read-only queue inspector instead
   of deleting or cleaning a registry.
 
-## Telegram Operator Command Contract (Step 89)
+## Telegram Operator Command Contract (Steps 89-90)
 
 The command and callback contract is defined in
 `docs/13-telegram-operator-contract.md`. The workflow boundary for the next
@@ -396,6 +396,24 @@ Rules:
 - Route and gateway layers do not call SQL, Redis, Notion, OpenAI, or Telegram
   SDKs directly. Queue, provider, tool, repository, and deterministic policy
   boundaries remain unchanged.
+
+### Selected-page `/sync` workflow (Step 90)
+
+```text
+/sync
+-> live Notion page discovery through notion_reader
+-> deterministic parent/child display hierarchy
+-> TTL-bound, chat/user-owned bounded multi-select
+-> explicit opaque sync_confirm callback
+-> NotionIncrementalIndexOrchestrator
+-> page-level replacement and independent page commits
+-> safe completed/partial/failed counts
+```
+
+The selection session and operator callbacks are ephemeral coordination state.
+The indexing workflow and derived PostgreSQL/vector state are durable. A
+partial failure preserves pages committed before the failed page; no Notion
+write is attempted.
 
 ## API Mutation Idempotency Workflow (Step 76)
 

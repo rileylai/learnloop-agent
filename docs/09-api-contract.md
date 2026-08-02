@@ -1418,10 +1418,11 @@ Notes:
 - `/ingest` creates `pending` change requests only; Notion append remains in accept workflow.
 - Telegram QA uses production Notion chunks only; pending and rejected proposals remain excluded.
 
-## Telegram Operator Command Contract (Step 89)
+## Telegram Operator Command Contract (Steps 89-90)
 
 The webhook is the transport for the following operator commands. Step 89
-defines their contract; the command handlers are delivered by Steps 90-94.
+defines the shared contract and Step 90 implements selected-page `/sync`; the
+remaining command handlers are delivered by Steps 91-94.
 The complete registry, callback mapping, authorization, safe-output, and
 queue rules are in `docs/13-telegram-operator-contract.md`.
 
@@ -1440,6 +1441,16 @@ The updated `/help` lists these commands and states the confirmation/acceptance
 rules. It never instructs users to type a Notion UUID, callback token, or
 secret.
 
+### Selected-page `/sync` runtime contract (Step 90)
+
+`/sync` returns a bounded hierarchy picker using opaque `ll:<token>` callback
+data. The response may include `sync_status`, discovered/selected/succeeded/
+failed page counts, and the child indexing `sync_workflow_run_id`; it never
+requires or displays a Notion page UUID. Toggle callbacks update a TTL-bound,
+chat/user-owned selection. Only `sync_confirm` starts the existing incremental
+page replacement flow. A partial result reports safe counts while preserving
+pages already committed by the child indexing workflow.
+
 ### Operator authorization
 
 The existing Telegram trust boundary applies before operator workflow creation:
@@ -1452,9 +1463,9 @@ authorization identifiers.
 ### Operator callbacks
 
 Telegram carries only `ll:<opaque_token>`. Server-side mappings classify each
-callback as `picker`, `review`, or `operator`. The new `operator` action
-allowlist is `sync_open`, `sync_toggle`, `sync_confirm`, `sync_cancel`,
-`index_full_confirm`, `index_full_cancel`, and `pending_view`; existing review
+callback as `picker`, `review`, or `operator`. The Step 90 `operator` action
+allowlist is `sync_toggle`, `sync_confirm`, and `sync_cancel`; later steps add
+`index_full_confirm`, `index_full_cancel`, and `pending_view`. Existing review
 actions remain `accept`, `reject`, and `change_target`. Mappings are scoped to
 chat/user, TTL-bound, allowlisted, and atomically claimed for one-shot
 mutations. Server-side page/workflow/proposal ids and selection state never

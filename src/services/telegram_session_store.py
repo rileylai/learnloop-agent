@@ -17,6 +17,7 @@ TELEGRAM_CALLBACK_TTL_SECONDS = 600
 # the upload/page-picker state machine.
 TELEGRAM_CALLBACK_KIND_REVIEW = "review"
 TELEGRAM_CALLBACK_KIND_PICKER = "picker"
+TELEGRAM_CALLBACK_KIND_OPERATOR = "operator"
 TELEGRAM_CALLBACK_KIND_UNKNOWN = "unknown"
 
 TELEGRAM_REVIEW_CALLBACK_ACTIONS = frozenset(
@@ -33,6 +34,9 @@ TELEGRAM_PICKER_CALLBACK_ACTIONS = frozenset(
         "change_target_select",
     }
 )
+TELEGRAM_OPERATOR_CALLBACK_ACTIONS = frozenset(
+    {"sync_toggle", "sync_confirm", "sync_cancel"}
+)
 
 
 def infer_telegram_callback_kind(action: str) -> str:
@@ -43,6 +47,8 @@ def infer_telegram_callback_kind(action: str) -> str:
         return TELEGRAM_CALLBACK_KIND_REVIEW
     if normalized_action in TELEGRAM_PICKER_CALLBACK_ACTIONS:
         return TELEGRAM_CALLBACK_KIND_PICKER
+    if normalized_action in TELEGRAM_OPERATOR_CALLBACK_ACTIONS:
+        return TELEGRAM_CALLBACK_KIND_OPERATOR
     return TELEGRAM_CALLBACK_KIND_UNKNOWN
 
 
@@ -299,6 +305,21 @@ class TelegramSessionStore(ABC):
         user_id: str,
     ) -> Optional[TelegramCallbackAction]:
         raise NotImplementedError
+
+    def claim_callback(
+        self,
+        *,
+        token: str,
+        chat_id: str,
+        user_id: str,
+    ) -> bool:
+        """Atomically consume one-shot callbacks when the store supports it."""
+
+        return self.resolve_callback(
+            token=token,
+            chat_id=chat_id,
+            user_id=user_id,
+        ) is not None
 
 
 def _session_key(chat_id: str, user_id: str, session_id: str) -> str:
@@ -700,6 +721,17 @@ class InMemoryTelegramSessionStore(TelegramSessionStore):
                 return None
             return self._callbacks.get(key)
 
+    def claim_callback(self, **kwargs) -> bool:
+        with self._lock:
+            key = (kwargs["chat_id"], kwargs["user_id"], kwargs["token"])
+            if self._callback_expiry.get(key, 0) <= time.time():
+                self._callbacks.pop(key, None)
+                self._callback_expiry.pop(key, None)
+                return False
+            action = self._callbacks.pop(key, None)
+            self._callback_expiry.pop(key, None)
+            return action is not None
+
 
 class RedisTelegramSessionStore(TelegramSessionStore):
     def __init__(
@@ -1071,3 +1103,12 @@ class RedisTelegramSessionStore(TelegramSessionStore):
             raw = raw.decode("utf-8")
         payload = json.loads(raw)
         return _callback_from_payload(token=kwargs["token"], payload=payload)
+
+    def claim_callback(self, **kwargs) -> bool:
+        key = _callback_key(kwargs["chat_id"], kwargs["user_id"], kwargs["token"])
+        with self._locked(key):
+            raw = self._redis.get(key)
+            if raw is None:
+                return False
+            self._redis.delete(key)
+            return True

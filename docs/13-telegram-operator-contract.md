@@ -2,10 +2,10 @@
 
 ## Purpose
 
-This document defines the Step 89 contract for operating synchronization,
+This document defines the Step 89-90 contract for operating synchronization,
 indexing, review, cost, workflow, readiness, and knowledge-base status from
-Telegram. It is a contract for Steps 90-95; it does not add those command
-handlers or business workflows.
+Telegram. Step 90 implements selected-page `/sync`; the remaining operator
+handlers are delivered by Steps 91-95.
 
 ## Scope and non-goals
 
@@ -14,10 +14,10 @@ checks the caller boundary, claims update idempotency, and delegates a typed
 intent to an orchestrator. It does not call Notion, PostgreSQL, Redis, an LLM,
 or a provider/tool adapter directly.
 
-This step defines command and callback semantics only. `/sync`, full indexing,
-operator cost/workflow queries, the pending inbox, readiness/status, and stats
-remain unimplemented until their roadmap steps. Existing ingestion, QA, and
-review behavior remains unchanged.
+Step 90 implements selected-page `/sync`; full indexing, operator
+cost/workflow queries, the pending inbox, readiness/status, and stats remain
+unimplemented until their roadmap steps. Existing ingestion, QA, and review
+behavior remains unchanged.
 
 ## Command registry
 
@@ -101,7 +101,7 @@ The server-side `callback_kind` is one of:
 |---|---|---|
 | `picker` | Existing `open_page`, `select_target`, `back`, `root`, and legacy compatibility actions | Upload or review target hierarchy only; navigation is side-effect free |
 | `review` | Existing `accept`, `reject`, `change_target` | Existing proposal review orchestrator; only explicit Accept can append and re-index |
-| `operator` | `sync_open`, `sync_toggle`, `sync_confirm`, `sync_cancel`, `index_full_confirm`, `index_full_cancel`, `pending_view` | Step 90 selection/confirmation and Step 91-94 operator presentation flows |
+| `operator` | `sync_toggle`, `sync_confirm`, `sync_cancel`, plus future operator actions | Step 90 selection/confirmation; later steps add the remaining operator flows |
 
 Operator mappings may retain server-side page ids, workflow ids, proposal ids,
 selection sets, chat/user ownership, creation time, expiry, and a one-shot
@@ -130,10 +130,10 @@ Callback processing rules:
 The following actions are explicit user intent and cannot be replaced by text
 commands with guessed ids or by an LLM response:
 
-- `/sync` displays a bounded hierarchy selection. Each selected page is kept
-  in server-side session state; the final `sync_confirm` callback is required
-  before any page re-index begins. Selection is bounded and duplicate page
-  selections are idempotently ignored.
+- `/sync` displays a bounded live hierarchy selection. Each selected page is
+  kept in server-side session state; the final `sync_confirm` callback is
+  required before any page re-index begins. Selection is bounded, and the
+  callback claim plus Telegram update ledger prevent duplicate work.
 - `/index-full` first displays a duration/embedding-cost warning. The full
   index starts only after an unexpired, owner-bound `index_full_confirm`
   callback. Cancel is side-effect free. Unknown embedding pricing remains
@@ -181,6 +181,17 @@ Redis callback/session state is ephemeral coordination state. PostgreSQL
 workflow, update-ledger, proposal, and index state remains the durable source
 for operator status. No raw PostgreSQL or Redis client is an LLM-facing tool.
 
+## Step 90 implementation invariants
+
+- Live page discovery goes through the read-only Notion tool and can discover
+  pages that are not yet in the local derived index.
+- Display paths contain titles only; page ids stay in server-side mappings and
+  the selected-page session.
+- Each confirmed page reuses page-level replacement/indexing. Earlier page
+  commits remain durable when a later page fails.
+- The Telegram outer workflow reports only bounded sync status/count fields;
+  original Notion notes and `AI Supplement Zone` are never written.
+
 ## Step 89 acceptance invariants
 
 - Every new command has one documented syntax, read/mutation class, safe output
@@ -191,5 +202,5 @@ for operator status. No raw PostgreSQL or Redis client is an LLM-facing tool.
   allowlisted.
 - Authorization, confirmation, write safety, RAG exclusion, and state
   transitions remain deterministic backend policy.
-- This contract does not implement Steps 90-94 or imply live Notion, Redis,
-  Telegram, OpenAI, or full-index verification.
+- This contract does not implement the remaining Steps 91-94 or imply live
+  full-index, cost, review-inbox, readiness, or stats verification.

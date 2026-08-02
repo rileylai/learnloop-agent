@@ -114,6 +114,12 @@ from src.orchestrators.telegram_review_orchestrator import (
     TelegramReviewError,
     TelegramReviewOrchestrator,
 )
+from src.orchestrators.telegram_sync_orchestrator import (
+    TelegramSyncError,
+    TelegramSyncOrchestrator,
+    TelegramSyncResult,
+    TelegramSyncView,
+)
 from src.orchestrators.url_ingestion_orchestrator import (
     URLIngestionError,
     URLIngestionOrchestrator,
@@ -208,6 +214,10 @@ __all__ = [
     "TelegramReviewCommandResult",
     "TelegramReviewError",
     "TelegramReviewOrchestrator",
+    "TelegramSyncError",
+    "TelegramSyncOrchestrator",
+    "TelegramSyncResult",
+    "TelegramSyncView",
     "URLIngestionError",
     "URLIngestionOrchestrator",
     "URLIngestionResult",
