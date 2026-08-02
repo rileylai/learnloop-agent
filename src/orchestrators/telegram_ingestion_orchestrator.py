@@ -35,6 +35,10 @@ from src.services import (
     TelegramUploadSession,
 )
 from src.services.latency_evidence import LatencyEvidence, elapsed_ms
+from src.services.telegram_proposal_preview import (
+    format_bounded_note_lines,
+    truncate_telegram_preview,
+)
 from src.tools import ToolContext, ToolRegistry
 
 TELEGRAM_BOT_TOOL_NAME = "telegram_bot"
@@ -747,7 +751,7 @@ class TelegramIngestionOrchestrator:
             "Key Concepts: " + ", ".join(item.proposal.concepts),
             "Notes:",
         ]
-        lines.extend(f"- {note}" for note in item.proposal.notes)
+        lines.extend(format_bounded_note_lines(item.proposal.notes))
         lines.append("Citations:")
         for citation in item.citations:
             citation_value = (
@@ -768,7 +772,7 @@ class TelegramIngestionOrchestrator:
                 "Target is not selected. Choose a Notion page before accepting "
                 "this proposal."
             )
-        return "\n".join(lines)
+        return truncate_telegram_preview("\n".join(lines))
 
     async def _ingest_pdf_document(
         self,

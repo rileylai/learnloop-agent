@@ -167,7 +167,8 @@ Telegram ingestion observability:
   `unmatched_title_anchor_count`, `title_failure_reason`,
   `matched_high_specificity_anchor_count`,
   `unmatched_high_specificity_anchor_count`, `matched_general_anchor_count`,
-  `unmatched_general_anchor_count`, `matched_technical_identifier_count`,
+  `unmatched_general_anchor_count`, `unmatched_general_ascii_count`,
+  `matched_technical_identifier_count`,
   `unmatched_technical_identifier_count`, `numeric_anchor_count`,
   `unmatched_numeric_anchor_count`, and `title_repair_failure_reason`.
   Title reasons use the fixed enum set `NO_USABLE_TITLE_ANCHOR`,
@@ -191,6 +192,10 @@ Telegram ingestion observability:
   must match. Telegram outer workflow metadata propagates these fields from
   the supplement workflow through an allowlist, along with
   `source_attachment_count` and `llm_ms`.
+  Safe numeric note-quality metadata may additionally include `concept_count`,
+  `note_count`, `covered_concept_count`, `uncovered_concept_count`, and
+  `notes_with_application_count`. It never includes concept strings, matched
+  anchor strings, raw note text, OCR, or candidate proposal content.
   Raw candidate units and matched anchor strings are available only in an
   in-process private diagnostic report. They are never persisted or propagated
   to the outer Telegram workflow.
@@ -203,6 +208,10 @@ Telegram ingestion observability:
   only when code explicitly loads them.
 - Prompt version tracking must be deterministic so prompt changes can be tied
   to workflow results during debugging and evaluation.
+- The screenshot generation prompt is `supplement_proposal_v6`; title,
+  summary, and body repair prompts are separately versioned. The bounded call
+  budget is one full proposal call, at most one title-only call, and at most
+  one eligible summary/body call; sentence count alone never causes a call.
 - QA and supplement proposal workflows also record `token_input`,
   `token_output`, and `estimated_cost` when token usage is available.
 - Cost estimates are computed from a small model-pricing catalog inside the

@@ -12,11 +12,41 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from src.proposal_limits import (
+    MAX_SUPPLEMENT_CONCEPT_CHARS,
+    MAX_SUPPLEMENT_CONCEPTS,
+    MAX_SUPPLEMENT_NOTE_CHARS,
+    MAX_SUPPLEMENT_NOTES,
+    MAX_SUPPLEMENT_SUMMARY_CHARS,
+    MAX_SUPPLEMENT_TITLE_CHARS,
+    MAX_SUPPLEMENT_TOTAL_TEXT_CHARS,
+)
 
 _JSON_CODE_BLOCK_PATTERN = re.compile(
     r"^```(?:json)?\s*(?P<body>[\s\S]*?)\s*```$",
     re.IGNORECASE,
 )
+
+
+def _normalize_string_items(
+    items: List[str],
+    *,
+    item_name: str,
+    max_item_chars: int,
+) -> List[str]:
+    normalized_items: List[str] = []
+    for index, value in enumerate(items):
+        if not isinstance(value, str):
+            raise ValueError(f"{item_name} at index {index} must be a string")
+        normalized_value = value.strip()
+        if not normalized_value:
+            raise ValueError(f"{item_name} at index {index} must not be empty")
+        if len(normalized_value) > max_item_chars:
+            raise ValueError(
+                f"{item_name} at index {index} exceeds {max_item_chars} characters"
+            )
+        normalized_items.append(normalized_value)
+    return normalized_items
 
 
 class SupplementProposalValidationError(Exception):
@@ -76,38 +106,62 @@ class SupplementProposalCitationSchema(BaseModel):
 class SupplementProposalSchema(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    title: str = Field(min_length=1)
+    title: str = Field(min_length=1, max_length=MAX_SUPPLEMENT_TITLE_CHARS)
     target_path: str = Field(min_length=1)
     source: SupplementProposalSourceSchema
-    summary: str = Field(min_length=1)
-    concepts: List[str] = Field(min_length=1)
-    notes: List[str]
+    summary: str = Field(min_length=1, max_length=MAX_SUPPLEMENT_SUMMARY_CHARS)
+    concepts: List[str] = Field(min_length=1, max_length=MAX_SUPPLEMENT_CONCEPTS)
+    notes: List[str] = Field(min_length=1, max_length=MAX_SUPPLEMENT_NOTES)
     citations: List[SupplementProposalCitationSchema] = Field(default_factory=list)
 
-    @field_validator("concepts", "notes")
+    @field_validator("concepts")
     @classmethod
-    def _validate_non_empty_string_items(cls, items: List[str]) -> List[str]:
-        normalized_items: List[str] = []
-        for index, value in enumerate(items):
-            if not isinstance(value, str):
-                raise ValueError(f"item at index {index} must be a string")
-            normalized_value = value.strip()
-            if not normalized_value:
-                raise ValueError(f"item at index {index} must not be empty")
-            normalized_items.append(normalized_value)
-        return normalized_items
+    def _validate_concepts(cls, items: List[str]) -> List[str]:
+        return _normalize_string_items(
+            items,
+            item_name="concept",
+            max_item_chars=MAX_SUPPLEMENT_CONCEPT_CHARS,
+        )
+
+    @field_validator("notes")
+    @classmethod
+    def _validate_notes(cls, items: List[str]) -> List[str]:
+        return _normalize_string_items(
+            items,
+            item_name="note",
+            max_item_chars=MAX_SUPPLEMENT_NOTE_CHARS,
+        )
+
+    @model_validator(mode="after")
+    def _validate_total_text_bound(self) -> "SupplementProposalSchema":
+        total_chars = sum(
+            len(value)
+            for value in (
+                self.title,
+                self.target_path,
+                self.summary,
+                *self.concepts,
+                *self.notes,
+                *(citation.quote or "" for citation in self.citations),
+            )
+        )
+        if total_chars > MAX_SUPPLEMENT_TOTAL_TEXT_CHARS:
+            raise ValueError(
+                "proposal text exceeds the configured total character bound"
+            )
+        return self
 
 
 class SupplementTitleRepairSchema(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    title: str = Field(min_length=1)
+    title: str = Field(min_length=1, max_length=MAX_SUPPLEMENT_TITLE_CHARS)
 
 
 class SupplementSummaryRepairSchema(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    summary: str = Field(min_length=1)
+    summary: str = Field(min_length=1, max_length=MAX_SUPPLEMENT_SUMMARY_CHARS)
 
 
 class SupplementBodyRepairSchema(BaseModel):
@@ -115,20 +169,30 @@ class SupplementBodyRepairSchema(BaseModel):
 
     summary: str = Field(min_length=1)
     concepts: List[str] = Field(min_length=3, max_length=30)
-    notes: List[str] = Field(min_length=3, max_length=6)
+    notes: List[str] = Field(min_length=1, max_length=MAX_SUPPLEMENT_NOTES)
 
-    @field_validator("concepts", "notes")
+    @field_validator("summary")
     @classmethod
-    def _validate_non_empty_string_items(cls, items: List[str]) -> List[str]:
-        normalized_items: List[str] = []
-        for index, value in enumerate(items):
-            if not isinstance(value, str):
-                raise ValueError(f"item at index {index} must be a string")
-            normalized_value = value.strip()
-            if not normalized_value:
-                raise ValueError(f"item at index {index} must not be empty")
-            normalized_items.append(normalized_value)
-        return normalized_items
+    def _validate_summary_length(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("concepts")
+    @classmethod
+    def _validate_concepts(cls, items: List[str]) -> List[str]:
+        return _normalize_string_items(
+            items,
+            item_name="concept",
+            max_item_chars=MAX_SUPPLEMENT_CONCEPT_CHARS,
+        )
+
+    @field_validator("notes")
+    @classmethod
+    def _validate_notes(cls, items: List[str]) -> List[str]:
+        return _normalize_string_items(
+            items,
+            item_name="note",
+            max_item_chars=MAX_SUPPLEMENT_NOTE_CHARS,
+        )
 
 
 def parse_supplement_proposal_json(llm_output: str) -> SupplementProposalSchema:

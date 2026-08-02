@@ -82,7 +82,7 @@ class _ScreenshotTitleRepairProvider(LLMProvider):
                     "summary": "這組截圖整理 MySQL EXPLAIN、SQL 與索引查詢資訊。",
                     "concepts": ["MySQL", "EXPLAIN", "SQL", "索引", "查詢執行計畫"],
                     "notes": [
-                        "EXPLAIN 會顯示查詢的執行計畫。",
+                        "MySQL EXPLAIN 會顯示查詢的執行計畫。",
                         "SQL 查詢可搭配 EXPLAIN 觀察索引。",
                         "畫面列出 type、key、rows 欄位。",
                         "索引可協助查詢條件過濾。",
@@ -122,7 +122,7 @@ class _ScreenshotSummaryRepairProvider(LLMProvider):
                     "summary": "這些截圖整理學習內容。",
                     "concepts": ["MySQL", "EXPLAIN", "SQL", "索引", "查詢執行計畫"],
                     "notes": [
-                        "EXPLAIN 會顯示查詢的執行計畫。",
+                        "MySQL EXPLAIN 會顯示查詢的執行計畫。",
                         "SQL 查詢可搭配 EXPLAIN 觀察索引。",
                         "畫面列出 type、key、rows 欄位。",
                         "索引可協助查詢條件過濾。",
@@ -186,7 +186,7 @@ class _ScreenshotBodyRepairProvider(LLMProvider):
             ),
             "concepts": ["MySQL", "EXPLAIN", "SQL", "索引", "查詢執行計畫"],
             "notes": [
-                "EXPLAIN 會顯示查詢的執行計畫。",
+                "MySQL EXPLAIN 會顯示查詢的執行計畫。",
                 "SQL 查詢可搭配 EXPLAIN 觀察索引。",
                 "畫面列出 type、key、rows 欄位。",
                 "索引可協助查詢條件過濾。",
@@ -520,7 +520,7 @@ def test_supplement_propose_api_creates_pending_change_request() -> None:
             assert metadata["provider_name"] == "openai"
             assert metadata["model"] == "gpt-4o-mini"
             assert metadata["prompt_id"] == "supplement_proposal"
-            assert metadata["prompt_version"] == "supplement_proposal_v5"
+            assert metadata["prompt_version"] == "supplement_proposal_v6"
             assert metadata["estimated_cost"] == pytest.approx(0.000072)
 
             # Step 28 must not write to Notion.
@@ -638,7 +638,7 @@ def test_screenshot_title_repair_is_bounded_to_one_attempt() -> None:
         seed_session.close()
 
     provider = _ScreenshotTitleRepairProvider()
-    provider.outputs[1] = json.dumps({"title": "MySQL EXPLAIN 與 Redis"})
+    provider.outputs[1] = json.dumps({"title": "Redis"})
 
     def _db_override():
         session = session_factory()
@@ -970,7 +970,7 @@ def test_screenshot_title_repair_can_continue_into_one_bounded_body_repair() -> 
             "repair_screenshot_title",
             "repair_screenshot_body",
         ]
-        assert provider.requests[2].max_tokens == 760
+        assert provider.requests[2].max_tokens == 1200
         assert "MySQL EXPLAIN 會顯示查詢的執行計畫。" in (
             provider.requests[2].messages[1].content
         )
@@ -1140,7 +1140,7 @@ def test_supplement_propose_api_uses_duplicate_reference_without_provider() -> N
             assert metadata["provider_name"] == "openai"
             assert metadata["model"] == "gpt-4o-mini"
             assert metadata["prompt_id"] == "supplement_proposal"
-            assert metadata["prompt_version"] == "supplement_proposal_v5"
+            assert metadata["prompt_version"] == "supplement_proposal_v6"
             assert metadata["estimated_cost"] is None
 
             # No Notion write should happen. Existing seeded rows remain unchanged.
@@ -1207,7 +1207,7 @@ def test_supplement_propose_api_returns_llm_output_invalid() -> None:
             assert metadata["provider_name"] == "openai"
             assert metadata["model"] == "gpt-4o-mini"
             assert metadata["prompt_id"] == "supplement_proposal"
-            assert metadata["prompt_version"] == "supplement_proposal_v5"
+            assert metadata["prompt_version"] == "supplement_proposal_v6"
             assert metadata["estimated_cost"] == pytest.approx(0.000072)
             assert verify_session.query(ChangeRequest).count() == 0
         finally:
@@ -1275,7 +1275,7 @@ def test_supplement_propose_api_returns_provider_not_found_when_provider_missing
             assert metadata["provider_name"] == "openai"
             assert metadata["model"] == "gpt-4o-mini"
             assert metadata["prompt_id"] == "supplement_proposal"
-            assert metadata["prompt_version"] == "supplement_proposal_v5"
+            assert metadata["prompt_version"] == "supplement_proposal_v6"
             assert metadata["estimated_cost"] is None
             assert verify_session.query(ChangeRequest).count() == 0
         finally:

@@ -159,7 +159,9 @@ class InMemoryNotionWriterClient(NotionWriterClient):
             entry.append_date == request.append_date for entry in page.ai_supplement_entries
         )
         section_lines = self._build_section_lines(request=request)
-        appended_block_count = 6 + (1 if created_date_group else 0)
+        # One block represents the topic entry; every Notes item is a separate
+        # paragraph in section_lines, so the count follows the rendered shape.
+        appended_block_count = len(section_lines) + 1 + int(created_date_group)
 
         page.ai_supplement_entries.append(
             InMemoryAISupplementEntry(
@@ -241,12 +243,12 @@ class InMemoryNotionWriterClient(NotionWriterClient):
 
     def _build_section_lines(self, *, request: NotionAppendRequest) -> List[str]:
         concepts_text = "; ".join(request.concepts)
-        notes_text = "; ".join(request.notes) if request.notes else "-"
         return [
             f"Source: {request.source_display_name}",
             f"Summary: {request.summary}",
             f"Key Concepts: {concepts_text}",
-            f"Notes: {notes_text}",
+            "Notes:",
+            *(f"- {note}" for note in request.notes),
             f"{NOTION_APPEND_IDENTITY_PREFIX}{request.idempotency_key}",
         ]
 

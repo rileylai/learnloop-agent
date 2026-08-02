@@ -46,7 +46,7 @@ def test_continuous_multi_image_fixture_is_one_grounded_batch() -> None:
     assert validated is proposal
     assert source_text.index("Kubernetes Deployment") < source_text.index("PyTorch batch normalization")
     assert 3 <= len(validated.concepts) <= 30
-    assert 3 <= len(validated.notes) <= 6
+    assert 1 <= len(validated.notes) <= 12
 
 
 def test_public_safe_four_image_mysql_batch_uses_one_snapshot_and_all_claims() -> None:
@@ -670,12 +670,8 @@ def test_traditional_chinese_paraphrase_passes_and_simplified_output_fails() -> 
                 "source_display_name": "繁中改寫 fixture",
             },
             "summary": "內容指出 Redis 準備完成後，服務才會處理延遲任務。",
-            "concepts": ["Redis", "延遲工作", "服務處理"],
-            "notes": [
-                "Redis 就緒後才處理延遲工作。",
-                "來源描述服務在 Redis 可用後執行任務。",
-                "延遲工作會在 Redis 可用後處理。",
-            ],
+            "concepts": ["Redis", "延遲工作", "系統處理"],
+            "notes": ["系統會在 Redis 可用後處理延遲工作。"],
         }
     )
 

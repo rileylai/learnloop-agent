@@ -225,12 +225,12 @@ class NotionAPIWriterClient(NotionWriterClient):
 
     def _build_section_lines(self, *, request: NotionAppendRequest) -> List[str]:
         concepts_text = "; ".join(request.concepts)
-        notes_text = "; ".join(request.notes) if request.notes else "-"
         return [
             f"Source: {request.source_display_name}",
             f"Summary: {request.summary}",
             f"Key Concepts: {concepts_text}",
-            f"Notes: {notes_text}",
+            "Notes:",
+            *(f"- {note}" for note in request.notes),
             f"{NOTION_APPEND_IDENTITY_PREFIX}{request.idempotency_key}",
         ]
 

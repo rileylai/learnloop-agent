@@ -95,7 +95,7 @@
       "notes": [
         "EXPLAIN 會顯示查詢資訊。",
         "SQL 可搭配 EXPLAIN 觀察欄位。",
-        "畫面列出 type、key、rows 欄位。"
+        "來源說明 MySQL；畫面列出 type、key、rows 欄位。"
       ]
     },
     "expected_title_anchor_profile": {
@@ -149,7 +149,7 @@
         "EXPLAIN 會顯示查詢的執行計畫。",
         "SQL 查詢可搭配 EXPLAIN 觀察索引。",
         "畫面列出 type、key、rows 欄位。",
-        "索引可協助查詢條件過濾。"
+        "MySQL 索引可協助查詢條件過濾。"
       ]
     },
     "expected_cleaned_order": [
@@ -198,7 +198,7 @@
         "EXPLAIN 會顯示查詢的執行計畫。",
         "索引可協助查詢條件過濾。",
         "key 與 rows 是畫面列出的欄位。",
-        "來源提到 EXPLAIN 與索引資訊。"
+        "來源提到 MySQL、EXPLAIN 與索引資訊。"
       ]
     },
     "expected_cleaned_order": [
@@ -336,5 +336,70 @@
       ]
     },
     "expected_error": "unsupported"
+  },
+  {
+    "id": "public_safe_live_shaped_sql_context_recovery",
+    "images": [
+      {
+        "message_id": 101,
+        "ocr": "[Image 101]\nIndex supports the query access path."
+      },
+      {
+        "message_id": 102,
+        "ocr": "[Image 102]\nEXPLAIN shows the execution plan."
+      },
+      {
+        "message_id": 103,
+        "ocr": "[Image 103]\nQuery rewrite changes the query form."
+      },
+      {
+        "message_id": 104,
+        "ocr": "[Image 104]\nKeyset pagination uses a stable cursor."
+      }
+    ],
+    "initial_proposal": {
+      "title": "PostgreSQL Index and execution plan",
+      "target_path": "Knowledge/Database/AI Supplement Zone",
+      "source": {
+        "source_type": "screenshot",
+        "source_display_name": "Public-safe SQL screenshot batch (4 images)"
+      },
+      "summary": "Index supports the query access path. EXPLAIN shows the execution plan. Query rewrite changes the query form, and keyset pagination uses a stable cursor.",
+      "concepts": [
+        "Index",
+        "EXPLAIN",
+        "execution plan",
+        "query rewrite",
+        "pagination"
+      ],
+      "notes": [
+        "Index supports the query access path.",
+        "EXPLAIN shows the execution plan.",
+        "Query rewrite changes the query form.",
+        "Keyset pagination uses a stable cursor."
+      ]
+    },
+    "repaired_proposal": {
+      "title": "Index, EXPLAIN, query rewrite, and keyset pagination",
+      "target_path": "Knowledge/Database/AI Supplement Zone",
+      "source": {
+        "source_type": "screenshot",
+        "source_display_name": "Public-safe SQL screenshot batch (4 images)"
+      },
+      "summary": "Index supports the query access path. EXPLAIN shows the execution plan. Query rewrite changes the query form, and keyset pagination uses a stable cursor.",
+      "concepts": [
+        "Index",
+        "EXPLAIN",
+        "execution plan",
+        "query rewrite",
+        "pagination"
+      ],
+      "notes": [
+        "Index：Index supports the query access path. Practical application: enterprise systems can evaluate high frequency query paths. Trade-off: read performance and write maintenance cost are trade-offs.",
+        "EXPLAIN：EXPLAIN shows the execution plan. Release checks can inspect the plan with representative data.",
+        "Query rewrite：Query rewrite changes the query form. Practical application: backend systems inspect the query form.",
+        "Keyset pagination：Keyset pagination uses a stable cursor. The access path and cursor behavior are relevant in system design."
+      ]
+    }
   }
 ]

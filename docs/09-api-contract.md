@@ -719,6 +719,14 @@ Notes:
 - Orchestrator must call `ProviderRouter` for proposal generation and deterministic schema validation.
 - Orchestrator creates one `change_requests` row with `status=pending`.
 - This endpoint does not perform Notion write operations.
+- Screenshot summaries prefer 2–4 coherent sentences but sentence count is not
+  an acceptance requirement. Every sentence is still grounding-validated.
+  Screenshot concepts remain 3–30 items; notes are 1–12 distinct items with
+  normalized major-concept coverage and bounded per-field/total text limits.
+- Notes may contain bounded concept-tied enterprise/backend/database/system
+  application or trade-off context, but new products, vendors, identifiers,
+  numbers, versions, URLs, commands, benchmarks, incidents, absolute claims,
+  and destructive advice fail closed.
 - Duplicate detection uses production chunk citations and stores a citation-first pending proposal instead of rewriting duplicated content.
 - `target_notion_page_id` is an external Notion page id. The backend resolves
   it to an indexed page row before persistence. Unknown targets return
@@ -1172,8 +1180,10 @@ Success response `200` (`/ingest`):
 
 For a targeted ingest, the Telegram reply also includes a deterministic
 proposal preview with title, summary, concepts, notes, citations, target page,
-and `/accept <change_request_id>` usage. The change request remains `pending`
-until a human sends `/accept`.
+and `/accept <change_request_id>` usage. Notes render as bounded bullet lines
+under the fixed `Notes:` label and the preview is truncated safely at the
+Telegram message limit. The change request remains `pending` until a human
+sends `/accept`.
 
 Request example (`/ask` with section scope):
 
@@ -1350,6 +1360,10 @@ Notes:
 - `/retry-proposal` retries proposal generation from the latest failed Telegram
   proposal session's existing `source_document_id` and target. It does not
   download files, rerun OCR, create a source document, or append to Notion.
+- Retry preserves the existing source document, target, source/prompt/validation
+  digests, and idempotency boundaries. A successful retry creates exactly one
+  pending change request and records zero download/OCR latency for the reused
+  source path.
 - A selected page proposal stores exactly
   `<indexed canonical notion_path>/AI Supplement Zone` as `proposal.target_path`.
   `LLM_OUTPUT_INVALID` is returned when the model selects another page,

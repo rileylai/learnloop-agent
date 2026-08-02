@@ -67,7 +67,8 @@ Original page/toggle/section
             - Source: ...
             - Summary: ...
             - Key Concepts: ...
-            - Notes: ...
+            - Notes:
+                - ...
             - LearnLoop Change Request: change-request-<id>
 ```
 
@@ -75,6 +76,10 @@ Rules:
 - Do not create excessive nested toggles.
 - Group supplements by date, then topic.
 - Keep the fixed labels `Source`, `Summary`, `Key Concepts`, and `Notes`.
+- Render each note as a separate bullet/block below the `Notes` label; do not
+  join notes with semicolons into one paragraph. This is presentation-only and
+  does not change the stored `notes: list[str]` contract, append permission,
+  durable identity, or retry idempotency.
 - Source display must follow the source type rule from `docs/00-design-doc.md`.
 
 ## Write Rules

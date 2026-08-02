@@ -84,14 +84,16 @@ Original page/toggle/section
             - Source: ...
             - Summary: ...
             - Key Concepts: ...
-            - Notes: ...
+            - Notes:
+                - ...
             - LearnLoop Change Request: change-request-<id>
 ```
 
 Rules:
 - Do not create excessive nested toggles.
 - Group supplements by date, then topic.
-- The four fixed content lines are `Source`, `Summary`, `Key Concepts`, and `Notes`.
+- The fixed content labels are `Source`, `Summary`, `Key Concepts`, and `Notes`.
+  Each note is rendered as its own bullet/block under `Notes`.
 - Every accepted supplement also includes a visible deterministic identity line:
   `LearnLoop Change Request: change-request-<id>`.
 - The identity line is used for bounded read-after-write verification and
@@ -355,8 +357,9 @@ Checklist:
   Telegram `message_id`, merge one OCR batch, and make one proposal LLM call.
 - [x] Screenshot OCR removes only high-confidence browser UI noise before
   persistence; proposal language follows the source, with Traditional Chinese
-  for Chinese sources, and deterministic grounding/shape checks enforce
-  concrete title, 1-2 sentence summary, 3-30 concepts, and 3-6 notes.
+  for Chinese sources. Deterministic checks enforce a concrete title, a
+  non-empty bounded summary with a soft 2–4 sentence preference, 3–30 concepts,
+  and 1–12 distinct notes with major-concept coverage.
 - [x] For a selected indexed page, the backend derives the one allowed target
   exactly as `<canonical notion_path>/AI Supplement Zone`; proposal output may
   only use safe formatting normalization before exact validation.

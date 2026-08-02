@@ -376,11 +376,21 @@ The fixtures cover:
 - one body-only repair for safe multi-item paraphrase failures, including the
   title-repair-to-body-repair transition and a second failure bounded to
   `LLM_OUTPUT_INVALID`.
+- soft summary sentence preference: grounded 1-, 2-, and 3–6-sentence summaries
+  pass, while empty/oversized or unsupported sentences fail for their actual
+  schema/resource/grounding reason;
+- note coverage, 1–12 note bounds, duplicate-note rejection, and bounded
+  enterprise application/trade-off acceptance with fail-closed product,
+  number, command, absolute-advice, and destructive-content cases;
+- a public-safe four-image SQL/database fixture with Index, EXPLAIN, query
+  rewrite, and pagination concepts, a three-sentence summary, bounded
+  engineering context, unsupported initial product title, and source-faithful
+  repaired title.
 
 Run:
 
 ```bash
-uv run --no-env-file --frozen pytest -q tests/evals/test_screenshot_proposal_eval.py
+uv run --no-env-file --frozen pytest -q tests/evals/test_screenshot_proposal_eval.py tests/evals/test_screenshot_proposal_v4_contract.py
 ```
 
 ## Real-Library Adapter Smoke Matrix (Step 81)

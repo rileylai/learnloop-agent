@@ -50,13 +50,13 @@ from src.services import (
 )
 from src.services.latency_evidence import LatencyEvidence, elapsed_ms
 from src.services.screenshot_quality import (
-    TITLE_FAILURE_REASON_INSUFFICIENT_MATCHED_ANCHORS,
     TITLE_FAILURE_REASONS,
     ScreenshotSourceSnapshot,
     build_screenshot_fallback_title,
     build_screenshot_source_snapshot,
     build_screenshot_title_anchor_allowlist,
     detect_screenshot_language,
+    is_screenshot_title_fallback_eligible,
     validate_screenshot_proposal_with_diagnostics,
 )
 
@@ -308,7 +308,7 @@ class SupplementProposeOrchestrator:
                                 ),
                             ],
                             temperature=0.2,
-                            max_tokens=900,
+                            max_tokens=1400,
                             metadata={
                                 "workflow_id": request_workflow_id,
                                 "operation": "propose_change_request",
@@ -410,7 +410,12 @@ class SupplementProposeOrchestrator:
                                 source_snapshot=source_snapshot,
                             )
                         except SupplementProposalValidationError as repair_exc:
-                            if repair_exc.field != "title":
+                            repair_title_failed = (
+                                repair_exc.field == "title"
+                                or repair_exc.diagnostics.get("title_failure_reason")
+                                in TITLE_FAILURE_REASONS
+                            )
+                            if not repair_title_failed:
                                 # Validation reaches body fields only after the repaired
                                 # title has passed. Preserve that successful stage and let
                                 # the bounded body repair policy handle the new failure.
@@ -904,17 +909,9 @@ class SupplementProposeOrchestrator:
     def _is_title_fallback_eligible(
         error: SupplementProposalValidationError,
     ) -> bool:
-        diagnostics = error.diagnostics
         return (
             error.field == "title"
-            and diagnostics.get("title_failure_reason")
-            == TITLE_FAILURE_REASON_INSUFFICIENT_MATCHED_ANCHORS
-            and int(diagnostics.get("unmatched_general_anchor_count", 0)) > 0
-            and int(diagnostics.get("unmatched_high_specificity_anchor_count", 0))
-            == 0
-            and int(diagnostics.get("unmatched_technical_identifier_count", 0))
-            == 0
-            and int(diagnostics.get("unmatched_numeric_anchor_count", 0)) == 0
+            and is_screenshot_title_fallback_eligible(error.diagnostics)
         )
 
     @staticmethod
@@ -1097,7 +1094,7 @@ class SupplementProposeOrchestrator:
                     LLMMessage(role="user", content=user_message),
                 ],
                 temperature=0.1,
-                max_tokens=760,
+                max_tokens=1200,
                 metadata={
                     "workflow_id": request_workflow_id,
                     "operation": "repair_screenshot_body",

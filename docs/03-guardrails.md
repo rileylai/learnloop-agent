@@ -165,6 +165,32 @@ Backend code owns:
 
 Provider and tool boundaries may execute requests, but they do not decide whether a write is allowed.
 
+## Screenshot Grounding and Bounded Engineering Context
+
+Screenshot proposal validation keeps two claim classes separate:
+
+- Source-grounded core claims (concept names, principles, and source-described
+  behavior) require the existing normalized lexical/source-anchor evidence.
+- Bounded derived engineering context may explain a source-supported concept in
+  generic enterprise/backend/database/system-design terms, including a
+  practical application or trade-off. It must be explicitly anchored to that
+  concept and use no new product, vendor, framework, database name, technical
+  identifier, number, version, URL, command, benchmark, incident, customer,
+  absolute result, or destructive/irreversible advice.
+
+The second class is not an unsupported-advice bypass. A deterministic validator
+allows only a small fixed vocabulary and rejects absolute claims such as
+“always”, “best”, “guaranteed”, “一定”, or “永遠”. It also rejects a context
+sentence without a concept anchor. Missing application or caveat context is
+allowed when the source does not support a safe bounded statement. Human review
+is still required before any accepted append.
+
+Summary sentence count is a prompt preference, not a quality gate. Every
+summary sentence remains a grounding unit, while non-empty field and total
+resource bounds remain hard limits. Notes use normalized concept coverage and
+bounded count/length limits; coverage or duplicate-note failures may enter the
+existing one-call body repair and are revalidated in full.
+
 Prompt safety ownership:
 - Prompt delimiters are defense-in-depth context boundaries, not authorization.
 - The backend owns citation paths, target-page resolution, proposal validation,

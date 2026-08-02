@@ -60,7 +60,8 @@ def test_notion_writer_tool_appends_only_under_ai_supplement_zone() -> None:
         "Source: week5-attention.pdf",
         "Summary: Adds concise positional encoding notes for Week 5.",
         "Key Concepts: positional encoding; length generalization",
-        "Notes: Compare sinusoidal and learned embeddings.",
+        "Notes:",
+        "- Compare sinusoidal and learned embeddings.",
         "LearnLoop Change Request: change-request-21",
     ]
 

@@ -43,8 +43,8 @@ def test_prompt_template_loader_loads_and_renders_supplement_prompt() -> None:
     )
 
     assert bundle.prompt_id == PROMPT_ID_SUPPLEMENT_PROPOSAL
-    assert bundle.version == "supplement_proposal_v5"
-    assert "Return exactly one JSON object" in system_message
+    assert bundle.version == "supplement_proposal_v6"
+    assert "Return strict JSON only" in system_message
     assert "exact" in system_message
     assert "source_type=chat_text" in user_message
     assert "chat-2026-06-17" in user_message
@@ -66,7 +66,7 @@ def test_prompt_template_loader_loads_title_repair_prompt() -> None:
     )
 
     assert bundle.prompt_id == PROMPT_ID_SCREENSHOT_TITLE_REPAIR
-    assert bundle.version == "screenshot_title_repair_v2"
+    assert bundle.version == "screenshot_title_repair_v3"
     assert "exactly one field" in system_message
     assert "MySQL EXPLAIN" in user_message
 
@@ -84,7 +84,7 @@ def test_prompt_template_loader_loads_summary_repair_prompt() -> None:
     )
 
     assert bundle.prompt_id == PROMPT_ID_SCREENSHOT_SUMMARY_REPAIR
-    assert bundle.version == "screenshot_summary_repair_v1"
+    assert bundle.version == "screenshot_summary_repair_v2"
     assert "only the summary" in system_message
     assert "MySQL EXPLAIN" in user_message
 
@@ -102,6 +102,6 @@ def test_prompt_template_loader_loads_body_repair_prompt() -> None:
     )
 
     assert bundle.prompt_id == PROMPT_ID_SCREENSHOT_BODY_REPAIR
-    assert bundle.version == "screenshot_body_repair_v1"
-    assert "complete summary sentence" in system_message
+    assert bundle.version == "screenshot_body_repair_v2"
+    assert "major key concept" in system_message
     assert "MySQL EXPLAIN" in user_message

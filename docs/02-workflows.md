@@ -402,11 +402,14 @@ Rules:
   OCR. Source-language detection happens only after OCR and persistence, so it
   is not used to select the Tesseract languages.
 - Screenshot proposal output is deterministic-validated: source-language
-  output (Traditional Chinese for Chinese), concrete title, 1-2 sentence
-  summary, 3-30 concepts, 3-6 grounded notes, and no unsupported advice or
-  conclusions. Grounding allows only bounded reporting-language/synonym
-  paraphrase; new products, numbers, URLs, commands, technical atoms, and
-  unsupported claim words fail closed without a second full-proposal LLM judge.
+  output (Traditional Chinese for Chinese), concrete title, a non-empty
+  bounded summary with a preferred 2–4 natural sentences, 3–30 concepts, and
+  1–12 distinct grounded notes. Summary sentence count is not an acceptance
+  rule. Notes must cover every major concept, may combine related concepts,
+  and may include only bounded source-anchored engineering context. New
+  products, numbers, URLs, commands, technical atoms, unsupported advice, or
+  absolute/destructive claims fail closed without a second full-proposal LLM
+  judge.
 - Before screenshot proposal generation, the backend builds one cleaned OCR
   source snapshot from the persisted `source_documents.raw_text`. The prompt
   source and grounding validator receive that same snapshot; there is no
@@ -424,6 +427,18 @@ Rules:
   Unmatched technical identifiers, product names, or numbers still fail closed.
   New numbers, commands, URLs, technical atoms, advice, comparisons,
   conclusions, or unsupported domain content still fail closed.
+- Summary sentence splitting remains a grounding-unit mechanism only; one,
+  three, or more natural grounded sentences pass when field and total-resource
+  bounds pass. There is no runtime `INVALID_SENTENCE_COUNT` failure. Schema
+  limits are shared constants: title 240 characters, summary 2400, notes at
+  most 12 items, and bounded total proposal text.
+- Notes have a deterministic concept-coverage check using normalized anchor
+  overlap. Exact or near-duplicate notes fail into the existing bounded body
+  repair scope. A note may add generic enterprise/backend/database/system
+  engineering application or trade-off context only when tied to a grounded
+  concept and limited to the allowlisted low-risk vocabulary. It may not add a
+  product/vendor/framework/database name, identifier, number, version, URL,
+  command, benchmark, incident, absolute result, or destructive advice.
 - For summary/concepts/notes, `validation_unit_count` counts every bounded
   validation unit in deterministic field order and `matched_validation_unit_count`
   counts units with source evidence. `extracted_claim_count` and
@@ -456,12 +471,14 @@ Rules:
   `筆記`, and `summary` cannot provide evidence alone.
 - If only title grounding fails, the backend may make exactly one bounded
   title-only repair LLM call. It sends the same source snapshot plus a bounded
-  allowlist extracted from that snapshot, asks for one noun-phrase title using
-  only allowlisted technical/topic anchors, replaces only `title`, and reruns
-  the deterministic validator. If the repair fails only on general CJK
-  paraphrase anchors, one deterministic extractive title is built from matched
-  source anchors and validated again. A second non-repairable failure returns
-  `LLM_OUTPUT_INVALID`; it never re-runs OCR or regenerates the full proposal.
+  allowlist extracted from that snapshot, asks for one extractive noun phrase,
+  replaces only `title`, and reruns the unchanged validator. If that repair
+  still fails, a deterministic fallback is considered only for a matched
+  source anchor with no unmatched technical identifier, number/version, or
+  general ASCII noun; an unmatched product is removable only when another
+  matched high-specificity source anchor remains. The source-only fallback is
+  rerun through the full validator. Otherwise `LLM_OUTPUT_INVALID` fails
+  closed. No OCR or full-proposal regeneration is repeated.
 - If the screenshot validator reports only a safe summary grounding failure
   (`INSUFFICIENT_SOURCE_ANCHORS` or `PARAPHRASE_NOT_GROUNDED`), the backend may
   make exactly one bounded summary-only repair call. It reuses the same source
@@ -477,6 +494,11 @@ Rules:
   advice, comparison, or result disables body repair. A title repair that has
   already passed remains successful when later body validation fails, so the
   body repair policy can still run. Title and body repairs never rerun OCR.
+- Repair order is mutually exclusive by stage: full proposal validation;
+  title-only repair and eligible source-only fallback; summary-only repair for
+  summary grounding; body-only repair for coverage/duplicate or safe body
+  grounding. Each stage is attempted at most once per proposal attempt, and
+  sentence count alone never starts a repair.
 - A two-stage `OCR -> extractive facts -> deterministic fact validation ->
   proposal` pipeline was evaluated but is not enabled in this change. It needs
   a versioned fact schema, minimum-fact policy, and final proposal validation;

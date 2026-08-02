@@ -107,7 +107,7 @@ def _append_responses() -> List[NotionHTTPResponse]:
         ),
         NotionHTTPResponse(
             status_code=200,
-            payload={"results": [{"id": f"line-{index}"} for index in range(5)]},
+            payload={"results": [{"id": f"line-{index}"} for index in range(6)]},
         ),
     ]
 
@@ -139,7 +139,7 @@ def test_notion_api_writer_uses_only_read_and_append_http_operations() -> None:
     assert result.target_path == (
         "Knowledge/Live Page/AI Supplement Zone/2026-07-27/Append Topic"
     )
-    assert result.appended_block_count == 7
+    assert result.appended_block_count == 8
     assert [method for method, _, _ in transport.calls] == [
         "GET",
         "GET",

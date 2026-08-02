@@ -1280,7 +1280,7 @@ def test_grounding_failure_metadata_reaches_outer_telegram_workflow() -> None:
             metadata = json.loads(workflow.metadata_json or "{}")
             assert metadata["failure_stage"] == "proposal_validation"
             assert metadata["validation_field"] == "summary"
-            assert metadata["validator_version"] == "screenshot_grounding_v3"
+            assert metadata["validator_version"] == "screenshot_grounding_v4"
             assert metadata["validation_granularity"] == (
                 "summary_sentence_list_item_v1"
             )

@@ -18,6 +18,10 @@ from src.repositories import (
 from src.services.telegram_update_idempotency import (
     TELEGRAM_UPDATE_SUCCEEDED,
 )
+from src.services.telegram_proposal_preview import (
+    format_bounded_note_lines,
+    truncate_telegram_preview,
+)
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -491,7 +495,7 @@ def _format_preview(*, item, source_type: str, source_document_id: int, source_c
         "Key Concepts: " + ", ".join(item.proposal.concepts),
         "Notes:",
     ]
-    lines.extend(f"- {note}" for note in item.proposal.notes)
+    lines.extend(format_bounded_note_lines(item.proposal.notes))
     lines.append("Citations:")
     for citation in item.citations:
         lines.append(
@@ -508,4 +512,4 @@ def _format_preview(*, item, source_type: str, source_document_id: int, source_c
         f"Review with /accept {item.change_request_id} or /reject "
         f"{item.change_request_id} <reason>."
     )
-    return "\n".join(lines)
+    return truncate_telegram_preview("\n".join(lines))
