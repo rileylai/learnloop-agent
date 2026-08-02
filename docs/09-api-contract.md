@@ -1418,12 +1418,12 @@ Notes:
 - `/ingest` creates `pending` change requests only; Notion append remains in accept workflow.
 - Telegram QA uses production Notion chunks only; pending and rejected proposals remain excluded.
 
-## Telegram Operator Command Contract (Steps 89-92)
+## Telegram Operator Command Contract (Steps 89-93)
 
 The webhook is the transport for the following operator commands. Step 89
-defines the shared contract, Steps 90-92 implement `/sync`, `/index-full`,
-`/index-status`, `/cost`, and `/workflow`, and the remaining command handlers
-are delivered by Steps 93-94.
+defines the shared contract, Steps 90-93 implement `/sync`, `/index-full`,
+`/index-status`, `/cost`, `/workflow`, and `/pending`, and the remaining
+command handlers are delivered in Step 94.
 The complete registry, callback mapping, authorization, safe-output, and
 queue rules are in `docs/13-telegram-operator-contract.md`.
 
@@ -1483,6 +1483,21 @@ operation, bounded counts, and known or `unknown` recorded cost. It never
 returns raw metadata, prompts, OCR/source text, secrets, page ids, raw
 exceptions, rerun controls, or reconciliation controls.
 
+### Pending review runtime contract (Step 93)
+
+`/pending` reads pending change requests through the existing proposal query
+orchestrator and returns a bounded `pending_count`, safe title/summary, source
+display name, and current target path. The response includes opaque buttons for
+View, Accept, Reject, and Change target. View uses the one-shot operator
+`pending_view` callback and returns a bounded detail view; it does not call
+Notion, providers, or indexing.
+
+Accept, Reject, and Change target callbacks use the existing `review` family
+and `TelegramReviewOrchestrator`. Only Accept may append to `AI Supplement
+Zone`, verify durable identity, and synchronously re-index. Pending and
+rejected requests remain excluded from production RAG, and no canonical page
+id, callback token, raw source/OCR text, or citation quote is returned.
+
 ### Operator authorization
 
 The existing Telegram trust boundary applies before operator workflow creation:
@@ -1497,7 +1512,7 @@ authorization identifiers.
 Telegram carries only `ll:<opaque_token>`. Server-side mappings classify each
 callback as `picker`, `review`, or `operator`. The Step 90-91 `operator` action
 allowlist is `sync_toggle`, `sync_confirm`, `sync_cancel`,
-`index_full_confirm`, and `index_full_cancel`; later steps add `pending_view`.
+`index_full_confirm`, `index_full_cancel`, and Step 93's `pending_view`.
 Existing review actions remain `accept`, `reject`, and `change_target`.
 Mappings are scoped to
 chat/user, TTL-bound, allowlisted, and atomically claimed for one-shot

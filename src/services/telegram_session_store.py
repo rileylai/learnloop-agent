@@ -41,6 +41,7 @@ TELEGRAM_OPERATOR_CALLBACK_ACTIONS = frozenset(
         "sync_cancel",
         "index_full_confirm",
         "index_full_cancel",
+        "pending_view",
     }
 )
 

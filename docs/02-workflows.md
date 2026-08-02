@@ -358,10 +358,10 @@ Rules:
   replay. Operators inspect them with the read-only queue inspector instead
   of deleting or cleaning a registry.
 
-## Telegram Operator Command Contract (Steps 89-92)
+## Telegram Operator Command Contract (Steps 89-93)
 
 The command and callback contract is defined in
-`docs/13-telegram-operator-contract.md`. The workflow boundary for the next
+`docs/13-telegram-operator-contract.md`. The workflow boundary for the
 operator phase is:
 
 ```text
@@ -458,6 +458,38 @@ With an id it reads one row. The Telegram formatter uses a fixed safe metadata
 allowlist, so prompts, OCR/source text, secrets, raw exceptions, page ids, and
 private metadata never reach the reply. Neither command reruns work or invokes
 Notion, providers, Redis, or mutation/reconciliation controls.
+
+### Pending review inbox workflow (Step 93)
+
+```text
+/pending
+-> read pending change requests through SupplementQueryOrchestrator
+-> render bounded title/summary/source display name/target path
+-> create opaque View callback plus existing review callbacks
+
+pending_view callback
+-> validate exact callback ownership and claim the one-shot operator mapping
+-> acknowledge Telegram
+-> read one pending proposal from PostgreSQL
+-> render bounded detail and existing Accept/Reject/Change target actions
+
+Accept / Reject / Change target callback
+-> dispatch through the existing review callback family
+-> TelegramReviewOrchestrator -> SupplementReviewOrchestrator
+```
+
+Rules:
+- `/pending` and View are PostgreSQL read-only operations. They never call
+  Notion, the provider router, the Notion writer, or the indexing orchestrator.
+- Inbox entries are bounded and expose only safe proposal display fields; raw
+  source/OCR text, citation quotes, canonical page ids, callback tokens, and
+  private metadata are excluded.
+- Accept remains an explicit human action. Only the existing Accept path may
+  append to `AI Supplement Zone`, verify durable identity, and synchronously
+  re-index the target page. Reject and pending content remain excluded from
+  production RAG.
+- A proposal that is no longer pending fails closed; a duplicate View callback
+  cannot repeat the read or create a second review action.
 
 ## API Mutation Idempotency Workflow (Step 76)
 

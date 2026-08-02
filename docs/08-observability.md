@@ -304,7 +304,7 @@ Telegram ingestion observability:
 - Status metadata is recursively redacted for `raw_text`, `source_text`, API
   keys, tokens, authorization values, and webhook secrets.
 
-## Steps 89-92 Telegram Operator Observability Contract
+## Steps 89-93 Telegram Operator Observability Contract
 
 Operator command output and workflow metadata follow the bounded contract in
 `docs/13-telegram-operator-contract.md`:
@@ -337,8 +337,10 @@ Operator command output and workflow metadata follow the bounded contract in
   session storage. The durable indexing workflow records page counts and
   deterministic failure state; Telegram output keeps only safe bounded fields.
 - `/pending` records bounded review action/status and safe proposal display
-  fields only. Accept/reject/change-target actions retain existing review and
-  append/re-index audit semantics.
+  fields only. View is read-only; Accept/reject/change-target actions retain
+  existing review and append/re-index audit semantics. The outer Telegram
+  workflow records only the bounded `pending_count` and review fields, never
+  proposal source text or canonical page ids.
 - `/status` and `/stats` expose readiness/aggregate results, never liveness as
   readiness proof or note content.
 - Operator callback tokens, raw callback payloads, Redis keys, canonical page

@@ -206,6 +206,7 @@ async def handle_telegram_webhook(
             "workflow_detail_stale",
             "workflow_detail_estimated_cost_usd",
             "workflow_recent_count",
+            "pending_count",
         ):
             if key in exc.metadata:
                 detail[key] = exc.metadata[key]
@@ -269,6 +270,7 @@ async def handle_telegram_webhook(
         workflow_detail_stale=result.workflow_detail_stale,
         workflow_detail_estimated_cost_usd=result.workflow_detail_estimated_cost_usd,
         workflow_recent_count=result.workflow_recent_count,
+        pending_count=result.pending_count,
     )
     if result.status == "running":
         content = (

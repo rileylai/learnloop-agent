@@ -19,7 +19,7 @@ from src.app.dependencies import (
 )
 from src.app.main import app
 from src.db.base import Base
-from src.db.models import TelegramUpdateLedger, WorkflowRun
+from src.db.models import ChangeRequest, NotionPage, TelegramUpdateLedger, WorkflowRun
 from src.db.session import get_db_session_factory, get_unit_of_work_factory
 from src.db.session import get_db_session
 from src.db.unit_of_work import SqlAlchemyUnitOfWork
@@ -42,12 +42,23 @@ def _session_factory():
     )
     Base.metadata.create_all(
         engine,
-        tables=[WorkflowRun.__table__, TelegramUpdateLedger.__table__],
+        tables=[
+            WorkflowRun.__table__,
+            TelegramUpdateLedger.__table__,
+            NotionPage.__table__,
+            ChangeRequest.__table__,
+        ],
     )
     return sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
-def _configure(*, session_factory, telegram_client, observability_service):
+def _configure(
+    *,
+    session_factory,
+    telegram_client,
+    observability_service,
+    session_store=None,
+):
     def db_override():
         session = session_factory()
         try:
@@ -68,7 +79,7 @@ def _configure(*, session_factory, telegram_client, observability_service):
     app.dependency_overrides[get_tool_registry] = tool_registry_override
     app.dependency_overrides[get_embedding_client] = lambda: None
     app.dependency_overrides[get_telegram_session_store] = (
-        lambda: InMemoryTelegramSessionStore()
+        lambda: session_store or InMemoryTelegramSessionStore()
     )
     app.dependency_overrides[get_telegram_sync_session_store] = (
         lambda: InMemoryTelegramSyncSessionStore()
@@ -116,6 +127,70 @@ def _telegram_update(update_id: int, text: str) -> dict[str, object]:
             "text": text,
         },
     }
+
+
+def _seed_pending_proposal(session_factory) -> None:
+    session = session_factory()
+    try:
+        session.add(
+            NotionPage(
+                id=1,
+                notion_page_id="pending-target-page",
+                title="NLP Week 5",
+                notion_path="Knowledge/NLP/Week5",
+            )
+        )
+        session.add(
+            ChangeRequest(
+                id=91,
+                source_document_id=None,
+                target_notion_page_id=1,
+                status="pending",
+                proposal_json=json.dumps(
+                    {
+                        "title": "Attention review proposal",
+                        "target_path": (
+                            "Knowledge/NLP/Week5/AI Supplement Zone/Attention review"
+                        ),
+                        "source": {
+                            "source_type": "chat_text",
+                            "source_display_name": "attention-notes.txt",
+                        },
+                        "summary": "Review query, key, and value alignment.",
+                        "concepts": ["query key value"],
+                        "notes": ["Keep the accepted supplement append-only."],
+                        "citations": [],
+                    },
+                    sort_keys=True,
+                ),
+            )
+        )
+        session.add(
+            ChangeRequest(
+                id=92,
+                source_document_id=None,
+                target_notion_page_id=1,
+                status="rejected",
+                proposal_json=json.dumps(
+                    {
+                        "title": "Rejected proposal",
+                        "target_path": "Knowledge/NLP/Week5/AI Supplement Zone/Rejected",
+                        "source": {
+                            "source_type": "chat_text",
+                            "source_display_name": "rejected.txt",
+                        },
+                        "summary": "Must not appear in the pending inbox.",
+                        "concepts": [],
+                        "notes": [],
+                        "citations": [],
+                    },
+                    sort_keys=True,
+                ),
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
 
 
 def test_cost_scopes_preserve_unknowns_and_split_recorded_cost() -> None:
@@ -274,5 +349,128 @@ def test_telegram_cost_and_workflow_commands_are_bounded_and_read_only() -> None
         )
         assert missing.status_code == 404
         assert missing.json()["detail"]["error_code"] == "WORKFLOW_NOT_FOUND"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_telegram_pending_inbox_is_bounded_and_reuses_review_callbacks() -> None:
+    session_factory = _session_factory()
+    _seed_pending_proposal(session_factory)
+    telegram_client = InMemoryTelegramBotClient()
+    session_store = InMemoryTelegramSessionStore()
+    observability_service = WorkflowObservabilityService(
+        session_factory,
+        cost_budget_service=CostBudgetService(),
+    )
+    _configure(
+        session_factory=session_factory,
+        telegram_client=telegram_client,
+        observability_service=observability_service,
+        session_store=session_store,
+    )
+
+    try:
+        client = TestClient(app)
+        inbox = client.post(
+            "/api/telegram/webhook",
+            json=_telegram_update(7201, "/pending"),
+        )
+        assert inbox.status_code == 200
+        inbox_payload = inbox.json()
+        assert inbox_payload["command"] == "pending"
+        assert inbox_payload["pending_count"] == 1
+        assert "Attention review proposal" in inbox_payload["reply_text"]
+        assert "Review query, key, and value alignment." in inbox_payload["reply_text"]
+        assert "Source: attention-notes.txt" in inbox_payload["reply_text"]
+        assert "Target: Knowledge/NLP/Week5" in inbox_payload["reply_text"]
+        assert "Rejected proposal" not in inbox_payload["reply_text"]
+        assert len(inbox_payload["reply_text"]) <= 4096
+
+        inbox_markup = telegram_client.list_sent_messages()[-1].reply_markup
+        assert inbox_markup is not None
+        view_token = inbox_markup["inline_keyboard"][0][0]["callback_data"]
+        assert view_token.startswith("ll:")
+        assert "91" not in view_token
+
+        cross_user_view = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 7202,
+                "callback_query": {
+                    "id": "pending-view",
+                    "from": {"id": 999},
+                    "data": view_token,
+                    "message": {"message_id": 7202, "chat": {"id": 123}},
+                },
+            },
+        )
+        assert cross_user_view.status_code == 400
+        assert cross_user_view.json()["detail"]["error_code"] == "INVALID_CALLBACK"
+
+        view = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 7203,
+                "callback_query": {
+                    "id": "pending-view-valid",
+                    "from": {"id": 456},
+                    "data": view_token,
+                    "message": {"message_id": 7203, "chat": {"id": 123}},
+                },
+            },
+        )
+        assert view.status_code == 200
+        view_payload = view.json()
+        assert view_payload["change_request_id"] == 91
+        assert view_payload["change_request_status"] == "pending"
+        assert "Concepts: query key value" in view_payload["reply_text"]
+        assert "Status: pending" in view_payload["reply_text"]
+        assert view_payload["business_status"] == "succeeded"
+
+        view_markup = telegram_client.list_sent_messages()[-1].reply_markup
+        assert view_markup is not None
+        reject_token = view_markup["inline_keyboard"][0][1]["callback_data"]
+        assert reject_token.startswith("ll:")
+
+        duplicate_view = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 7204,
+                "callback_query": {
+                    "id": "pending-view-duplicate",
+                    "from": {"id": 456},
+                    "data": view_token,
+                    "message": {"message_id": 7204, "chat": {"id": 123}},
+                },
+            },
+        )
+        assert duplicate_view.status_code == 400
+        assert duplicate_view.json()["detail"]["error_code"] == "INVALID_CALLBACK"
+
+        rejected = client.post(
+            "/api/telegram/webhook",
+            json={
+                "update_id": 7205,
+                "callback_query": {
+                    "id": "pending-reject",
+                    "from": {"id": 456},
+                    "data": reject_token,
+                    "message": {"message_id": 7203, "chat": {"id": 123}},
+                },
+            },
+        )
+        assert rejected.status_code == 200
+        rejected_payload = rejected.json()
+        assert rejected_payload["review_action"] == "reject"
+        assert rejected_payload["change_request_status"] == "rejected"
+
+        verify_session = session_factory()
+        try:
+            proposal = verify_session.get(ChangeRequest, 91)
+            assert proposal is not None
+            assert proposal.status == "rejected"
+            assert verify_session.query(NotionPage).count() == 1
+        finally:
+            verify_session.close()
     finally:
         app.dependency_overrides.clear()

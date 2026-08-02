@@ -141,12 +141,13 @@ Valid user actions include:
 After those manual actions, the user must run `/api/notion/index/incremental`.
 The system must reconcile derived PostgreSQL and vector state by page-level replacement from current Notion content.
 
-## Telegram Operator Guardrails (Steps 89-92)
+## Telegram Operator Guardrails (Steps 89-93)
 
 The operator command contract is defined in
 `docs/13-telegram-operator-contract.md`. Steps 90-92 add selected-page sync,
 full-index confirmation, persisted index status, cost, and workflow views; the
-remaining rules become executable as Steps 93-94 add their handlers:
+pending review inbox is now executable, and the remaining status/stats rules
+are delivered in Step 94:
 
 - `/sync` and `/index-full` may mutate only derived PostgreSQL/vector index
   state through the existing indexing orchestrators. They never write Notion.
@@ -174,9 +175,10 @@ remaining rules become executable as Steps 93-94 add their handlers:
   ownership. Authorization failures happen before workflow creation or queue
   enqueue.
 - New operator callbacks use a distinct typed server-side callback family and
-  cannot fall through to upload picker or proposal review branches. Wire data
-  remains `ll:<opaque_token>` and is TTL-bound, allowlisted, and atomically
-  claimed for one-shot mutations.
+  cannot fall through to upload picker or proposal review branches. The
+  `pending_view` callback is read-only; Accept/Reject/Change target retain the
+  existing review family. Wire data remains `ll:<opaque_token>` and is
+  TTL-bound, allowlisted, and atomically claimed for one-shot mutations.
 
 ## Production-RAG Rules
 Production RAG may retrieve:

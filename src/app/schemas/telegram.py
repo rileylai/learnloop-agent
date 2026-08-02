@@ -108,3 +108,4 @@ class TelegramWebhookResponse(BaseModel):
     workflow_detail_stale: Optional[bool] = None
     workflow_detail_estimated_cost_usd: Optional[float] = None
     workflow_recent_count: Optional[int] = None
+    pending_count: Optional[int] = None

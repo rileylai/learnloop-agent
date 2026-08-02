@@ -39,6 +39,7 @@ from src.orchestrators.telegram_index_orchestrator import (
     TelegramFullIndexView,
 )
 from src.orchestrators.telegram_operator_orchestrator import (
+    TelegramPendingItem,
     TelegramOperatorError,
     TelegramOperatorOrchestrator,
 )
@@ -211,6 +212,7 @@ class TelegramGatewayResult:
     workflow_detail_stale: Optional[bool] = None
     workflow_detail_estimated_cost_usd: Optional[float] = None
     workflow_recent_count: Optional[int] = None
+    pending_count: Optional[int] = None
 
 
 @dataclass
@@ -712,6 +714,7 @@ class TelegramGatewayOrchestrator:
         workflow_detail_stale: Optional[bool] = None
         workflow_detail_estimated_cost_usd: Optional[float] = None
         workflow_recent_count: Optional[int] = None
+        pending_count: Optional[int] = None
 
         try:
             normalized_text = (text or "").strip()
@@ -818,7 +821,40 @@ class TelegramGatewayOrchestrator:
                     callback_ack_status = "failed"
                     callback_ack_failure_reason = ack_failure_reason
                 if callback_action.callback_kind == TELEGRAM_CALLBACK_KIND_OPERATOR:
-                    if self._telegram_sync_orchestrator is None:
+                    if callback_action.action == "pending_view":
+                        if self._telegram_operator_orchestrator is None:
+                            raise TelegramGatewayError(
+                                error_code="TELEGRAM_OPERATOR_NOT_CONFIGURED",
+                                message="Telegram pending review is not configured",
+                                http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                                failure_reason="UNKNOWN_ERROR",
+                            )
+                        if callback_action.change_request_id is None:
+                            raise TelegramGatewayError(
+                                error_code="INVALID_CALLBACK",
+                                message="This pending proposal action is invalid.",
+                                http_status_code=HTTPStatus.BAD_REQUEST,
+                                failure_reason="INVALID_CALLBACK",
+                            )
+                        pending_result = self._telegram_operator_orchestrator.get_pending_detail(
+                            change_request_id=callback_action.change_request_id,
+                        )
+                        reply_text = pending_result.reply_text
+                        pending_count = len(pending_result.items)
+                        change_request_id = callback_action.change_request_id
+                        change_request_status = "pending"
+                        reply_markup = self._build_review_markup_for_change_request(
+                            change_request_id=callback_action.change_request_id,
+                            session_id=callback_action.session_id,
+                            chat_id=normalized_chat_id,
+                            user_id=normalized_user_id,
+                            allow_accept=(
+                                bool(pending_result.items)
+                                and pending_result.items[0].target_path != "unassigned"
+                            ),
+                        )
+                        business_status = "succeeded"
+                    elif self._telegram_sync_orchestrator is None:
                         raise TelegramGatewayError(
                             error_code="TELEGRAM_SYNC_NOT_CONFIGURED",
                             message="Telegram sync is not configured",
@@ -1249,6 +1285,25 @@ class TelegramGatewayOrchestrator:
                     workflow_result.estimated_cost_usd
                 )
                 workflow_recent_count = workflow_result.recent_workflow_count
+                business_status = "succeeded"
+            elif command == "pending":
+                if self._telegram_operator_orchestrator is None:
+                    raise TelegramGatewayError(
+                        error_code="TELEGRAM_OPERATOR_NOT_CONFIGURED",
+                        message="Telegram pending review is not configured",
+                        http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                        failure_reason="UNKNOWN_ERROR",
+                    )
+                pending_result = self._telegram_operator_orchestrator.get_pending(
+                    command_text=normalized_input_text,
+                )
+                reply_text = pending_result.reply_text
+                pending_count = len(pending_result.items)
+                reply_markup = self._build_pending_markup(
+                    items=pending_result.items,
+                    chat_id=normalized_chat_id,
+                    user_id=normalized_user_id,
+                )
                 business_status = "succeeded"
             elif command == "pages":
                 if self._telegram_page_orchestrator is None:
@@ -1707,6 +1762,7 @@ class TelegramGatewayOrchestrator:
                         "workflow_detail_stale": workflow_detail_stale,
                         "workflow_detail_estimated_cost_usd": workflow_detail_estimated_cost_usd,
                         "workflow_recent_count": workflow_recent_count,
+                        "pending_count": pending_count,
                         **latency.as_dict(),
                     },
                     sort_keys=True,
@@ -1768,6 +1824,7 @@ class TelegramGatewayOrchestrator:
                 workflow_detail_stale=workflow_detail_stale,
                 workflow_detail_estimated_cost_usd=workflow_detail_estimated_cost_usd,
                 workflow_recent_count=workflow_recent_count,
+                pending_count=pending_count,
             )
         except WorkflowRunAuditUpdateError:
             raise
@@ -2341,10 +2398,22 @@ class TelegramGatewayOrchestrator:
             if not callback_action.session_id:
                 raise TelegramGatewayError(
                     error_code="INVALID_CALLBACK",
-                    message="This sync session is invalid.",
+                    message="This operator session is invalid.",
                     http_status_code=HTTPStatus.BAD_REQUEST,
                     failure_reason="INVALID_CALLBACK",
                 )
+            if callback_action.action == "pending_view":
+                if (
+                    callback_action.change_request_id is None
+                    or callback_action.change_request_id <= 0
+                ):
+                    raise TelegramGatewayError(
+                        error_code="INVALID_CALLBACK",
+                        message="This pending proposal action is invalid.",
+                        http_status_code=HTTPStatus.BAD_REQUEST,
+                        failure_reason="INVALID_CALLBACK",
+                    )
+                return
             if callback_action.action == "sync_toggle" and not callback_action.target_notion_page_id:
                 raise TelegramGatewayError(
                     error_code="INVALID_CALLBACK",
@@ -2698,6 +2767,116 @@ class TelegramGatewayOrchestrator:
             user_id=user_id,
         )
 
+    def _create_callback_token(
+        self,
+        *,
+        session_id: str,
+        chat_id: str,
+        user_id: str,
+        action: str,
+        callback_kind: str,
+        change_request_id: Optional[int] = None,
+    ) -> str:
+        callback_store = self._telegram_session_store
+        if callback_store is not None:
+            return callback_store.create_callback(
+                session_id=session_id,
+                chat_id=chat_id,
+                user_id=user_id,
+                action=action,
+                callback_kind=callback_kind,
+                change_request_id=change_request_id,
+            )
+        if self._telegram_ingestion_orchestrator is not None:
+            return self._telegram_ingestion_orchestrator.create_callback(
+                session_id=session_id,
+                chat_id=chat_id,
+                user_id=user_id,
+                action=action,
+                callback_kind=callback_kind,
+                change_request_id=change_request_id,
+            )
+        raise TelegramGatewayError(
+            error_code="TELEGRAM_OPERATOR_NOT_CONFIGURED",
+            message="Telegram callback storage is not configured",
+            http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            failure_reason="UNKNOWN_ERROR",
+        )
+
+    def _build_pending_markup(
+        self,
+        *,
+        items: tuple[TelegramPendingItem, ...],
+        chat_id: str,
+        user_id: str,
+    ) -> dict[str, Any]:
+        buttons: list[list[dict[str, str]]] = []
+        for item in items:
+            session_id = f"pending-{item.change_request_id}"
+            view_token = self._create_callback_token(
+                session_id=session_id,
+                chat_id=chat_id,
+                user_id=user_id,
+                action="pending_view",
+                callback_kind=TELEGRAM_CALLBACK_KIND_OPERATOR,
+                change_request_id=item.change_request_id,
+            )
+            accept_token = self._create_callback_token(
+                session_id=session_id,
+                chat_id=chat_id,
+                user_id=user_id,
+                action="accept",
+                callback_kind=TELEGRAM_CALLBACK_KIND_REVIEW,
+                change_request_id=item.change_request_id,
+            ) if item.target_path != "unassigned" else None
+            reject_token = self._create_callback_token(
+                session_id=session_id,
+                chat_id=chat_id,
+                user_id=user_id,
+                action="reject",
+                callback_kind=TELEGRAM_CALLBACK_KIND_REVIEW,
+                change_request_id=item.change_request_id,
+            )
+            change_target_token = self._create_callback_token(
+                session_id=session_id,
+                chat_id=chat_id,
+                user_id=user_id,
+                action="change_target",
+                callback_kind=TELEGRAM_CALLBACK_KIND_REVIEW,
+                change_request_id=item.change_request_id,
+            )
+            buttons.extend(
+                [
+                    [
+                        {
+                            "text": f"View #{item.change_request_id}",
+                            "callback_data": f"ll:{view_token}",
+                        },
+                        *(
+                            [
+                                {
+                                    "text": "Accept",
+                                    "callback_data": f"ll:{accept_token}",
+                                }
+                            ]
+                            if accept_token is not None
+                            else []
+                        ),
+                        {
+                            "text": "Reject",
+                            "callback_data": f"ll:{reject_token}",
+                        },
+                    ],
+                    [
+                        {
+                            "text": "Change target",
+                            "callback_data": f"ll:{change_target_token}",
+                        }
+                    ],
+                ]
+            )
+        return {"inline_keyboard": buttons}
+
     def _build_review_markup_for_change_request(
         self,
         *,
@@ -2705,18 +2884,21 @@ class TelegramGatewayOrchestrator:
         session_id: Optional[str],
         chat_id: str,
         user_id: str,
+        allow_accept: bool = True,
     ) -> dict[str, Any]:
-        if self._telegram_ingestion_orchestrator is None:
-            return {}
-        accept_token = self._telegram_ingestion_orchestrator.create_callback(
-            session_id=session_id or f"proposal-{change_request_id}",
-            chat_id=chat_id,
-            user_id=user_id,
-            action="accept",
-            callback_kind=TELEGRAM_CALLBACK_KIND_REVIEW,
-            change_request_id=change_request_id,
+        accept_token = (
+            self._create_callback_token(
+                session_id=session_id or f"proposal-{change_request_id}",
+                chat_id=chat_id,
+                user_id=user_id,
+                action="accept",
+                callback_kind=TELEGRAM_CALLBACK_KIND_REVIEW,
+                change_request_id=change_request_id,
+            )
+            if allow_accept
+            else None
         )
-        reject_token = self._telegram_ingestion_orchestrator.create_callback(
+        reject_token = self._create_callback_token(
             session_id=session_id or f"proposal-{change_request_id}",
             chat_id=chat_id,
             user_id=user_id,
@@ -2724,7 +2906,7 @@ class TelegramGatewayOrchestrator:
             callback_kind=TELEGRAM_CALLBACK_KIND_REVIEW,
             change_request_id=change_request_id,
         )
-        change_target_token = self._telegram_ingestion_orchestrator.create_callback(
+        change_target_token = self._create_callback_token(
             session_id=session_id or f"proposal-{change_request_id}",
             chat_id=chat_id,
             user_id=user_id,
@@ -2732,12 +2914,17 @@ class TelegramGatewayOrchestrator:
             callback_kind=TELEGRAM_CALLBACK_KIND_REVIEW,
             change_request_id=change_request_id,
         )
+        review_buttons: list[dict[str, str]] = []
+        if accept_token is not None:
+            review_buttons.append(
+                {"text": "Accept", "callback_data": f"ll:{accept_token}"}
+            )
+        review_buttons.append(
+            {"text": "Reject", "callback_data": f"ll:{reject_token}"}
+        )
         return {
             "inline_keyboard": [
-                [
-                    {"text": "Accept", "callback_data": f"ll:{accept_token}"},
-                    {"text": "Reject", "callback_data": f"ll:{reject_token}"},
-                ],
+                review_buttons,
                 [{"text": "Change target", "callback_data": f"ll:{change_target_token}"}],
             ]
         }
@@ -2812,6 +2999,7 @@ class TelegramGatewayOrchestrator:
                 "/index-full — review a warning, then rebuild the full derived index\n"
                 "/index-status [workflow_id] — show persisted index workflow status\n"
                 "/cost [today|7d|month|workflow <workflow_id>] — show recorded cost and budget status\n"
+                "/pending — review pending proposals with View/Accept/Reject/Change target\n"
                 "/workflow [workflow_id] — show recent or redacted workflow status\n"
                 "/ingest — upload a PDF or image, then choose a target page button\n"
                 "/ingest --page <external_page_id> — text fallback for automation\n"
@@ -2825,7 +3013,8 @@ class TelegramGatewayOrchestrator:
                 "Sync is read-only for Notion and requires explicit confirmation. "
                 "Full index also requires explicit confirmation; status only reads "
                 "persisted workflow state. Cost and workflow commands are read-only "
-                "and do not rerun or reconcile work. "
+                "and do not rerun or reconcile work. Pending is read-only until an "
+                "explicit review action; only Accept can append and re-index. "
                 "Accept is always an explicit human action; proposals without a "
                 "target cannot be accepted."
             )

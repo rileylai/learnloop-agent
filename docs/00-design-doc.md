@@ -649,16 +649,16 @@ Metadata note:
 ### 13.6 Telegram APIs
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/api/telegram/webhook` | Handle Telegram webhook updates for existing commands plus the Step 89-92 operator contract and typed callbacks. |
+| POST | `/api/telegram/webhook` | Handle Telegram webhook updates for existing commands plus the Step 89-93 operator contract and typed callbacks. |
 
-### 13.7 Telegram Operator Command Contract (Steps 89-92)
+### 13.7 Telegram Operator Command Contract (Steps 89-93)
 
 The operator command contract is defined in
 `docs/13-telegram-operator-contract.md`. It covers `/sync`, `/index-full`,
 `/index-status`, `/cost`, `/pending`, `/workflow`, `/status`, `/stats`, and
 the updated `/help` surface. The `/sync`, `/index-full`, `/index-status`,
-`/cost`, and `/workflow` implementations are delivered in Steps 90-92; the
-remaining operator commands are delivered in Steps 93-94.
+`/cost`, `/workflow`, and `/pending` implementations are delivered in Steps
+90-93; the remaining operator commands are delivered in Step 94.
 
 Operator commands are classified as read-only or derived-index/review
 mutations. `/index-full` requires an opaque server-side confirmation callback;
@@ -722,6 +722,21 @@ safe status, age, stale state, failure reason, operation, bounded counts, and
 known or `unknown` recorded cost. They never rerun, reconcile, call Notion or
 providers, or expose prompts, OCR/source text, secrets, raw exceptions, page
 ids, or private metadata.
+
+### 13.11 Telegram pending review inbox (Step 93)
+
+`/pending` reads only pending change requests through the existing proposal
+query/repository boundary. It renders a bounded list containing the proposal
+title/summary, source display name, and current backend target path. The
+Telegram response does not expose source/OCR text, raw citation quotes,
+canonical page ids, callback tokens, or private metadata.
+
+Each inbox item has View, Accept, Reject, and Change target actions. View is a
+read-only `pending_view` operator callback. Accept, Reject, and Change target
+reuse the existing `review` callback family and `TelegramReviewOrchestrator`.
+Only an explicit Accept can enter `Change Request -> Human Accept -> Append to
+AI Supplement Zone -> durable identity verification -> synchronous page
+re-index`; pending and rejected content remains outside production RAG.
 
 Telegram ingestion UX contract:
 - Uploads are acknowledged first, then a progressive hierarchy picker shows root

@@ -2,11 +2,11 @@
 
 ## Purpose
 
-This document defines the Step 89-92 contract for operating synchronization,
+This document defines the Step 89-93 contract for operating synchronization,
 indexing, review, cost, workflow, readiness, and knowledge-base status from
-Telegram. Steps 90-92 implement selected-page `/sync`, guarded
-`/index-full`, read-only `/index-status`, `/cost`, and `/workflow`; the
-remaining operator handlers are delivered by Steps 93-95.
+Telegram. Steps 90-93 implement selected-page `/sync`, guarded
+`/index-full`, read-only `/index-status`, `/cost`, `/workflow`, and `/pending`;
+the remaining operator handlers are delivered by Steps 94-95.
 
 ## Scope and non-goals
 
@@ -15,10 +15,10 @@ checks the caller boundary, claims update idempotency, and delegates a typed
 intent to an orchestrator. It does not call Notion, PostgreSQL, Redis, an LLM,
 or a provider/tool adapter directly.
 
-Steps 90-92 implement selected-page `/sync`, guarded full indexing, persisted
-index status, bounded cost scopes, and redacted workflow queries. The pending
-inbox, readiness/status, and stats remain unimplemented until their roadmap
-steps. Existing ingestion, QA, and review behavior remains unchanged.
+Steps 90-93 implement selected-page `/sync`, guarded full indexing, persisted
+index status, bounded cost scopes, redacted workflow queries, and the pending
+review inbox. Readiness/status and stats remain unimplemented until their
+roadmap steps. Existing ingestion, QA, and review behavior remains unchanged.
 
 ## Command registry
 
@@ -102,7 +102,7 @@ The server-side `callback_kind` is one of:
 |---|---|---|
 | `picker` | Existing `open_page`, `select_target`, `back`, `root`, and legacy compatibility actions | Upload or review target hierarchy only; navigation is side-effect free |
 | `review` | Existing `accept`, `reject`, `change_target` | Existing proposal review orchestrator; only explicit Accept can append and re-index |
-| `operator` | `sync_toggle`, `sync_confirm`, `sync_cancel`, `index_full_confirm`, `index_full_cancel` | Steps 90-91 selection/confirmation; Step 92 adds read-only cost/workflow commands without new callbacks |
+| `operator` | `sync_toggle`, `sync_confirm`, `sync_cancel`, `index_full_confirm`, `index_full_cancel`, `pending_view` | Steps 90-91 selection/confirmation; Step 92 adds read-only cost/workflow commands; Step 93 adds read-only pending View |
 
 Operator mappings may retain server-side page ids, workflow ids, proposal ids,
 selection sets, chat/user ownership, creation time, expiry, and a one-shot
@@ -140,8 +140,10 @@ commands with guessed ids or by an LLM response:
   callback. Cancel is side-effect free. Unknown embedding pricing remains
   unknown; it never becomes a guessed estimate. `/index-status` reads the
   persisted workflow and cannot trigger discovery or indexing.
-- `/pending` View is read-only. Accept, Reject, and Change target callbacks
-  remain explicit review actions. Accept delegates to
+- `/pending` reads PostgreSQL pending rows only and renders bounded proposal
+  title/summary, source display name, and current target path. View is
+  read-only. Accept, Reject, and Change target callbacks remain explicit review
+  actions. Accept delegates to
   `SupplementReviewOrchestrator` and preserves
   `Change Request -> Human Accept -> Append to AI Supplement Zone -> durable
   identity verification -> synchronous page re-index`. Pending and rejected
@@ -174,8 +176,9 @@ Operator work must use these boundaries:
 - `/index-status` and `/workflow`: workflow service/repository; no Notion read,
   provider call, or direct rerun.
 - `/cost`: workflow observability/cost service; unknown pricing is preserved.
-- `/pending`: proposal repository/service for reads; existing review
-  orchestrator for explicit mutations.
+- `/pending`: proposal query/repository for reads; `pending_view` is an
+  owner-bound one-shot read callback, while Accept/Reject/Change target reuse
+  the existing review orchestrator.
 - `/status`: readiness service and its `QueueClient`/database probes.
 - `/stats`: aggregate repository/service only.
 
@@ -183,7 +186,7 @@ Redis callback/session state is ephemeral coordination state. PostgreSQL
 workflow, update-ledger, proposal, and index state remains the durable source
 for operator status. No raw PostgreSQL or Redis client is an LLM-facing tool.
 
-## Steps 90-92 implementation invariants
+## Steps 90-93 implementation invariants
 
 - Live page discovery goes through the read-only Notion tool and can discover
   pages that are not yet in the local derived index.
@@ -205,8 +208,18 @@ for operator status. No raw PostgreSQL or Redis client is an LLM-facing tool.
   with an id it returns one fixed-field redacted detail. It never reruns or
   reconciles work and never forwards prompts, OCR/source text, secrets, raw
   exceptions, page ids, or private metadata.
+- `/pending` reads at most eight pending proposals through the proposal query
+  boundary and renders bounded title/summary, source display name, and current
+  target path fields. View returns bounded detail through `pending_view` and
+  remains read-only.
+- Pending inbox Accept/Reject/Change target callbacks use the existing review
+  family. Only Accept can append to `AI Supplement Zone` and synchronously
+  re-index; pending and rejected requests remain excluded from production RAG.
+- Pending callback mappings keep the change request id server-side, use opaque
+  TTL-bound owner-scoped tokens, and one-shot claim only the read-only View
+  action. Duplicate or cross-user View callbacks fail closed.
 
-## Step 89 acceptance invariants
+## Operator contract acceptance invariants
 
 - Every new command has one documented syntax, read/mutation class, safe output
   set, and queue boundary.
@@ -216,5 +229,6 @@ for operator status. No raw PostgreSQL or Redis client is an LLM-facing tool.
   allowlisted.
 - Authorization, confirmation, write safety, RAG exclusion, and state
   transitions remain deterministic backend policy.
-- This contract does not implement the remaining Steps 93-94 or imply live
-  cost, review-inbox, readiness, or stats verification.
+- Step 93 implements the bounded pending review inbox; this contract does not
+  imply live review, readiness, or stats verification. Steps 94-95 remain
+  separate roadmap work.

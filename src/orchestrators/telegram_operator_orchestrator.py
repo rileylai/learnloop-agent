@@ -5,6 +5,11 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any, Optional
 
+from src.orchestrators.supplement_query_orchestrator import (
+    SupplementQueryError,
+    SupplementQueryOrchestrator,
+    SupplementReviewItemResult,
+)
 from src.observability.redaction import sanitize_sensitive_text
 from src.services import (
     COST_SCOPE_7D,
@@ -47,6 +52,24 @@ class TelegramWorkflowResult:
     recent_workflow_count: int
 
 
+@dataclass(frozen=True)
+class TelegramPendingItem:
+    change_request_id: int
+    title: str
+    summary: str
+    source_display_name: str
+    target_path: str
+    concepts: tuple[str, ...]
+    notes: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class TelegramPendingResult:
+    status: str
+    reply_text: str
+    items: tuple[TelegramPendingItem, ...]
+
+
 class TelegramOperatorError(Exception):
     def __init__(
         self,
@@ -64,9 +87,13 @@ class TelegramOperatorError(Exception):
 
 
 class TelegramOperatorOrchestrator:
-    """Expose bounded, read-only Telegram cost and workflow views."""
+    """Expose bounded, read-only Telegram operator views."""
 
     _RECENT_WORKFLOW_LIMIT = 5
+    _PENDING_LIMIT = 8
+    _PENDING_TITLE_LIMIT = 120
+    _PENDING_SUMMARY_LIMIT = 260
+    _PENDING_DISPLAY_LIMIT = 160
     _SAFE_METADATA_KEYS = (
         "operation",
         "sync_mode",
@@ -86,8 +113,84 @@ class TelegramOperatorOrchestrator:
         self,
         *,
         workflow_observability_service: WorkflowObservabilityService,
+        supplement_query_orchestrator: Optional[SupplementQueryOrchestrator] = None,
     ) -> None:
         self._workflow_observability_service = workflow_observability_service
+        self._supplement_query_orchestrator = supplement_query_orchestrator
+
+    def get_pending(self, *, command_text: str) -> TelegramPendingResult:
+        tokens = self._parse_tokens(command_text, usage="/pending")
+        if len(tokens) != 1:
+            raise TelegramOperatorError(
+                error_code="INVALID_ARGUMENT",
+                message="Usage: /pending",
+                http_status_code=HTTPStatus.BAD_REQUEST,
+                failure_reason="INVALID_ARGUMENT",
+            )
+        if self._supplement_query_orchestrator is None:
+            raise TelegramOperatorError(
+                error_code="TELEGRAM_OPERATOR_NOT_CONFIGURED",
+                message="Telegram pending review is not configured",
+                http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                failure_reason="UNKNOWN_ERROR",
+            )
+        try:
+            items = self._supplement_query_orchestrator.list_pending(
+                limit=self._PENDING_LIMIT
+            )
+        except SupplementQueryError as exc:
+            raise TelegramOperatorError(
+                error_code=exc.error_code,
+                message="Pending proposals could not be loaded.",
+                http_status_code=exc.http_status_code,
+                failure_reason=exc.failure_reason,
+            ) from exc
+        pending_items = tuple(self._pending_item(item) for item in items)
+        return TelegramPendingResult(
+            status="succeeded",
+            reply_text=self._pending_list_reply(pending_items),
+            items=pending_items,
+        )
+
+    def get_pending_detail(self, *, change_request_id: int) -> TelegramPendingResult:
+        if change_request_id <= 0:
+            raise TelegramOperatorError(
+                error_code="INVALID_ARGUMENT",
+                message="change_request_id must be positive",
+                http_status_code=HTTPStatus.BAD_REQUEST,
+                failure_reason="INVALID_ARGUMENT",
+            )
+        if self._supplement_query_orchestrator is None:
+            raise TelegramOperatorError(
+                error_code="TELEGRAM_OPERATOR_NOT_CONFIGURED",
+                message="Telegram pending review is not configured",
+                http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                failure_reason="UNKNOWN_ERROR",
+            )
+        try:
+            item = self._supplement_query_orchestrator.get_detail(
+                change_request_id=change_request_id
+            )
+        except SupplementQueryError as exc:
+            raise TelegramOperatorError(
+                error_code=exc.error_code,
+                message="Pending proposal detail could not be loaded.",
+                http_status_code=exc.http_status_code,
+                failure_reason=exc.failure_reason,
+            ) from exc
+        if item.status.strip().lower() != "pending":
+            raise TelegramOperatorError(
+                error_code="INVALID_STATE_TRANSITION",
+                message="This proposal is no longer pending.",
+                http_status_code=HTTPStatus.CONFLICT,
+                failure_reason="UNKNOWN_ERROR",
+            )
+        pending_item = self._pending_item(item)
+        return TelegramPendingResult(
+            status="succeeded",
+            reply_text=self._pending_detail_reply(pending_item),
+            items=(pending_item,),
+        )
 
     def get_cost(self, *, command_text: str) -> TelegramCostResult:
         scope, workflow_run_id = self._parse_cost_command(command_text)
@@ -144,6 +247,85 @@ class TelegramOperatorOrchestrator:
             estimated_cost_usd=workflow.estimated_cost_usd,
             recent_workflow_count=1,
         )
+
+    @classmethod
+    def _pending_item(
+        cls,
+        item: SupplementReviewItemResult,
+    ) -> TelegramPendingItem:
+        target_path = (
+            item.target_page.notion_path
+            if item.target_page is not None
+            else "unassigned"
+        )
+        return TelegramPendingItem(
+            change_request_id=item.change_request_id,
+            title=cls._bounded_text(item.proposal.title, cls._PENDING_TITLE_LIMIT),
+            summary=cls._bounded_text(item.proposal.summary, cls._PENDING_SUMMARY_LIMIT),
+            source_display_name=cls._bounded_text(
+                item.proposal.source_display_name,
+                cls._PENDING_DISPLAY_LIMIT,
+            ),
+            target_path=cls._bounded_text(target_path, cls._PENDING_DISPLAY_LIMIT),
+            concepts=tuple(
+                cls._bounded_text(concept, cls._PENDING_DISPLAY_LIMIT)
+                for concept in item.proposal.concepts[:12]
+            ),
+            notes=tuple(
+                cls._bounded_text(note, cls._PENDING_SUMMARY_LIMIT)
+                for note in item.proposal.notes[:12]
+            ),
+        )
+
+    @classmethod
+    def _pending_list_reply(cls, items: tuple[TelegramPendingItem, ...]) -> str:
+        if not items:
+            return "No pending proposals."
+        lines = [f"Pending proposals ({len(items)}):"]
+        for item in items:
+            lines.extend(
+                [
+                    f"\n#{item.change_request_id} {item.title}",
+                    f"Summary: {item.summary}",
+                    f"Source: {item.source_display_name}",
+                    f"Target: {item.target_path}",
+                ]
+            )
+        return cls._truncate_reply("\n".join(lines))
+
+    @classmethod
+    def _pending_detail_reply(cls, item: TelegramPendingItem) -> str:
+        lines = [
+            f"Pending proposal #{item.change_request_id}",
+            f"Title: {item.title}",
+            f"Summary: {item.summary}",
+            f"Source: {item.source_display_name}",
+            f"Target: {item.target_path}",
+        ]
+        if item.concepts:
+            lines.append("Concepts: " + ", ".join(item.concepts))
+        if item.notes:
+            lines.append("Notes:")
+            lines.extend(f"- {note}" for note in item.notes)
+        lines.append("Status: pending")
+        return cls._truncate_reply("\n".join(lines))
+
+    @staticmethod
+    def _bounded_text(value: object, limit: int) -> str:
+        normalized = " ".join(sanitize_sensitive_text(str(value)).split())
+        if not normalized:
+            return "unknown"
+        if len(normalized) <= limit:
+            return normalized
+        return normalized[: limit - 1].rstrip() + "…"
+
+    @staticmethod
+    def _truncate_reply(value: str) -> str:
+        limit = 4096
+        if len(value) <= limit:
+            return value
+        suffix = "\n…"
+        return value[: limit - len(suffix)].rstrip() + suffix
 
     @classmethod
     def _parse_cost_command(cls, command_text: str) -> tuple[str, Optional[int]]:

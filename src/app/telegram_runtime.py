@@ -163,6 +163,10 @@ def build_telegram_gateway_orchestrator(
     )
     telegram_operator_orchestrator = TelegramOperatorOrchestrator(
         workflow_observability_service=workflow_observability_service,
+        supplement_query_orchestrator=SupplementQueryOrchestrator(
+            change_request_repository=ChangeRequestRepository(db_session),
+            notion_page_repository=NotionPageRepository(db_session),
+        ),
     )
     telegram_sync_orchestrator = TelegramSyncOrchestrator(
         tool_registry=tool_registry,
