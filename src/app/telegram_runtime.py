@@ -23,6 +23,7 @@ from src.orchestrators import (
     TelegramReviewOrchestrator,
     TelegramSyncOrchestrator,
     TelegramIndexOrchestrator,
+    TelegramOperatorOrchestrator,
 )
 from src.providers import EmbeddingClient, ProviderRouter
 from src.queue import QueueClient
@@ -160,6 +161,9 @@ def build_telegram_gateway_orchestrator(
         workflow_run_service=workflow_run_service,
         workflow_observability_service=workflow_observability_service,
     )
+    telegram_operator_orchestrator = TelegramOperatorOrchestrator(
+        workflow_observability_service=workflow_observability_service,
+    )
     telegram_sync_orchestrator = TelegramSyncOrchestrator(
         tool_registry=tool_registry,
         session_store=telegram_sync_session_store
@@ -180,6 +184,7 @@ def build_telegram_gateway_orchestrator(
         telegram_page_orchestrator=telegram_page_orchestrator,
         telegram_sync_orchestrator=telegram_sync_orchestrator,
         telegram_index_orchestrator=telegram_index_orchestrator,
+        telegram_operator_orchestrator=telegram_operator_orchestrator,
         telegram_session_store=telegram_session_store,
         telegram_index_session_store=telegram_index_session_store,
         trust_boundary=trust_boundary,

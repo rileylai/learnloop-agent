@@ -4,10 +4,17 @@ from src.services.cost_tracker import (
     LLMTokenPricing,
 )
 from src.services.cost_budget import (
+    COST_SCOPE_7D,
+    COST_SCOPE_MONTH,
+    COST_SCOPE_TODAY,
+    COST_SCOPE_WORKFLOW,
     CostBudgetDecision,
     CostBudgetService,
     CostBudgetSnapshot,
+    CostScopeSnapshot,
     extract_workflow_cost,
+    extract_workflow_cost_breakdown,
+    WorkflowCostBreakdown,
 )
 from src.services.duplicate_checker import (
     DuplicateCheckResult,
@@ -157,7 +164,14 @@ __all__ = [
     "CostBudgetDecision",
     "CostBudgetService",
     "CostBudgetSnapshot",
+    "CostScopeSnapshot",
+    "COST_SCOPE_7D",
+    "COST_SCOPE_MONTH",
+    "COST_SCOPE_TODAY",
+    "COST_SCOPE_WORKFLOW",
     "extract_workflow_cost",
+    "extract_workflow_cost_breakdown",
+    "WorkflowCostBreakdown",
     "MetricsService",
     "DuplicateCheckResult",
     "DuplicateKnowledgeChecker",

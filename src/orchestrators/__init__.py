@@ -102,6 +102,12 @@ from src.orchestrators.telegram_index_orchestrator import (
     TelegramIndexOrchestrator,
     TelegramIndexResult,
 )
+from src.orchestrators.telegram_operator_orchestrator import (
+    TelegramCostResult,
+    TelegramOperatorError,
+    TelegramOperatorOrchestrator,
+    TelegramWorkflowResult,
+)
 from src.orchestrators.telegram_page_orchestrator import (
     TelegramPageItem,
     TelegramPageOrchestrator,
@@ -212,6 +218,10 @@ __all__ = [
     "TelegramIndexError",
     "TelegramIndexOrchestrator",
     "TelegramIndexResult",
+    "TelegramCostResult",
+    "TelegramOperatorError",
+    "TelegramOperatorOrchestrator",
+    "TelegramWorkflowResult",
     "TelegramPageItem",
     "TelegramPageOrchestrator",
     "TelegramPagesResult",

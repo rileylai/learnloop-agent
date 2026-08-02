@@ -10,7 +10,9 @@ from src.db.session import SessionFactory
 from src.observability.redaction import sanitize_sensitive_text
 from src.repositories import WorkflowRunRepository
 from src.services.cost_budget import (
+    COST_SCOPE_WORKFLOW,
     CostBudgetService,
+    CostScopeSnapshot,
     CostBudgetSnapshot,
     extract_workflow_cost,
 )
@@ -122,6 +124,35 @@ class WorkflowObservabilityService:
                 limit=limit,
             )
             return self._cost_budget_service.summarize(workflow_runs, now=now)
+        finally:
+            session.close()
+
+    def cost_summary(
+        self,
+        *,
+        scope: str,
+        workflow_run_id: Optional[int] = None,
+        now: Optional[datetime] = None,
+        limit: int = 10000,
+    ) -> Optional[CostScopeSnapshot]:
+        if scope == COST_SCOPE_WORKFLOW and workflow_run_id is None:
+            raise ValueError("workflow cost scope requires workflow_run_id")
+        session = self._session_factory()
+        try:
+            repository = WorkflowRunRepository(session)
+            if workflow_run_id is not None:
+                workflow_run = repository.get_workflow_run_by_id(workflow_run_id)
+                if workflow_run is None:
+                    return None
+                workflow_runs = [workflow_run]
+            else:
+                workflow_runs = repository.list_workflow_runs(limit=limit)
+            return self._cost_budget_service.summarize_scope(
+                workflow_runs,
+                scope=scope,
+                workflow_run_id=workflow_run_id,
+                now=now,
+            )
         finally:
             session.close()
 

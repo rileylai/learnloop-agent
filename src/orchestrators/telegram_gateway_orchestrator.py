@@ -38,6 +38,10 @@ from src.orchestrators.telegram_index_orchestrator import (
     TelegramIndexResult,
     TelegramFullIndexView,
 )
+from src.orchestrators.telegram_operator_orchestrator import (
+    TelegramOperatorError,
+    TelegramOperatorOrchestrator,
+)
 from src.services import (
     STANDARD_FAILURE_REASONS,
     WorkflowRunAuditUpdateError,
@@ -189,6 +193,24 @@ class TelegramGatewayResult:
     index_failure_reason: Optional[str] = None
     index_estimated_cost_usd: Optional[float] = None
     index_stale: Optional[bool] = None
+    cost_scope: Optional[str] = None
+    cost_workflow_run_id: Optional[int] = None
+    cost_total_usd: Optional[float] = None
+    cost_llm_usd: Optional[float] = None
+    cost_embedding_usd: Optional[float] = None
+    cost_unknown_workflow_count: Optional[int] = None
+    cost_budget_status: Optional[str] = None
+    cost_budget_usd: Optional[float] = None
+    cost_workflow_budget_exceeded_count: Optional[int] = None
+    cost_workflow_budget_usd: Optional[float] = None
+    workflow_detail_run_id: Optional[int] = None
+    workflow_detail_type: Optional[str] = None
+    workflow_detail_status: Optional[str] = None
+    workflow_detail_failure_reason: Optional[str] = None
+    workflow_detail_age_seconds: Optional[float] = None
+    workflow_detail_stale: Optional[bool] = None
+    workflow_detail_estimated_cost_usd: Optional[float] = None
+    workflow_recent_count: Optional[int] = None
 
 
 @dataclass
@@ -231,6 +253,7 @@ class TelegramGatewayOrchestrator:
         telegram_session_store: Optional[TelegramSessionStore] = None,
         telegram_index_orchestrator: Optional[TelegramIndexOrchestrator] = None,
         telegram_index_session_store: Optional[TelegramIndexSessionStore] = None,
+        telegram_operator_orchestrator: Optional[TelegramOperatorOrchestrator] = None,
         trust_boundary: Optional[TrustBoundaryService] = None,
         update_idempotency_service: Optional[TelegramUpdateIdempotencyService] = None,
         queue_client: Optional[QueueClient] = None,
@@ -245,6 +268,7 @@ class TelegramGatewayOrchestrator:
         self._telegram_session_store = telegram_session_store
         self._telegram_index_orchestrator = telegram_index_orchestrator
         self._telegram_index_session_store = telegram_index_session_store
+        self._telegram_operator_orchestrator = telegram_operator_orchestrator
         self._trust_boundary = trust_boundary
         self._update_idempotency_service = update_idempotency_service
         self._queue_client = queue_client
@@ -670,6 +694,24 @@ class TelegramGatewayOrchestrator:
         index_failure_reason: Optional[str] = None
         index_estimated_cost_usd: Optional[float] = None
         index_stale: Optional[bool] = None
+        cost_scope: Optional[str] = None
+        cost_workflow_run_id: Optional[int] = None
+        cost_total_usd: Optional[float] = None
+        cost_llm_usd: Optional[float] = None
+        cost_embedding_usd: Optional[float] = None
+        cost_unknown_workflow_count: Optional[int] = None
+        cost_budget_status: Optional[str] = None
+        cost_budget_usd: Optional[float] = None
+        cost_workflow_budget_exceeded_count: Optional[int] = None
+        cost_workflow_budget_usd: Optional[float] = None
+        workflow_detail_run_id: Optional[int] = None
+        workflow_detail_type: Optional[str] = None
+        workflow_detail_status: Optional[str] = None
+        workflow_detail_failure_reason: Optional[str] = None
+        workflow_detail_age_seconds: Optional[float] = None
+        workflow_detail_stale: Optional[bool] = None
+        workflow_detail_estimated_cost_usd: Optional[float] = None
+        workflow_recent_count: Optional[int] = None
 
         try:
             normalized_text = (text or "").strip()
@@ -1160,6 +1202,54 @@ class TelegramGatewayOrchestrator:
                 index_estimated_cost_usd = index_result.estimated_cost_usd
                 index_stale = index_result.stale
                 business_status = "succeeded"
+            elif command == "cost":
+                if self._telegram_operator_orchestrator is None:
+                    raise TelegramGatewayError(
+                        error_code="TELEGRAM_OPERATOR_NOT_CONFIGURED",
+                        message="Telegram operator status is not configured",
+                        http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                        failure_reason="UNKNOWN_ERROR",
+                    )
+                cost_result = self._telegram_operator_orchestrator.get_cost(
+                    command_text=normalized_input_text,
+                )
+                reply_text = cost_result.reply_text
+                cost_scope = cost_result.scope
+                cost_workflow_run_id = cost_result.workflow_run_id
+                cost_total_usd = cost_result.total_cost_usd
+                cost_llm_usd = cost_result.llm_cost_usd
+                cost_embedding_usd = cost_result.embedding_cost_usd
+                cost_unknown_workflow_count = cost_result.unknown_cost_workflow_count
+                cost_budget_status = cost_result.budget_status
+                cost_budget_usd = cost_result.budget_usd
+                cost_workflow_budget_exceeded_count = (
+                    cost_result.workflow_budget_exceeded_count
+                )
+                cost_workflow_budget_usd = cost_result.workflow_budget_usd
+                business_status = "succeeded"
+            elif command == "workflow":
+                if self._telegram_operator_orchestrator is None:
+                    raise TelegramGatewayError(
+                        error_code="TELEGRAM_OPERATOR_NOT_CONFIGURED",
+                        message="Telegram operator status is not configured",
+                        http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                        failure_reason="UNKNOWN_ERROR",
+                    )
+                workflow_result = self._telegram_operator_orchestrator.get_workflow(
+                    command_text=normalized_input_text,
+                )
+                reply_text = workflow_result.reply_text
+                workflow_detail_run_id = workflow_result.workflow_run_id
+                workflow_detail_type = workflow_result.workflow_type
+                workflow_detail_status = workflow_result.workflow_status
+                workflow_detail_failure_reason = workflow_result.failure_reason
+                workflow_detail_age_seconds = workflow_result.age_seconds
+                workflow_detail_stale = workflow_result.stale
+                workflow_detail_estimated_cost_usd = (
+                    workflow_result.estimated_cost_usd
+                )
+                workflow_recent_count = workflow_result.recent_workflow_count
+                business_status = "succeeded"
             elif command == "pages":
                 if self._telegram_page_orchestrator is None:
                     raise TelegramGatewayError(
@@ -1599,6 +1689,24 @@ class TelegramGatewayOrchestrator:
                         "index_failure_reason": index_failure_reason,
                         "index_estimated_cost_usd": index_estimated_cost_usd,
                         "index_stale": index_stale,
+                        "cost_scope": cost_scope,
+                        "cost_workflow_run_id": cost_workflow_run_id,
+                        "cost_total_usd": cost_total_usd,
+                        "cost_llm_usd": cost_llm_usd,
+                        "cost_embedding_usd": cost_embedding_usd,
+                        "cost_unknown_workflow_count": cost_unknown_workflow_count,
+                        "cost_budget_status": cost_budget_status,
+                        "cost_budget_usd": cost_budget_usd,
+                        "cost_workflow_budget_exceeded_count": cost_workflow_budget_exceeded_count,
+                        "cost_workflow_budget_usd": cost_workflow_budget_usd,
+                        "workflow_detail_run_id": workflow_detail_run_id,
+                        "workflow_detail_type": workflow_detail_type,
+                        "workflow_detail_status": workflow_detail_status,
+                        "workflow_detail_failure_reason": workflow_detail_failure_reason,
+                        "workflow_detail_age_seconds": workflow_detail_age_seconds,
+                        "workflow_detail_stale": workflow_detail_stale,
+                        "workflow_detail_estimated_cost_usd": workflow_detail_estimated_cost_usd,
+                        "workflow_recent_count": workflow_recent_count,
                         **latency.as_dict(),
                     },
                     sort_keys=True,
@@ -1642,6 +1750,24 @@ class TelegramGatewayOrchestrator:
                 index_failure_reason=index_failure_reason,
                 index_estimated_cost_usd=index_estimated_cost_usd,
                 index_stale=index_stale,
+                cost_scope=cost_scope,
+                cost_workflow_run_id=cost_workflow_run_id,
+                cost_total_usd=cost_total_usd,
+                cost_llm_usd=cost_llm_usd,
+                cost_embedding_usd=cost_embedding_usd,
+                cost_unknown_workflow_count=cost_unknown_workflow_count,
+                cost_budget_status=cost_budget_status,
+                cost_budget_usd=cost_budget_usd,
+                cost_workflow_budget_exceeded_count=cost_workflow_budget_exceeded_count,
+                cost_workflow_budget_usd=cost_workflow_budget_usd,
+                workflow_detail_run_id=workflow_detail_run_id,
+                workflow_detail_type=workflow_detail_type,
+                workflow_detail_status=workflow_detail_status,
+                workflow_detail_failure_reason=workflow_detail_failure_reason,
+                workflow_detail_age_seconds=workflow_detail_age_seconds,
+                workflow_detail_stale=workflow_detail_stale,
+                workflow_detail_estimated_cost_usd=workflow_detail_estimated_cost_usd,
+                workflow_recent_count=workflow_recent_count,
             )
         except WorkflowRunAuditUpdateError:
             raise
@@ -1720,6 +1846,27 @@ class TelegramGatewayOrchestrator:
                         "index_remaining_page_count",
                     }
                 },
+            }
+            self._mark_failed_workflow(
+                workflow_run_id=workflow_run.id,
+                failure_reason=exc.failure_reason,
+                error_code=exc.error_code,
+                metadata=failure_metadata,
+            )
+            raise TelegramGatewayError(
+                error_code=exc.error_code,
+                message=exc.message,
+                http_status_code=exc.http_status_code,
+                failure_reason=self._normalize_failure_reason(exc.failure_reason),
+                workflow_run_id=workflow_run.id,
+                metadata=failure_metadata,
+            ) from exc
+        except TelegramOperatorError as exc:
+            failure_metadata = {
+                "business_status": "failed",
+                "callback_action": callback_action_name,
+                "callback_ack_status": callback_ack_status,
+                "preview_delivery_status": preview_delivery_status,
             }
             self._mark_failed_workflow(
                 workflow_run_id=workflow_run.id,
@@ -2664,6 +2811,8 @@ class TelegramGatewayOrchestrator:
                 "/sync — discover accessible Notion pages and select pages to re-index\n"
                 "/index-full — review a warning, then rebuild the full derived index\n"
                 "/index-status [workflow_id] — show persisted index workflow status\n"
+                "/cost [today|7d|month|workflow <workflow_id>] — show recorded cost and budget status\n"
+                "/workflow [workflow_id] — show recent or redacted workflow status\n"
                 "/ingest — upload a PDF or image, then choose a target page button\n"
                 "/ingest --page <external_page_id> — text fallback for automation\n"
                 "/retry-proposal — retry proposal validation using the existing source\n"
@@ -2675,7 +2824,8 @@ class TelegramGatewayOrchestrator:
                 "After upload, choose the parent or child page from the buttons. "
                 "Sync is read-only for Notion and requires explicit confirmation. "
                 "Full index also requires explicit confirmation; status only reads "
-                "persisted workflow state. "
+                "persisted workflow state. Cost and workflow commands are read-only "
+                "and do not rerun or reconcile work. "
                 "Accept is always an explicit human action; proposals without a "
                 "target cannot be accepted."
             )

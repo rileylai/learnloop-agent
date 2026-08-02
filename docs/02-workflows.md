@@ -358,7 +358,7 @@ Rules:
   replay. Operators inspect them with the read-only queue inspector instead
   of deleting or cleaning a registry.
 
-## Telegram Operator Command Contract (Steps 89-90)
+## Telegram Operator Command Contract (Steps 89-92)
 
 The command and callback contract is defined in
 `docs/13-telegram-operator-contract.md`. The workflow boundary for the next
@@ -428,12 +428,36 @@ write is attempted.
 /index-status [workflow_id]
 -> persisted indexing workflow lookup
 -> redacted status/count/cost reply
+
+/cost [scope]
+-> bounded cost aggregation with unknown-cost and budget state
+
+/workflow [workflow_id]
+-> recent or requested persisted workflow lookup
+-> fixed-field redacted summary/detail reply
 ```
 
 `/index-status` is read-only and never re-runs discovery or indexing. Full
 index confirmation is one-shot; duplicate update ids replay the Telegram
 ledger result, while a duplicate fresh callback cannot start another indexing
 workflow.
+
+### Cost and workflow status workflow (Step 92)
+
+`/cost` is read-only and defaults to the current UTC day. Its accepted scopes
+are `today`, rolling `7d`, calendar `month`, and `workflow <workflow_id>`.
+Known LLM/proposal/QA and embedding/indexing fields are aggregated separately
+only when recorded in workflow metadata. Unknown model pricing increments the
+unknown-cost count and remains `unknown`; it is never treated as zero or
+estimated from tokens. A period scope reports daily budget only for `today`
+and reports workflow-budget exceedance counts; a workflow scope evaluates the
+configured workflow budget for that run.
+
+`/workflow` without an id reads at most five recent persisted workflow rows.
+With an id it reads one row. The Telegram formatter uses a fixed safe metadata
+allowlist, so prompts, OCR/source text, secrets, raw exceptions, page ids, and
+private metadata never reach the reply. Neither command reruns work or invokes
+Notion, providers, Redis, or mutation/reconciliation controls.
 
 ## API Mutation Idempotency Workflow (Step 76)
 

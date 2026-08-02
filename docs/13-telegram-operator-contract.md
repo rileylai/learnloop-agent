@@ -2,11 +2,11 @@
 
 ## Purpose
 
-This document defines the Step 89-90 contract for operating synchronization,
+This document defines the Step 89-92 contract for operating synchronization,
 indexing, review, cost, workflow, readiness, and knowledge-base status from
-Telegram. Steps 90-91 implement selected-page `/sync`, guarded
-`/index-full`, and read-only `/index-status`; the remaining operator handlers
-are delivered by Steps 92-95.
+Telegram. Steps 90-92 implement selected-page `/sync`, guarded
+`/index-full`, read-only `/index-status`, `/cost`, and `/workflow`; the
+remaining operator handlers are delivered by Steps 93-95.
 
 ## Scope and non-goals
 
@@ -15,10 +15,10 @@ checks the caller boundary, claims update idempotency, and delegates a typed
 intent to an orchestrator. It does not call Notion, PostgreSQL, Redis, an LLM,
 or a provider/tool adapter directly.
 
-Step 90 implements selected-page `/sync`; full indexing, operator
-cost/workflow queries, the pending inbox, readiness/status, and stats remain
-unimplemented until their roadmap steps. Existing ingestion, QA, and review
-behavior remains unchanged.
+Steps 90-92 implement selected-page `/sync`, guarded full indexing, persisted
+index status, bounded cost scopes, and redacted workflow queries. The pending
+inbox, readiness/status, and stats remain unimplemented until their roadmap
+steps. Existing ingestion, QA, and review behavior remains unchanged.
 
 ## Command registry
 
@@ -102,7 +102,7 @@ The server-side `callback_kind` is one of:
 |---|---|---|
 | `picker` | Existing `open_page`, `select_target`, `back`, `root`, and legacy compatibility actions | Upload or review target hierarchy only; navigation is side-effect free |
 | `review` | Existing `accept`, `reject`, `change_target` | Existing proposal review orchestrator; only explicit Accept can append and re-index |
-| `operator` | `sync_toggle`, `sync_confirm`, `sync_cancel`, `index_full_confirm`, `index_full_cancel` | Steps 90-91 selection/confirmation; later steps add the remaining operator flows |
+| `operator` | `sync_toggle`, `sync_confirm`, `sync_cancel`, `index_full_confirm`, `index_full_cancel` | Steps 90-91 selection/confirmation; Step 92 adds read-only cost/workflow commands without new callbacks |
 
 Operator mappings may retain server-side page ids, workflow ids, proposal ids,
 selection sets, chat/user ownership, creation time, expiry, and a one-shot
@@ -183,7 +183,7 @@ Redis callback/session state is ephemeral coordination state. PostgreSQL
 workflow, update-ledger, proposal, and index state remains the durable source
 for operator status. No raw PostgreSQL or Redis client is an LLM-facing tool.
 
-## Steps 90-91 implementation invariants
+## Steps 90-92 implementation invariants
 
 - Live page discovery goes through the read-only Notion tool and can discover
   pages that are not yet in the local derived index.
@@ -197,6 +197,14 @@ for operator status. No raw PostgreSQL or Redis client is an LLM-facing tool.
   only the one-shot confirm callback starts `NotionFullIndexOrchestrator`.
 - `/index-status` exposes bounded persisted workflow fields and never calls
   the Notion reader or indexing orchestrator.
+- `/cost` accepts only `today`, rolling `7d`, calendar `month`, and
+  `workflow <workflow_id>` scopes. It separates recorded LLM/proposal/QA and
+  embedding/indexing costs where metadata supports them; unknown pricing stays
+  `unknown` and no token-based estimate is invented.
+- `/workflow` without an id returns at most five recent workflow summaries;
+  with an id it returns one fixed-field redacted detail. It never reruns or
+  reconciles work and never forwards prompts, OCR/source text, secrets, raw
+  exceptions, page ids, or private metadata.
 
 ## Step 89 acceptance invariants
 
@@ -208,5 +216,5 @@ for operator status. No raw PostgreSQL or Redis client is an LLM-facing tool.
   allowlisted.
 - Authorization, confirmation, write safety, RAG exclusion, and state
   transitions remain deterministic backend policy.
-- This contract does not implement the remaining Steps 92-94 or imply live
+- This contract does not implement the remaining Steps 93-94 or imply live
   cost, review-inbox, readiness, or stats verification.

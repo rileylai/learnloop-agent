@@ -1418,12 +1418,12 @@ Notes:
 - `/ingest` creates `pending` change requests only; Notion append remains in accept workflow.
 - Telegram QA uses production Notion chunks only; pending and rejected proposals remain excluded.
 
-## Telegram Operator Command Contract (Steps 89-90)
+## Telegram Operator Command Contract (Steps 89-92)
 
 The webhook is the transport for the following operator commands. Step 89
-defines the shared contract, Steps 90-91 implement `/sync`, `/index-full`, and
-`/index-status`, and the remaining command handlers are delivered by Steps
-92-94.
+defines the shared contract, Steps 90-92 implement `/sync`, `/index-full`,
+`/index-status`, `/cost`, and `/workflow`, and the remaining command handlers
+are delivered by Steps 93-94.
 The complete registry, callback mapping, authorization, safe-output, and
 queue rules are in `docs/13-telegram-operator-contract.md`.
 
@@ -1465,6 +1465,23 @@ or `unknown` embedding cost.
 `indexing` workflow. It does not call the Notion reader, embedding provider, or
 indexing orchestrator. Unknown workflow ids return a bounded not-found error;
 raw metadata, page ids, page content, and exception bodies are not returned.
+
+### Cost and workflow runtime contract (Step 92)
+
+`/cost` defaults to `today` and accepts `today`, rolling `7d`, calendar
+`month`, or `workflow <workflow_id>`. Its response may include the requested
+scope, known total cost, separate recorded LLM/proposal/QA and
+embedding/indexing cost totals, unknown-cost workflow count, daily/workflow
+budget state, and bounded workflow-budget exceedance counts. Unknown model
+pricing remains `unknown`; no value is inferred from tokens or workflow type.
+Unknown workflow ids return a bounded not-found error.
+
+`/workflow` without an id returns at most five recent workflow summaries. With
+an id it returns one redacted workflow detail. Safe fields include workflow
+reference, type/status, age, stale state, deterministic failure reason,
+operation, bounded counts, and known or `unknown` recorded cost. It never
+returns raw metadata, prompts, OCR/source text, secrets, page ids, raw
+exceptions, rerun controls, or reconciliation controls.
 
 ### Operator authorization
 

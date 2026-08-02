@@ -649,16 +649,16 @@ Metadata note:
 ### 13.6 Telegram APIs
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/api/telegram/webhook` | Handle Telegram webhook updates for existing commands plus the Step 89-90 operator contract and typed callbacks. |
+| POST | `/api/telegram/webhook` | Handle Telegram webhook updates for existing commands plus the Step 89-92 operator contract and typed callbacks. |
 
-### 13.7 Telegram Operator Command Contract (Steps 89-90)
+### 13.7 Telegram Operator Command Contract (Steps 89-92)
 
 The operator command contract is defined in
 `docs/13-telegram-operator-contract.md`. It covers `/sync`, `/index-full`,
 `/index-status`, `/cost`, `/pending`, `/workflow`, `/status`, `/stats`, and
-the updated `/help` surface. The `/sync`, `/index-full`, and `/index-status`
-implementations are delivered in Steps 90-91; the remaining operator commands
-are delivered in Steps 92-94.
+the updated `/help` surface. The `/sync`, `/index-full`, `/index-status`,
+`/cost`, and `/workflow` implementations are delivered in Steps 90-92; the
+remaining operator commands are delivered in Steps 93-94.
 
 Operator commands are classified as read-only or derived-index/review
 mutations. `/index-full` requires an opaque server-side confirmation callback;
@@ -704,6 +704,24 @@ the workflow observability service. It never discovers pages or calls Notion.
 Telegram receives only workflow reference, status, bounded page counts,
 remaining/failed counts, deterministic failure reason, stale state, and known
 or `unknown` embedding cost.
+
+### 13.10 Telegram cost and workflow status (Step 92)
+
+`/cost` defaults to the current UTC day and accepts bounded `today`, rolling
+`7d`, calendar `month`, or `workflow <workflow_id>` scopes. It reuses the
+backend cost aggregation and reports known total, LLM/proposal/QA cost,
+embedding/indexing cost, unknown-cost workflow count, and budget status. A
+missing or unsupported model price remains `unknown`; the Telegram surface
+never guesses a value. Daily budget applies only to the `today` scope, while
+workflow budget is evaluated for a workflow scope and reported as an aggregate
+exceeded count for period scopes.
+
+`/workflow` without an id shows at most five recent persisted workflow
+summaries. With an id it shows one redacted detail view. Both views expose only
+safe status, age, stale state, failure reason, operation, bounded counts, and
+known or `unknown` recorded cost. They never rerun, reconcile, call Notion or
+providers, or expose prompts, OCR/source text, secrets, raw exceptions, page
+ids, or private metadata.
 
 Telegram ingestion UX contract:
 - Uploads are acknowledged first, then a progressive hierarchy picker shows root

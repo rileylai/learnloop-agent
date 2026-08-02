@@ -141,12 +141,12 @@ Valid user actions include:
 After those manual actions, the user must run `/api/notion/index/incremental`.
 The system must reconcile derived PostgreSQL and vector state by page-level replacement from current Notion content.
 
-## Telegram Operator Guardrails (Steps 89-91)
+## Telegram Operator Guardrails (Steps 89-92)
 
 The operator command contract is defined in
-`docs/13-telegram-operator-contract.md`. Steps 90-91 add selected-page sync,
-full-index confirmation, and persisted index status; the remaining rules become
-executable as Steps 92-94 add their handlers:
+`docs/13-telegram-operator-contract.md`. Steps 90-92 add selected-page sync,
+full-index confirmation, persisted index status, cost, and workflow views; the
+remaining rules become executable as Steps 93-94 add their handlers:
 
 - `/sync` and `/index-full` may mutate only derived PostgreSQL/vector index
   state through the existing indexing orchestrators. They never write Notion.
@@ -165,6 +165,10 @@ executable as Steps 92-94 add their handlers:
   bounded safe status, aggregate, timestamp, path/display, and known-cost
   fields. They never expose raw source/OCR text, prompts, vectors, secrets,
   callback tokens, Redis keys, raw exceptions, or direct mutation controls.
+- `/cost` accepts only the documented bounded scopes. Unknown pricing stays
+  `unknown`; period totals do not infer cost from token counts, and workflow
+  detail never exposes cost-bearing private metadata beyond safe aggregate
+  fields.
 - Telegram authorization is deterministic: configured webhook secret, then
   configured allowed chat policy, then exact callback `(chat_id, user_id)`
   ownership. Authorization failures happen before workflow creation or queue
