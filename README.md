@@ -1,379 +1,312 @@
 # LearnLoop Agent
 
-LearnLoop Agent is a local-first Notion knowledge agent.
-It reads existing Notion notes as knowledge, generates reviewable AI supplement
-proposals from new learning sources, and writes accepted content only into
-`AI Supplement Zone`.
+![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688?logo=fastapi&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-pgvector-4169E1?logo=postgresql&logoColor=white)
+![Redis](https://img.shields.io/badge/Redis-RQ-DC382D?logo=redis&logoColor=white)
 
-## What it does
+> A local-first AI knowledge workflow that turns learning materials into
+> reviewable, reusable Notion knowledge.
 
-- Index existing Notion notes as read-only knowledge.
-- Ingest PDF, URL, YouTube transcript, screenshot OCR, and chat text sources.
-- Generate AI supplement proposals from new sources.
-- Require human review before any write.
-- Append accepted content only under `AI Supplement Zone`.
-- Answer questions with RAG and Notion path citation.
-
-## Current readiness
-
-The repository is currently **demo-ready**, not local-user-ready or
-release-ready.
-
-Confirmed today:
-
-- The deterministic one-command mock demo runs without external credentials.
-- Core indexing, RAG, proposal, review, append-only, re-index, and Telegram
-  orchestration paths have deterministic tests with fake or in-memory
-  adapters.
-- PostgreSQL/pgvector schema and repository support exist.
-
-Not yet available as a real-user flow:
-
-- The default Notion backend uses bundled mock JSON. A live read-only reader
-  and append-only writer can be selected with `NOTION_BACKEND=live`. Step 83
-  verified one human-approved append against a dedicated sandbox page, but
-  this does not establish arbitrary production-workspace readiness.
-- A wired Redis/RQ worker is optional by configuration. Prometheus-compatible
-  metrics, protected workflow status/reconciliation, and cost-budget alerts
-  are implemented. API/webhook authentication, persistent Telegram update idempotency, and `/ready` are
-  implemented; `/ready` now provides
-  dependency-aware readiness; it is distinct from the shallow `/health` route.
-- Telegram transport and target-aware `/ingest` are mock-tested. Step 88 also
-  has user-confirmed guarded Telegram live E2E evidence; future live runs still
-  require explicit operator configuration and opt-in.
-- A complete Notion indexing -> QA -> proposal -> accept -> append -> re-index
-  flow has been verified in the dedicated sandbox canary, and Step 88 has
-  separately completed the guarded Telegram live path. Neither establishes
-  arbitrary production-workspace, cloud, or always-on sync readiness.
-
-See `dev_state/PROJECT_ROADMAP.md` for the local
-`Real-World Usability + Release Hardening` plan.
-
-## Safety model
-
-- Existing Notion content is read-only for direct agent editing.
-- Manual-created notes are read-only for direct agent editing.
-- Old AI supplement blocks are read-only for direct agent editing.
-- Pending and rejected change requests are excluded from production RAG.
-- All AI writes follow: `Change Request -> Human Accept -> Append to AI Supplement Zone`.
-- Notion remains the source of truth.
-
-## Architecture rule
-
-High-level flow:
+LearnLoop Agent is a Notion-centered learning agent. It grounds AI supplements
+in external material, requires human approval, and appends accepted knowledge
+only to Notion's `AI Supplement Zone`. Re-indexing then makes it available to
+grounded QA.
 
 ```text
-API Route -> Orchestrator -> Service / Tool -> Repository -> External System
+Learning Sources
+  → Content Extraction
+  → Grounded Proposal
+  → Human Review
+  → Append-only Notion Update
+  → Page Re-indexing
+  → Reusable Knowledge for QA
 ```
 
-LLM flow:
+The product boundary is the knowledge lifecycle—not just an LLM call or a chat
+interface. LearnLoop manages how external material becomes durable, traceable,
+and user-controlled knowledge.
+
+## Demo
+
+<!--
+Add a GIF or a compact screenshot sequence showing:
+Telegram upload → target selection → proposal preview → human accept
+→ Notion AI Supplement Zone → grounded QA citation
+-->
+
+## Why LearnLoop
+
+Learning material is scattered across PDFs, web pages, YouTube transcripts,
+screenshots, and chat messages. Manual organization requires repeated reading,
+summarizing, classifying, and copying. A chatbot may answer a question, but it
+does not govern how a source becomes trusted long-term knowledge.
+
+Allowing an LLM to modify original notes directly can overwrite user work,
+duplicate updates, pollute retrieval, and obscure what changed. LearnLoop
+separates proposal generation from persistence, while deterministic backend
+logic controls review, write policy, identity, re-indexing, and RAG eligibility.
+
+## Product Highlights
+
+| Capability                            | Product value                                                                                                                            |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **End-to-end knowledge lifecycle**    | Connects ingestion, normalization, proposal generation, review, append, re-indexing, and QA in one traceable workflow.                   |
+| **Multi-source ingestion**            | Accepts PDFs, URLs, YouTube transcripts, screenshot OCR, and pasted chat text.                                                           |
+| **Grounded RAG QA**                   | Retrieves eligible indexed Notion chunks through pgvector cosine search or a deterministic lexical fallback, with Notion path citations. |
+| **Human-governed updates**            | Persists AI output as a pending change request and requires an explicit human decision before writing.                                   |
+| **Append-only knowledge boundary**    | Preserves original notes and old supplement blocks while identifying accepted additions with `change-request-<id>`.                      |
+| **Reliable background processing**    | Moves OCR and LLM workloads to Redis/RQ workers while preserving durable workflow and idempotency state.                                 |
+| **Extensible integration boundaries** | Isolates LLM providers, Notion, parsers, queues, and persistence behind stable application interfaces.                                   |
+
+## Design Focus
+
+LearnLoop complements general-purpose workspace assistants by focusing on one
+specific problem: governing how external learning material becomes persistent,
+reviewed knowledge.
+
+| Focus               | LearnLoop approach                                                                                                                               |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Source intake       | Ingest external learning material through bounded source adapters.                                                                               |
+| Persistence         | Generate a proposal first, then require a human-reviewed append.                                                                                 |
+| Knowledge lifecycle | Re-index accepted updates before making them available to QA.                                                                                    |
+| System ownership    | Keep permissions, validation, retrieval eligibility, and state transitions in deterministic backend code rather than delegating them to the LLM. |
+
+## Core Workflows
+
+### Knowledge indexing and QA
 
 ```text
-API Route -> Orchestrator -> Provider Router -> Provider Adapter
+Notion Pages
+  → Read-only Indexing
+  → Section-aware Chunking and Embedding
+  → PostgreSQL / pgvector Index
+
+User Question
+  → Query Embedding
+  → Scoped Retrieval
+  → Grounded Answer
+  → Notion Path Citations
 ```
 
-Tool flow:
+QA uses source and knowledge-state filters before retrieval. When vector search
+is unavailable or unusable, it falls back to deterministic lexical retrieval
+over the same eligible Notion scope.
+
+### Learning source ingestion
 
 ```text
-API Route -> Orchestrator -> Tool Registry -> Local Tool Adapter
+PDF / URL / YouTube / Screenshots / Chat Text
+  → Parse and Normalize
+  → Persist Source Snapshot and Content Hash
+  → Generate Grounded Proposal
+  → Pending Human Review
 ```
 
-### Architecture diagram
+Adapters enforce source limits before extraction or OCR. Proposal generation
+creates workflow state but does not write to Notion.
 
-This diagram shows the target MVP boundaries. The current runtime differences
-are listed in `Current readiness` above.
+### Controlled knowledge update
+
+```text
+Pending Proposal
+  → Human Accept
+  → Append to AI Supplement Zone
+  → Verify Durable Identity
+  → Re-index Target Page
+  → Make Approved Knowledge Available to QA
+```
+
+Reject and edit-later actions leave Notion unchanged. Accepted content becomes
+retrievable only after the append is verified and the target page is re-indexed.
+
+## Safety and Knowledge Governance
+
+The write boundary is deliberately narrower than the read and retrieval
+boundaries:
+
+| Principle                           | Runtime behavior                                                                                                                    |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| **Existing content is read-only**   | The agent never overwrites, moves, deletes, or directly edits original notes, manually created blocks, or old AI supplement blocks. |
+| **Human acceptance is mandatory**   | AI output remains pending until an explicit human decision enters the write path.                                                   |
+| **Writes are append-only**          | Accepted content may be created only under the target page's `AI Supplement Zone`.                                                  |
+| **RAG eligibility is controlled**   | Pending and rejected proposals are excluded; accepted content becomes eligible only after append and re-index.                      |
+| **Append identity is durable**      | A visible `change-request-<id>` marker and read-after-write verification make retries identity-aware.                               |
+| **Concurrent state is revalidated** | Row locking and state revalidation protect review, retry, and page-replacement transitions.                                         |
+| **Backend code owns policy**        | Deterministic logic owns permissions, targets, validation, citations, write safety, and state transitions.                          |
+
+Notion remains the source of truth. Manual Notion changes are reconciled by an
+explicit full or page-scoped incremental sync; the local runtime does not
+continuously synchronize the workspace.
+
+## System Architecture
 
 ```mermaid
-flowchart TD
-    USER["User or Telegram Bot"] --> API["FastAPI routes"]
-    API --> ORCH["Orchestrators"]
-    ORCH --> ROUTER["Provider Router"]
-    ROUTER --> PROVIDER["Provider Adapter"]
-    PROVIDER --> LLM["OpenAI now; Claude or Gemini later"]
+flowchart LR
+    HTTP["HTTP Client"] --> API["FastAPI Routes"]
+    TELEGRAM["Telegram Webhook"] --> API
+
+    API -->|"Direct HTTP application path"| ORCH["Application Orchestrators"]
+    API -->|"Queued Telegram long-running path"| QUEUE["QueueClient"]
+
+    QUEUE --> REDIS["Redis / RQ"]
+    REDIS --> WORKER["Background Worker"]
+    WORKER --> ORCH
+
+    ORCH --> POLICY["Deterministic Services"]
+    ORCH --> PROVIDER["Provider Router"]
     ORCH --> TOOLS["Tool Registry"]
-    TOOLS --> ADAPTERS["Local tool adapters in MVP"]
-    ADAPTERS --> NOTION["Notion API after live adapter wiring"]
-    ADAPTERS --> PARSERS["PDF / URL / OCR / YouTube parsers"]
-    ORCH --> CORE["Repositories, QueueClient, and deterministic guardrails"]
-    CORE --> STORAGE["PostgreSQL / pgvector; Redis after worker wiring"]
-    NOTION --> SOURCE["Existing notes: read-only source of truth"]
-    NOTION --> ZONE["AI Supplement Zone: append-only after accept"]
+    ORCH --> REPO["Repositories / Unit of Work"]
+
+    PROVIDER --> OPENAI["OpenAI"]
+    TOOLS --> NOTION["Notion API"]
+    TOOLS --> PARSERS["Source Parsers"]
+    REPO --> POSTGRES["PostgreSQL / pgvector"]
 ```
 
-## Local runtime
+Regular HTTP operations call application orchestrators directly. Routes define
+contracts and trust boundaries without owning business logic.
 
-- MVP is local-only.
-- Docker Compose provides local PostgreSQL and Redis.
-- The bundled mock Notion pages under `mock_data/notion_pages/` are loaded
-  automatically for the demo flow. They are test/demo fixtures only; the demo
-  uses ephemeral SQLite and production PostgreSQL rejects mock-source indexing.
-- The default demo path performs no real Notion write.
+With Redis configured, the Telegram webhook claims durable update state,
+enqueues long-running work, and returns before processing. The worker consumes
+the `telegram` queue and invokes the same application workflows. Without Redis,
+the local compatibility path runs synchronously.
 
-To inspect a configured PostgreSQL database for known synthetic rows before a
-release, run the dry-run cleanup and fail-closed release gate:
+Orchestrators coordinate services, providers, tools, and repositories.
+Permissions, validation, targets, citations, retries, and knowledge-state
+transitions remain deterministic backend decisions.
 
-```bash
-uv run --no-env-file --frozen python scripts/cleanup_synthetic_data.py --json
-uv run --no-env-file --frozen python scripts/release_gate.py --json
-```
+Adapters isolate OpenAI, Notion, Telegram, and parsers. Repositories isolate
+PostgreSQL/pgvector, while queue access stays behind `QueueClient`.
 
-Review the aggregate dry-run counts before any explicit apply operation. The
-cleanup allowlist is fixed, transactional, and does not connect to Notion.
+## Reliability Design
 
-## Prerequisites
+| Mechanism                                                 | Why it matters                                                                                                                    |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| **Persistent workflow state**                             | Keeps indexing, ingestion, QA, review, Telegram, and recovery outcomes inspectable.                                               |
+| **API and Telegram idempotency**                          | Replays known mutation or update outcomes without duplicating business work.                                                      |
+| **Redis/RQ background processing**                        | Acknowledges configured Telegram webhooks quickly while workers handle OCR, LLM, review, and reply work.                          |
+| **Row locking and state revalidation**                    | Re-checks durable state before concurrent review, page replacement, or retry mutations.                                           |
+| **Recoverable cross-system workflows**                    | Uses bounded retries, durable identities, read-after-write checks, and explicit reconciliation for uncertain outcomes.            |
+| **Structured observability and deterministic evaluation** | Exposes redacted workflow, readiness, metric, and cost signals while testing retrieval, citations, safety, and fallback behavior. |
 
-- Python 3.9+
-- [`uv`](https://docs.astral.sh/uv/)
-- Docker Desktop or Docker Engine with Compose
-- An OpenAI API key for server-backed indexing, QA, and proposal generation
+## Technology Stack
 
-Notes:
+| Role                 | Technology                                                        |
+| -------------------- | ----------------------------------------------------------------- |
+| Application          | Python 3.9+, FastAPI, Pydantic, Uvicorn                           |
+| Persistence          | PostgreSQL, SQLAlchemy, Alembic                                   |
+| Retrieval            | pgvector `vector(1536)`, cosine retrieval, OpenAI embeddings      |
+| Background work      | Redis, RQ, `QueueClient`                                          |
+| Product integrations | Telegram and Notion                                               |
+| Source processing    | pypdf, trafilatura, youtube-transcript-api, Pillow, Tesseract OCR |
+| Quality              | pytest, deterministic fixtures, retrieval and safety evaluations  |
+| Local tooling        | uv and Docker Compose                                             |
 
-- `OPENAI_API_KEY` is required for the server-backed indexing examples because
-  indexing fails closed when chunk embeddings cannot be generated. It is also
-  required for live `POST /api/qa` and supplement proposal calls.
-- `NOTION_TOKEN` is not required for the mock demo flow.
-- Set `NOTION_BACKEND=live` together with `NOTION_TOKEN` to select the live
-  reader/writer adapters. Live mode fails closed when the token is missing.
-- `TELEGRAM_BOT_TOKEN` is not required for the mock demo flow.
-- Tesseract is required for screenshot OCR, but not for `/health` or mock QA.
-- The one-command demo script below does not require Docker, Postgres, or an OpenAI key.
+## API Documentation
 
-## Quick start
+The HTTP API covers Notion indexing, source ingestion, grounded QA, proposal
+review, Telegram integration, and operational status.
 
-### 1. Install Python dependencies
+See [API Contract](docs/09-api-contract.md) for complete request and response
+schemas.
+
+## Run Locally
+
+Install the locked project dependencies:
 
 ```bash
 uv sync --dev
 ```
 
-### 2. Prepare environment variables
+### Deterministic demo
 
-Copy the template:
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env` with the values you need for the local demo:
-
-```bash
-APP_ENV=local
-LOG_LEVEL=INFO
-DATABASE_URL=postgresql+psycopg://learnloop:learnloop@localhost:5432/learnloop
-REDIS_URL=redis://localhost:6379/0
-OPENAI_API_KEY=your-openai-api-key
-```
-
-Important:
-This project currently reads process environment variables directly.
-It does not auto-load `.env`, so load the file into your shell before running
-the API or Alembic commands:
-
-```bash
-set -a
-source .env
-set +a
-```
-
-Optional:
-
-- `MOCK_NOTION_DATA_DIR` if you want a different mock data directory.
-- `NOTION_BACKEND=mock` is the default; use `NOTION_BACKEND=live` with
-  `NOTION_TOKEN` for the live Notion adapters.
-- `TELEGRAM_BOT_TOKEN` enables Telegram HTTP send/download transport, but does
-  not by itself make the Telegram E2E user-ready.
-
-### 3. Start local services
-
-```bash
-docker compose up -d
-```
-
-This starts:
-
-- PostgreSQL with pgvector on `localhost:5432`
-- Redis on `localhost:6379`
-
-The API uses PostgreSQL/pgvector. When `REDIS_URL` is configured, Telegram
-webhook work is acknowledged quickly and processed by the RQ worker. Start the
-worker in a separate shell with:
-
-```bash
-uv run --no-env-file --frozen python scripts/run_worker.py
-```
-
-Without `REDIS_URL`, local/test compatibility keeps the synchronous Telegram
-path; local readiness still requires Redis for release-style operation.
-
-### 4. Run database migrations
-
-```bash
-uv run alembic upgrade head
-```
-
-### 5. Start the API
-
-```bash
-uv run uvicorn src.app.main:app --reload
-```
-
-### 6. Verify health
-
-```bash
-curl http://127.0.0.1:8000/health
-```
-
-Expected response:
-
-```json
-{ "status": "ok" }
-```
-
-`/health` is a shallow liveness endpoint. It does not prove that PostgreSQL,
-Alembic migrations, pgvector, providers, Notion, Telegram, or Redis are ready.
-
-Check release-style local dependencies with:
-
-```bash
-curl http://127.0.0.1:8000/ready
-```
-
-`/ready` returns `200` only when the database, current migrations, pgvector,
-Redis/RQ, and mode-specific provider configuration are available; otherwise it
-returns `503`. `/health` remains the process liveness check.
-
-### Portable API entrypoint and preflight
-
-For a portable local API launch, run from any directory inside the repository:
-
-```bash
-scripts/run_live.sh
-```
-
-The entrypoint resolves the repository root, runs a redacted dependency and
-configuration preflight, and then starts the API with the locked `uv` runtime.
-It does not load `.env` or print secret values. Load environment variables in
-the shell first as shown above.
-
-To inspect a profile without starting the API:
-
-```bash
-uv run --no-env-file --frozen python scripts/preflight.py --profile api
-uv run --no-env-file --frozen python scripts/preflight.py --profile test
-uv run --no-env-file --frozen python scripts/preflight.py --profile ocr
-```
-
-Missing `OPENAI_API_KEY`, `NOTION_TOKEN`, and `TELEGRAM_BOT_TOKEN` are reported
-without exposing values. `NOTION_TOKEN` is a hard failure only when
-`NOTION_BACKEND=live`; the `ocr` profile additionally requires the `tesseract`
-executable.
-
-## One-command demo script
-
-If you want a deterministic portfolio demo without Docker, a running server,
-or an API key, run:
+The public-safe mock demo exercises the normal API, orchestration, provider,
+and repository boundaries without Docker, credentials, or a real Notion write:
 
 ```bash
 uv run python scripts/run_mock_demo.py
 ```
 
-What it does:
+### Full local runtime
 
-- Calls `/health` through the FastAPI app.
-- Calls `POST /api/notion/index/page` for bundled mock page `page-nlp-week5`.
-- Calls `POST /api/qa` with a fake provider through the normal Provider Router boundary.
-- Uses in-memory SQLite for repositories and workflow state.
-- Uses the bundled mock Notion reader path instead of real Notion access.
+Create `.env`, configure the database, Redis, OpenAI, and the integrations you
+intend to use, then export those values because the application does not load
+`.env` itself:
 
-This keeps the demo aligned with the implemented architecture while staying
-deterministic for local verification and portfolio walkthroughs.
+```bash
+cp .env.example .env
+# Set DATABASE_URL, REDIS_URL, and OPENAI_API_KEY.
+# For live Notion, also set NOTION_BACKEND=live and NOTION_TOKEN.
+set -a
+source .env
+set +a
 
-Expected output looks like:
-
-```text
-LearnLoop mock demo: pass
-health=ok
-indexed_page=page-nlp-week5 (NLP Week 5), blocks=12
-qa_provider=openai model=gpt-4o-mini
-qa_citation=Knowledge/NLP/Week5/...
-qa_answer=Positional encoding gives the model an order signal ...
+docker compose up -d
+uv run alembic upgrade head
+uv run uvicorn src.app.main:app --reload
 ```
 
-## Mock demo fixtures
+With `REDIS_URL` configured, run the Telegram worker in a second shell:
 
-The repo includes synthetic, public-safe mock Notion pages for the isolated
-demo and deterministic tests:
-
-- `page-nlp-week5`
-- `page-rag-basics`
-- `page-iso-9001`
-
-These pages are read through the same `NotionReaderTool` boundary used by the
-real indexing flow, but without any real Notion access. Do not index these
-fixtures through a server connected to a persistent PostgreSQL database:
-PostgreSQL mock-source indexing is blocked with `SYNTHETIC_DATA_NOT_ALLOWED`.
-Use `scripts/run_mock_demo.py`, which creates isolated in-memory SQLite state,
-for the complete index-and-QA walkthrough.
-
-For a live API walkthrough, select `NOTION_BACKEND=live` and use a real
-read-only Notion configuration instead of these fixtures.
-
-The synthetic pages are not production retrieval evidence. Before release,
-run the cleanup dry run and fail-closed release gate described above.
-
-## Current limits
-
-- MVP is local-only.
-- Telegram is the first user channel, but it is optional for the README demo.
-- The isolated demo uses bundled mock Notion pages; production PostgreSQL
-  rejects mock-source indexing. Real Notion access requires
-  `NOTION_BACKEND=live` and operator verification.
-- Full Notion discovery and index-status routes exist; manual incremental sync
-  remains an explicit operator action.
-- Proposal review list/detail and target-page selection are implemented through
-  the review APIs and Telegram `/pages` plus `/ingest --page` flow.
-- API bearer auth, Telegram webhook secret/allowed-chat policy, and persistent
-  idempotency are implemented; real deployment still requires configuration.
-- Configured Telegram long work uses Redis/RQ; local no-Redis compatibility is
-  retained, while release readiness requires the worker path.
-- `/health` is liveness only; `/ready` is dependency-aware and `/metrics` is a
-  redacted Prometheus-compatible operator surface.
-- No direct original-note editing.
-- No standalone MCP server in MVP.
-- No always-on cloud sync.
-- No reranker.
-- No LLM-as-judge.
-
-## Repository structure
-
-```text
-AGENTS.md
-README.md
-docs/
-mock_data/
-scripts/
-src/
-tests/
-dev_state/
-observability/
+```bash
+uv run python scripts/run_worker.py
 ```
 
-## Documentation map
+Check process liveness and dependency-aware readiness:
 
-- `docs/00-design-doc.md`
-- `docs/01-architecture.md`
-- `docs/02-workflows.md`
-- `docs/03-guardrails.md`
-- `docs/04-memory-design.md`
-- `docs/05-rag-design.md`
-- `docs/06-notion-permission-model.md`
-- `docs/07-evaluation-plan.md`
-- `docs/08-observability.md`
-- `docs/09-api-contract.md`
-- `docs/10-deployment.md`
-- `docs/11-coding-style.md`
-- `docs/12-github-collaboration-rules.md`
+```bash
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/ready
+```
+
+### Try the workflow
+
+1. Index the configured Notion workspace.
+2. Send a supported learning source through Telegram or the ingestion API.
+3. Review the generated proposal.
+4. Accept it to append the supplement and re-index the target page.
+5. Query the updated knowledge through the QA endpoint.
+
+## Repository Structure
+
+```text
+src/app/            FastAPI routes, schemas, and dependency wiring
+src/orchestrators/  Application workflow coordination
+src/services/       Deterministic policy and operational services
+src/providers/      LLM and embedding provider boundaries
+src/tools/          Notion, Telegram, parser, and OCR adapters
+src/repositories/   Persistence boundaries
+src/rag/            Chunking, retrieval, and citation paths
+src/queue/          QueueClient and Redis/RQ implementation
+tests/              Unit, integration, and evaluation coverage
+docs/               Design, contracts, runbooks, and decisions
+```
+
+## Testing and Evaluation
+
+- Unit and integration tests cover application boundaries and core workflows.
+- Golden retrieval questions and citation checks verify grounded QA behavior.
+- Write-safety and prompt-injection regressions protect the append-only policy.
+- Idempotency and concurrency tests cover API replay, Telegram updates, row locks, and retry state.
+- Parser and OCR adapter fixtures verify bounded extraction; see the [Evaluation Plan](docs/07-evaluation-plan.md).
+
+## Project Status
+
+LearnLoop is a local-first, self-hosted portfolio project. Core indexing,
+grounded QA, multi-source ingestion, proposal review, queued Telegram
+processing, and append-only Notion integration are implemented.
+
+The current runtime targets a local environment. Cloud deployment and
+continuous Notion synchronization are outside the current project scope.
+
+## Documentation
+
+- [Architecture](docs/01-architecture.md) and [Workflows](docs/02-workflows.md)
+- [Guardrails](docs/03-guardrails.md) and [RAG Design](docs/05-rag-design.md)
+- [API Contract](docs/09-api-contract.md)
+- [Deployment](docs/10-deployment.md)
+- [Evaluation Plan](docs/07-evaluation-plan.md) and [architecture decisions](docs/decisions/)
 
 ## License
 
