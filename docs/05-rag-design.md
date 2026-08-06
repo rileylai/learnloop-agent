@@ -246,6 +246,13 @@ contract, bounded batching, retry, and aggregate usage.
 The completed shape-only phase read and chunked the same page without creating
 an embedding client or provider request.
 
+Step 97 bounded live dependency verification subsequently indexed the same
+2,483-input page in five sequential batches of `512/512/512/512/435`, with
+zero retries. One page replacement committed 2,483 chunks and 2,483 vectors.
+The planner's 707,454-token conservative estimate is operational gating data,
+not provider usage; OpenAI reported 289,651 input tokens for the completed
+requests. No retrieval ranking or embedding input content changed.
+
 ## Legacy Chunk Vector Gap Handling (Step 51)
 
 Goal:
@@ -474,3 +481,24 @@ closed if any allowlisted page, block, or production-eligible chunk remains.
 Cleanup is explicit, transactional, and does not access Notion. This is a
 release invariant; it is not a retrieval-time substitute for the existing
 production source and pending/rejected-state filters.
+
+## Context-aware Embedding Input Experiment (Step 98)
+
+Production indexing and query answering remain body-only. Step 98 adds an
+isolated experiment harness for `body_only_v1`, `title_body_v1`, and
+`title_heading_body_v1`; it does not wire either contextual variant into the
+indexing orchestrator or production retriever.
+
+The document-side builder is deterministic and content-addressed. It preserves
+the original `chunk_text`, excludes generic structural context, deduplicates
+title or heading lines already present in the body, and records only versions,
+source references, omission reasons, and digests as provenance. Complete
+derived embedding input is not persisted. Query embedding remains body-only
+and is generated once for reuse by all three document variants.
+
+The frozen public-safe experiment contains exactly 18 pages, 108 chunks, and
+72 unique queries. Its create-if-absent `manifest.sha256` receipt freezes all
+managed inputs and gates before vector capture. Citation identity and answer
+context always project back to original chunks and paths; derived headers are
+never citable. A candidate that passes evaluation is only an ADR candidate and
+still requires a separate production rollout step and re-index approval.

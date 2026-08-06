@@ -255,6 +255,10 @@ Telegram ingestion observability:
   allowlisted status/category/retryability, and complete usage/cost. They must
   not contain raw provider responses/messages, embedding payloads or vectors,
   chunk text, Notion content or page identity/path, endpoint URLs, or secrets.
+- The Step 97 bounded live dependency evidence recorded a 707,454-token
+  conservative planning estimate separately from 289,651 provider-reported
+  input tokens. Only the provider-reported value fed the USD 0.00579302 cost
+  estimate; the planning estimate was not treated as usage or billing data.
 - Manual incremental sync should aggregate embedding token and cost metadata
   across all successfully re-indexed pages in the workflow.
 - Each incremental-sync page is committed through its own short business
@@ -543,3 +547,18 @@ bodies. A failed inspection is fail-closed evidence, not a clean result.
   `EMBEDDING_PROVIDER_NOT_CONFIGURED`, `EMBEDDING_PROVIDER_ERROR`,
   `VECTOR_DIMENSION_MISMATCH`, `VECTOR_QUERY_FAILED`, and
   `VECTOR_DATA_UNAVAILABLE`.
+
+## Step 98 Experiment Evidence
+
+Normal Step 98 evidence records experiment, manifest, request-plan, capture,
+vector-set, input, result, and implementation-source digests; builder/model
+versions; dimensions; bounded counts; retry/usage/cost summaries; and fixed
+gate outcomes. It must not log derived embedding input, raw source text,
+credentials, provider response bodies, or vectors.
+
+The public-safe Phase B capture artifact is the narrow exception for vectors:
+it may retain the one shared query-vector set and three document-vector sets so
+Phase C can deterministically replay ranking. Creation is explicit,
+create-only, bounded, and separately approved. It is not workflow telemetry or
+production database state. Any managed digest mismatch rejects capture or
+scoring instead of silently producing new evidence.

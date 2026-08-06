@@ -556,3 +556,26 @@ gate execution for a later release candidate.
   user's full workspace.
 - The PostgreSQL restore drill has deterministic coverage, but no recorded
   live disposable restore drill.
+
+## Step 98 Context-aware Input Evaluation
+
+The preregistered experiment uses exactly 72 unique queries over 108 chunks
+from 18 public-safe pages. Its primary partition is nine mutually exclusive
+cells of eight queries; critical and secondary cohorts overlap only for veto
+and diagnostic analysis. All query identities, relevance labels, hard
+negatives, builders, model dimensions, ranking rules, integer thresholds, and
+cohort memberships are frozen by the Phase A manifest receipt before candidate
+vectors or rankings exist.
+
+Phase B plans one shared query-vector set and three document-vector sets in one
+capture session. It remains live and approval-gated. Until that capture exists,
+Phase C has no quality or adoption outcome; deterministic scoring, ambiguity
+vetoes, gate evaluation, result digests, and same-contract replay are covered
+without fabricated vectors.
+
+Citation projection is evaluated independently from retrieval relevance and
+requires zero invalid or derived-header citations. Deterministic production
+safety uses the real `ChunkRepository` and `ProductionChunkRetriever` seams to
+verify eligible candidates before top-k for pending, rejected, non-Notion,
+wrong-page, and wrong-section decoys. Disposable PostgreSQL/pgvector adapter
+integration remains an independent gate for any later adoption decision.

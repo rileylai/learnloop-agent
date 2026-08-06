@@ -328,8 +328,16 @@ The safe report contains only bounded shapes, provider/model/dimensions,
 batch/retry counts, complete usage/cost when known, duration, aggregate indexed
 counts, and allowlisted failure reason. It never emits page identity/path,
 content, inputs/payloads, vectors, endpoint URL, raw provider response/message,
-credentials, or environment values. This command is documented only; it was
-not executed during deterministic Step 97 implementation.
+credentials, or environment values.
+
+The separately approved bounded live dependency verification passed with
+2,483 inputs split into `512/512/512/512/435`, sequential execution, zero
+retries, and one committed target-page replacement. The persisted result had
+16,573 blocks, 2,483 chunks, and 2,483 vectors. The conservative planner
+reported 886,852 bytes and an estimated 707,454 tokens; this estimate is not
+actual usage. OpenAI separately reported 289,651 input tokens, which produced
+the recorded USD 0.00579302 cost estimate. Duration was 102.9 seconds. No full
+index was executed.
 
 ## Guarded Notion Read/Index/QA Canary
 
