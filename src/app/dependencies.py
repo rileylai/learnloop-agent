@@ -233,7 +233,11 @@ def _build_notion_clients(
                 "NOTION_BACKEND=live requires NOTION_TOKEN"
             )
         return (
-            NotionAPIReaderClient(token=settings.notion_token),
+            # NotionAPIReaderClient(token=settings.notion_token),
+            NotionAPIReaderClient(
+                token=settings.notion_token,
+                timeout_seconds=30.0,
+            ),
             NotionAPIWriterClient(token=settings.notion_token),
         )
     return _build_mock_notion_clients(settings)

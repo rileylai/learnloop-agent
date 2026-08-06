@@ -113,6 +113,21 @@ Embedding provider implementation (Steps 14 and 50):
 - Indexing orchestrators depend on `EmbeddingClient`, not provider SDKs,
   and pass embedded chunk data to repositories only after provider success.
 
+Large-page failure diagnostic boundary (Step 96):
+- `src/observability/external_error.py` owns the fixed external HTTP category
+  allowlist and retryability classification. It does not execute retries.
+- The Notion and embedding transports retain only safe HTTP status, normalized
+  category, retryability, and a bounded numeric `Retry-After` value. Raw
+  upstream bodies and messages are discarded after in-memory classification.
+- `EmbeddingRequestDiagnostics` contains only provider/model/dimensions,
+  endpoint class, counts, and versioned size estimates. It never contains
+  inputs, payloads, vectors, URLs, credentials, or Notion identity/content.
+- The opt-in diagnostic command reads one page through `NotionReaderTool` with
+  the diagnostic 30-second timeout and runs sequential single/small/progressive
+  bounded provider probes under explicit request, byte, and token-estimate
+  budgets without persistence.
+  It does not add production batching, concurrency, retry, or retrieval logic.
+
 Runtime prompt loading (Step 44):
 - `src/services/prompt_template_loader.py`: loads versioned prompt bundles from
   `docs/prompts/*.md`.

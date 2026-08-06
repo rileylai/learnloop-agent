@@ -28,6 +28,23 @@ idempotency, append-only, and human-acceptance rules.
 The deterministic write policy, state-transition, transaction, RAG-exclusion,
 and retry rules remain mandatory for every configured adapter.
 
+Step 96 large-page diagnostics preserve the existing indexing mutation
+boundary:
+
+```text
+read one page through notion_reader
+-> build current body-only chunks in memory
+-> classify one sequential diagnostic embedding request at a time
+-> emit only allowlisted request-shape and error metadata
+-> stop without page replacement or persistence
+```
+
+The diagnostic command is separately opt-in and is not a full-index workflow.
+It does not retry, split a production request, write Notion, persist vectors,
+or enter the page replacement transaction. Normal indexing still completes
+embedding during page preparation and fails closed before replacement when the
+provider fails. Step 97 owns configurable timeout, retry, and batching behavior.
+
 Worker import boundary (Step 88):
 - API enqueue and the worker share the canonical module-level callable
   `src.worker.telegram.process_telegram_webhook_job`.

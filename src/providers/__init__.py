@@ -3,8 +3,11 @@ from src.providers.embedding import (
     EmbeddingClient,
     EmbeddingClientError,
     EmbeddingRequest,
+    EmbeddingRequestDiagnostics,
     EmbeddingResponse,
+    EmbeddingTransportError,
     OpenAIEmbeddingClient,
+    build_embedding_request_diagnostics,
 )
 from src.providers.llm import BaseLLMClient, LLMClientError, OpenAIClient
 from src.providers.models import LLMMessage, LLMRequest, LLMResponse
@@ -20,7 +23,9 @@ __all__ = [
     "EmbeddingClient",
     "EmbeddingClientError",
     "EmbeddingRequest",
+    "EmbeddingRequestDiagnostics",
     "EmbeddingResponse",
+    "EmbeddingTransportError",
     "BaseLLMClient",
     "LLMClientError",
     "LLMMessage",
@@ -29,6 +34,7 @@ __all__ = [
     "LLMResponse",
     "OpenAIClient",
     "OpenAIEmbeddingClient",
+    "build_embedding_request_diagnostics",
     "ProviderAlreadyRegisteredError",
     "ProviderNameInvalidError",
     "ProviderNotFoundError",

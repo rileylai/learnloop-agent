@@ -8,6 +8,12 @@ from typing import Any, Dict, List, Mapping, Optional
 from urllib import error, request
 from urllib.parse import quote, urlencode
 
+from src.observability.external_error import (
+    ExternalErrorCategory,
+    ExternalErrorDiagnostic,
+    classify_http_error,
+    parse_retry_after_seconds,
+)
 from src.rag import BlockPathNode, BlockPathSnapshot, build_block_paths
 from src.tools.notion_reader_tool import (
     NotionBlockNode,
@@ -28,10 +34,26 @@ _NOTION_UUID_HEX_PATTERN = re.compile(r"^[0-9a-fA-F]{32}$")
 class NotionHTTPResponse:
     status_code: int
     payload: Optional[Dict[str, Any]]
+    diagnostic: Optional[ExternalErrorDiagnostic] = None
 
 
 class NotionHTTPTransportError(Exception):
     """Transport failure without upstream response details."""
+
+    def __init__(
+        self,
+        message: str = "Notion API transport request failed",
+        *,
+        diagnostic: Optional[ExternalErrorDiagnostic] = None,
+    ) -> None:
+        super().__init__(message)
+        self.diagnostic = diagnostic
+        self.category = diagnostic.category if diagnostic is not None else None
+        self.retryable = diagnostic.retryable if diagnostic is not None else False
+        self.http_status = diagnostic.http_status if diagnostic is not None else None
+        self.retry_after_seconds = (
+            diagnostic.retry_after_seconds if diagnostic is not None else None
+        )
 
 
 class NotionHTTPTransport:
@@ -163,11 +185,43 @@ class UrllibNotionHTTPTransport(NotionHTTPTransport):
                 exc.read()
             except OSError:
                 pass
-            return NotionHTTPResponse(status_code=int(exc.code), payload=None)
-        except (error.URLError, OSError, TimeoutError) as exc:
-            _ = exc
+            retry_after = parse_retry_after_seconds(
+                exc.headers.get("Retry-After") if exc.headers is not None else None
+            )
+            diagnostic = classify_http_error(
+                status_code=int(exc.code),
+                retry_after_seconds=retry_after,
+            )
+            return NotionHTTPResponse(
+                status_code=int(exc.code),
+                payload=None,
+                diagnostic=diagnostic,
+            )
+        except TimeoutError:
             raise NotionHTTPTransportError(
-                "Notion API transport request failed"
+                diagnostic=ExternalErrorDiagnostic(
+                    category=ExternalErrorCategory.TIMEOUT,
+                    retryable=True,
+                )
+            ) from None
+        except error.URLError as exc:
+            category = (
+                ExternalErrorCategory.TIMEOUT
+                if isinstance(exc.reason, TimeoutError)
+                else ExternalErrorCategory.TRANSPORT_UNAVAILABLE
+            )
+            raise NotionHTTPTransportError(
+                diagnostic=ExternalErrorDiagnostic(
+                    category=category,
+                    retryable=True,
+                )
+            ) from None
+        except OSError:
+            raise NotionHTTPTransportError(
+                diagnostic=ExternalErrorDiagnostic(
+                    category=ExternalErrorCategory.TRANSPORT_UNAVAILABLE,
+                    retryable=True,
+                )
             ) from None
 
         try:
@@ -180,7 +234,21 @@ class UrllibNotionHTTPTransport(NotionHTTPTransport):
 
 
 class NotionAPIClientError(NotionReaderClientError):
-    pass
+    def __init__(
+        self,
+        *,
+        code: str,
+        message: str,
+        diagnostic: Optional[ExternalErrorDiagnostic] = None,
+    ) -> None:
+        super().__init__(code=code, message=message)
+        self.diagnostic = diagnostic
+        self.category = diagnostic.category if diagnostic is not None else None
+        self.retryable = diagnostic.retryable if diagnostic is not None else False
+        self.http_status = diagnostic.http_status if diagnostic is not None else None
+        self.retry_after_seconds = (
+            diagnostic.retry_after_seconds if diagnostic is not None else None
+        )
 
 
 class NotionAPIReaderClient(NotionReaderClient):
@@ -435,21 +503,34 @@ class NotionAPIReaderClient(NotionReaderClient):
                     query=query,
                     headers=headers,
                 )
-        except NotionHTTPTransportError:
+        except NotionHTTPTransportError as exc:
+            diagnostic = exc.diagnostic or ExternalErrorDiagnostic(
+                category=ExternalErrorCategory.TRANSPORT_UNAVAILABLE,
+                retryable=True,
+            )
             raise NotionAPIClientError(
                 code="NOTION_BLOCK_FETCH_FAILED",
                 message="Notion API transport request failed",
+                diagnostic=diagnostic,
             ) from None
         except Exception:
             raise NotionAPIClientError(
                 code="NOTION_BLOCK_FETCH_FAILED",
                 message="Notion API request failed",
+                diagnostic=ExternalErrorDiagnostic(
+                    category=ExternalErrorCategory.RESPONSE_INVALID,
+                    retryable=False,
+                ),
             ) from None
 
+        diagnostic = response.diagnostic
+        if diagnostic is None and not 200 <= response.status_code < 300:
+            diagnostic = classify_http_error(status_code=response.status_code)
         if response.status_code in (401, 403):
             raise NotionAPIClientError(
                 code="NOTION_AUTH_FAILED",
                 message="Notion authorization failed",
+                diagnostic=diagnostic,
             )
         if response.status_code == 404 and not_found_code is not None:
             return None
@@ -457,11 +538,17 @@ class NotionAPIReaderClient(NotionReaderClient):
             raise NotionAPIClientError(
                 code="NOTION_BLOCK_FETCH_FAILED",
                 message="Notion API request failed",
+                diagnostic=diagnostic,
             )
         if not isinstance(response.payload, dict):
             raise NotionAPIClientError(
                 code="NOTION_BLOCK_FETCH_FAILED",
                 message="Notion API response is invalid",
+                diagnostic=ExternalErrorDiagnostic(
+                    category=ExternalErrorCategory.RESPONSE_INVALID,
+                    retryable=False,
+                    http_status=response.status_code,
+                ),
             )
         return response.payload
 

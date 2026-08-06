@@ -211,6 +211,54 @@ an explicitly permitted Telegram synthetic send. The matrix does not call
 Notion and never performs a Notion write. Keep the JSON report as release
 evidence only after checking that it contains no secret or private content.
 
+## Guarded Large-page Failure Diagnostic (Step 96)
+
+The default command is local and skipped. It makes zero Notion or OpenAI
+requests:
+
+```bash
+uv run --no-env-file --frozen python \
+  tests/evals/large_page_failure_diagnostic.py --json
+```
+
+The live diagnostic must not run without separate approval. After exporting
+`NOTION_TOKEN`, `OPENAI_API_KEY`, and
+`LEARNLOOP_NOTION_DIAGNOSTIC_PAGE_ID` without printing their values, the
+approved command is:
+
+```bash
+LEARNLOOP_RUN_LARGE_PAGE_DIAGNOSTIC=1 \
+  uv run --no-env-file --frozen python \
+  tests/evals/large_page_failure_diagnostic.py \
+  --live --approve --json --bounded-count 64 \
+  --max-aggregate-bytes 1000000 \
+  --max-aggregate-token-estimate 250000 \
+  --max-request-count 8 \
+  --total-token-estimate-budget 500000
+```
+
+The command reads one page with the diagnostic 30-second timeout, keeps chunk
+inputs in memory, and sends sequential single-input, small-batch, and
+progressively count/byte/token-bounded probes using the same OpenAI model and
+`dimensions=1536`. It stops after the first failure or explicit request/token
+budget, does not retry, and
+does not run a full index, write Notion, use PostgreSQL, or persist vectors.
+
+Expected JSON contains only fixed status/diagnosis/message fields plus case,
+endpoint class, provider/model/dimensions, input/empty counts, size estimates,
+duration, HTTP status, normalized category, retryability, and bounded numeric
+`Retry-After`. It must not contain page identity/path, Notion or chunk content,
+payloads, vectors, URLs, raw upstream messages/bodies, or credentials.
+Budget exhaustion returns `status=inconclusive`, keeps
+`diagnosis=unresolved`, and exits nonzero so it cannot be mistaken for a
+completed diagnostic.
+
+Risks remain: the read may issue many Notion requests, the embedding probes use
+provider quota and send the selected private note content to the already
+configured embedding provider, and a generic HTTP 400 may remain unresolved.
+The command provides bounded dependency evidence only and does not authorize
+Step 97 or a payload-size root-cause claim.
+
 ## Guarded Notion Read/Index/QA Canary
 
 After the adapter matrix passes, the read-only Notion canary may be run against

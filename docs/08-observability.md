@@ -489,6 +489,27 @@ append evidence.
   not additions to `STANDARD_FAILURE_REASONS`. The CLI reports them in a
   redacted result and does not rewrite the business failure taxonomy.
 
+### Step 96 External Diagnostic Categories
+
+Step 96 adds an internal diagnostic category below the existing workflow
+failure reasons. Categories are `timeout`, `transport_unavailable`,
+`request_invalid`, `authentication_failed`, `request_timeout`,
+`request_too_large`, `validation_failed`, `rate_limited`,
+`upstream_server_error`, `response_invalid`, and `unknown_http_error`.
+Retryability is classification only; Step 96 does not execute a retry.
+
+Embedding diagnostic output may contain only dependency, fixed operation,
+fixed endpoint class, provider, model, dimensions, input/empty counts, maximum
+single-input character/byte/token estimates, aggregate byte/token estimates,
+estimator version, HTTP status, normalized category, retryability, bounded
+numeric `Retry-After`, fixed diagnostic case, and duration. Token estimates are
+not provider-reported billing usage.
+
+Raw response bodies, raw provider messages or unknown codes, serialized
+payloads, chunk/block/page content, page identity/path, embeddings, endpoint
+URLs/hosts, authorization headers, tokens, and credentials are prohibited from
+logs, workflow metadata, API errors, and diagnostic reports.
+
 ## Synthetic Data Hygiene Evidence (Step 87)
 
 Synthetic-data cleanup and release-gate reports may contain only fixed status,

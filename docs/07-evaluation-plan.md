@@ -20,6 +20,24 @@ Evaluation evidence must state its dependency level:
 Passing deterministic tests must not be reported as proof of real Notion,
 OpenAI generation, Telegram, URL, YouTube, or OCR E2E readiness.
 
+## Step 96 Large-page Diagnostic Verification
+
+The deterministic Step 96 matrix uses injected transports and public-safe
+synthetic text. It covers HTTP 400, 401, 403, 408, 413, 422, 429,
+representative 5xx responses, client timeout, transport failure, invalid JSON,
+invalid response schema, and empty input. It verifies normalized category,
+retryability, bounded numeric `Retry-After`, and the absence of raw content or
+credentials. Page-index transaction regressions separately verify that the
+existing fail-before-replacement behavior remains unchanged.
+
+`tests/evals/large_page_failure_diagnostic.py` is `live_dependency` evidence,
+not deterministic or live-E2E evidence. Its default path is skipped and makes
+zero external requests. The live matrix requires independent environment,
+CLI, and approval gates; reads only one configured page; executes sequential
+single/small/progressively bounded embedding probes under explicit request,
+byte, and token-estimate budgets; and writes no Notion or database state.
+A skipped matrix leaves the HTTP 400 root cause unresolved.
+
 Current audit baseline on 2026-08-01: the full deterministic suite completed
 with `399 passed, 3 skipped`. The skipped cases are opt-in live PostgreSQL
 repository tests and are not passing live evidence. The test-profile preflight

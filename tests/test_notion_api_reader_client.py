@@ -1,16 +1,23 @@
 from __future__ import annotations
 
 import asyncio
+import io
 from typing import Dict, List, Mapping, Tuple
+from urllib import error
 
 import pytest
 
+from src.observability.external_error import ExternalErrorCategory
+from src.tools import notion_api_reader_client as notion_reader_module
 from src.tools import (
     NotionAPIReaderClient,
+    NotionAPIClientError,
     NotionHTTPResponse,
     NotionHTTPTransport,
+    NotionHTTPTransportError,
     NotionReaderTool,
     ToolContext,
+    UrllibNotionHTTPTransport,
     normalize_notion_page_id,
 )
 
@@ -390,3 +397,133 @@ def test_notion_api_reader_maps_upstream_failure_without_response_body() -> None
     assert result.error.code == "NOTION_BLOCK_FETCH_FAILED"
     assert result.error.message == "Notion API request failed"
     assert "private page contents" not in result.error.message
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected_category", "expected_retryable"),
+    [
+        (400, ExternalErrorCategory.REQUEST_INVALID, False),
+        (401, ExternalErrorCategory.AUTHENTICATION_FAILED, False),
+        (403, ExternalErrorCategory.AUTHENTICATION_FAILED, False),
+        (408, ExternalErrorCategory.REQUEST_TIMEOUT, True),
+        (413, ExternalErrorCategory.REQUEST_TOO_LARGE, False),
+        (422, ExternalErrorCategory.VALIDATION_FAILED, False),
+        (429, ExternalErrorCategory.RATE_LIMITED, True),
+        (500, ExternalErrorCategory.UPSTREAM_SERVER_ERROR, True),
+        (501, ExternalErrorCategory.UPSTREAM_SERVER_ERROR, False),
+        (502, ExternalErrorCategory.UPSTREAM_SERVER_ERROR, True),
+        (503, ExternalErrorCategory.UPSTREAM_SERVER_ERROR, True),
+        (504, ExternalErrorCategory.UPSTREAM_SERVER_ERROR, True),
+    ],
+)
+def test_notion_api_reader_exposes_safe_http_diagnostics(
+    status_code: int,
+    expected_category: ExternalErrorCategory,
+    expected_retryable: bool,
+) -> None:
+    client = NotionAPIReaderClient(
+        token="secret-token",
+        transport=_FakeNotionHTTPTransport(
+            [
+                NotionHTTPResponse(
+                    status_code=status_code,
+                    payload={"message": "private page contents secret-token"},
+                )
+            ]
+        ),
+    )
+
+    with pytest.raises(NotionAPIClientError) as exc_info:
+        client.fetch_page_tree("page-1")
+
+    error_value = exc_info.value
+    assert error_value.category == expected_category
+    assert error_value.retryable is expected_retryable
+    assert error_value.http_status == status_code
+    assert "private page contents" not in str(error_value)
+    assert "secret-token" not in str(error_value)
+
+
+def test_notion_api_reader_exposes_invalid_response_diagnostic() -> None:
+    client = NotionAPIReaderClient(
+        token="secret-token",
+        transport=_FakeNotionHTTPTransport(
+            [NotionHTTPResponse(status_code=200, payload=None)]
+        ),
+    )
+
+    with pytest.raises(NotionAPIClientError) as exc_info:
+        client.fetch_page_tree("page-1")
+
+    assert exc_info.value.category == ExternalErrorCategory.RESPONSE_INVALID
+    assert exc_info.value.retryable is False
+    assert exc_info.value.http_status == 200
+
+
+def test_default_notion_transport_classifies_timeout_without_raw_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_urlopen(request, timeout):
+        _ = request, timeout
+        raise TimeoutError("private page contents secret-token")
+
+    monkeypatch.setattr(notion_reader_module.request, "urlopen", fake_urlopen)
+    transport = UrllibNotionHTTPTransport()
+
+    with pytest.raises(NotionHTTPTransportError) as exc_info:
+        transport.get_json(path="/v1/pages/page-1", query={}, headers={})
+
+    assert exc_info.value.category == ExternalErrorCategory.TIMEOUT
+    assert exc_info.value.retryable is True
+    assert "private page contents" not in str(exc_info.value)
+    assert "secret-token" not in str(exc_info.value)
+
+
+def test_default_notion_transport_classifies_rate_limit_and_retry_after(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_urlopen(request, timeout):
+        _ = request, timeout
+        raise error.HTTPError(
+            url="https://api.notion.com/v1/pages/page-1",
+            code=429,
+            msg="private provider message",
+            hdrs={"Retry-After": "15"},
+            fp=io.BytesIO(b'{"message":"private page contents"}'),
+        )
+
+    monkeypatch.setattr(notion_reader_module.request, "urlopen", fake_urlopen)
+    response = UrllibNotionHTTPTransport().get_json(
+        path="/v1/pages/page-1",
+        query={},
+        headers={},
+    )
+
+    assert response.status_code == 429
+    assert response.diagnostic is not None
+    assert response.diagnostic.category == ExternalErrorCategory.RATE_LIMITED
+    assert response.diagnostic.retryable is True
+    assert response.diagnostic.retry_after_seconds == 15
+    assert response.payload is None
+
+
+def test_default_notion_transport_classifies_connection_failure_without_raw_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_urlopen(request, timeout):
+        _ = request, timeout
+        raise error.URLError("private page contents secret-token")
+
+    monkeypatch.setattr(notion_reader_module.request, "urlopen", fake_urlopen)
+
+    with pytest.raises(NotionHTTPTransportError) as exc_info:
+        UrllibNotionHTTPTransport().get_json(
+            path="/v1/pages/page-1",
+            query={},
+            headers={},
+        )
+
+    assert exc_info.value.category == ExternalErrorCategory.TRANSPORT_UNAVAILABLE
+    assert exc_info.value.retryable is True
+    assert "private page contents" not in str(exc_info.value)
+    assert "secret-token" not in str(exc_info.value)

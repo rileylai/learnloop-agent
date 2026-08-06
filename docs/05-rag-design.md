@@ -178,6 +178,30 @@ Rules:
 - Manual incremental sync and auto-after-accept re-index must reuse the same
   page indexing orchestrator instead of implementing vector writes separately.
 
+## Large-page Failure Diagnostics (Step 96)
+
+Observed live evidence shows that increasing the Notion reader's per-request
+timeout from 10 to 30 seconds allowed one large read-only traversal to reach
+the embedding stage, where the existing single page-wide request returned HTTP
+400. This evidence does not establish payload size as the cause; model,
+dimensions, endpoint compatibility, empty input, single-input size, aggregate
+size, and other validation hypotheses remain open until the approved live
+matrix runs.
+
+The deterministic Step 96 implementation adds typed, sanitized Notion and
+embedding errors plus versioned request-shape diagnostics. It classifies HTTP
+status, normalized provider category, and retryability without storing raw
+provider bodies/messages, embedding payloads, chunk text, vectors, Notion
+content, URLs, or credentials.
+
+The guarded diagnostic uses the current body-only chunk inputs and executes
+single-input, small-batch, and progressively count/byte/token-bounded probes
+sequentially with no retry. Explicit request and total token-estimate budgets
+stop an inconclusive run with a nonzero exit. This harness does not implement
+production sub-batching. It never persists diagnostic embeddings or enters
+page replacement. Step 97 remains responsible for the embedding execution
+contract, bounded batching, retry, and aggregate usage.
+
 ## Legacy Chunk Vector Gap Handling (Step 51)
 
 Goal:
