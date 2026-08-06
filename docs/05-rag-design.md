@@ -185,8 +185,16 @@ timeout from 10 to 30 seconds allowed one large read-only traversal to reach
 the embedding stage, where the existing single page-wide request returned HTTP
 400. This evidence does not establish payload size as the cause; model,
 dimensions, endpoint compatibility, empty input, single-input size, aggregate
-size, and other validation hypotheses remain open until the approved live
-matrix runs.
+size, and other validation hypotheses remain open until bounded diagnostics
+establish a provider category or controlled failure boundary.
+
+The first guarded matrix subsequently passed with the configured OpenAI
+embedding endpoint class, `text-embedding-3-small`, and `dimensions=1536` for
+1, 4, 8, 16, 32, and 64 inputs. The largest tested request contained 24,916
+bytes / 6,254 estimated tokens, and no input was empty. This proves only that
+the tested model/dimensions and tested multi-input shapes work. It produced no
+provider category or failure boundary and does not explain the original
+page-wide HTTP 400.
 
 The deterministic Step 96 implementation adds typed, sanitized Notion and
 embedding errors plus versioned request-shape diagnostics. It classifies HTTP
@@ -201,6 +209,11 @@ stop an inconclusive run with a nonzero exit. This harness does not implement
 production sub-batching. It never persists diagnostic embeddings or enters
 page replacement. Step 97 remains responsible for the embedding execution
 contract, bounded batching, retry, and aggregate usage.
+
+The next diagnostic phase is shape-only: read and chunk the same page, compute
+the full original request's count and byte/token distribution in memory, and
+emit only aggregate/max/percentile estimates plus the safe ordinal of the
+largest input. It does not create an embedding client or provider request.
 
 ## Legacy Chunk Vector Gap Handling (Step 51)
 

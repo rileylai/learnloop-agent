@@ -24,9 +24,12 @@ from .large_page_failure_diagnostic import (
     DIAGNOSTIC_NOTION_TIMEOUT_SECONDS,
     RUN_FLAG_ENV,
     LargePageDiagnosticReport,
+    build_full_request_shape,
     _build_live_clients,
     run_diagnostic_workflow,
     run_large_page_failure_diagnostic,
+    run_live_shape_inspection,
+    run_shape_inspection_workflow,
 )
 
 
@@ -230,3 +233,59 @@ def test_safe_report_contains_no_page_or_input_content() -> None:
     assert "Synthetic diagnostic section" not in serialized
     assert "payload" not in serialized
     assert '"embeddings"' not in serialized
+
+
+def test_full_request_shape_reports_safe_distribution_without_content() -> None:
+    shape = build_full_request_shape(["a", "bb", "資料", "dddd"])
+
+    assert shape.total_input_count == 4
+    assert shape.empty_input_count == 0
+    assert shape.aggregate_input_bytes == 13
+    assert shape.aggregate_input_token_estimate == 5
+    assert shape.max_single_input_bytes == 6
+    assert shape.max_single_input_chars == 4
+    assert shape.max_single_input_token_estimate == 2
+    assert shape.p50_input_bytes == 2
+    assert shape.p95_input_bytes == 6
+    assert shape.p99_input_bytes == 6
+    assert shape.largest_input_ordinal == 3
+
+    serialized = json.dumps(shape.to_safe_dict(), sort_keys=True)
+    assert "資料" not in serialized
+    assert "dddd" not in serialized
+    assert "page" not in serialized
+    assert "payload" not in serialized
+
+
+def test_shape_inspection_reads_and_chunks_without_embedding_client() -> None:
+    shape = asyncio.run(
+        run_shape_inspection_workflow(
+            reader_client=_reader(block_count=8),
+            target_page_id="synthetic-page",
+        )
+    )
+
+    assert shape.total_input_count == 8
+    assert shape.empty_input_count == 0
+    assert shape.largest_input_ordinal is not None
+    serialized = json.dumps(shape.to_safe_dict(), sort_keys=True)
+    assert "synthetic-page" not in serialized
+    assert "Synthetic diagnostic section" not in serialized
+
+
+def test_live_shape_inspection_requires_no_embedding_credentials_or_client() -> None:
+    result = run_live_shape_inspection(
+        include_live=True,
+        approved=True,
+        environment={
+            RUN_FLAG_ENV: "1",
+            "NOTION_TOKEN": "synthetic-token",
+            "LEARNLOOP_NOTION_DIAGNOSTIC_PAGE_ID": "synthetic-page",
+        },
+        reader_client_override=_reader(),
+    )
+
+    assert result["total_input_count"] == 8
+    assert "status" not in result
+    assert "provider" not in result
+    assert "model" not in result

@@ -38,6 +38,13 @@ single/small/progressively bounded embedding probes under explicit request,
 byte, and token-estimate budgets; and writes no Notion or database state.
 A skipped matrix leaves the HTTP 400 root cause unresolved.
 
+The user-executed initial live-dependency matrix passed through 64 inputs and
+24,916 bytes / 6,254 estimated tokens with the configured model and dimensions.
+Because it observed neither an error category nor a failing boundary, Step 96
+remains `doing`. The follow-up `--shape-only` mode is deterministically tested
+to read/chunk without constructing an embedding client and requires separate
+approval before live execution.
+
 Current audit baseline on 2026-08-01: the full deterministic suite completed
 with `399 passed, 3 skipped`. The skipped cases are opt-in live PostgreSQL
 repository tests and are not passing live evidence. The test-profile preflight

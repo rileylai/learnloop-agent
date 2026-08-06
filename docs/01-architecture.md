@@ -126,7 +126,10 @@ Large-page failure diagnostic boundary (Step 96):
   the diagnostic 30-second timeout and runs sequential single/small/progressive
   bounded provider probes under explicit request, byte, and token-estimate
   budgets without persistence.
-  It does not add production batching, concurrency, retry, or retrieval logic.
+- Its separate shape-only mode creates no embedding client/request and emits
+  only full-request count, aggregate/max/percentile estimates, largest-input
+  ordinal, and estimator version.
+- Neither mode adds production batching, concurrency, retry, or retrieval logic.
 
 Runtime prompt loading (Step 44):
 - `src/services/prompt_template_loader.py`: loads versioned prompt bundles from

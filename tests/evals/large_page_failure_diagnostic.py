@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import os
 import sys
 import time
@@ -91,6 +92,115 @@ class LargePageDiagnosticReport:
             "message": self.message,
             "cases": [asdict(case) for case in self.cases],
         }
+
+
+@dataclass(frozen=True)
+class FullRequestShape:
+    total_input_count: int
+    empty_input_count: int
+    aggregate_input_bytes: int
+    aggregate_input_token_estimate: int
+    max_single_input_bytes: int
+    max_single_input_chars: int
+    max_single_input_token_estimate: int
+    p50_input_bytes: int
+    p95_input_bytes: int
+    p99_input_bytes: int
+    p50_input_chars: int
+    p95_input_chars: int
+    p99_input_chars: int
+    p50_input_token_estimate: int
+    p95_input_token_estimate: int
+    p99_input_token_estimate: int
+    largest_input_ordinal: Optional[int]
+    input_size_estimator_version: str
+
+    def to_safe_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+class ShapeInspectionError(Exception):
+    pass
+
+
+async def run_shape_inspection_workflow(
+    *,
+    reader_client: NotionReaderClient,
+    target_page_id: str,
+) -> FullRequestShape:
+    registry = ToolRegistry()
+    registry.register_tool(NotionReaderTool(reader_client))
+    tool_result = await registry.call_tool(
+        "notion_reader",
+        context=ToolContext(workflow_id="large-page-shape-inspection"),
+        arguments={"page_id": target_page_id},
+    )
+    if tool_result.is_error or tool_result.structured_content is None:
+        raise ShapeInspectionError("read-only Notion shape inspection failed")
+
+    chunk_inputs = _build_all_chunk_inputs(tool_result.structured_content)
+    if not chunk_inputs:
+        raise ShapeInspectionError("no embedding inputs were produced")
+    return build_full_request_shape(chunk_inputs)
+
+
+def build_full_request_shape(inputs: List[str]) -> FullRequestShape:
+    diagnostics = build_embedding_request_diagnostics(
+        inputs=inputs,
+        provider_name="openai",
+        model=DEFAULT_MODEL,
+        dimensions=DEFAULT_DIMENSIONS,
+        endpoint_class="openai_embeddings",
+    )
+    byte_sizes = [len(value.encode("utf-8")) for value in inputs]
+    char_sizes = [len(value) for value in inputs]
+    token_estimates = [
+        build_embedding_request_diagnostics(
+            inputs=[value],
+            provider_name="openai",
+            model=DEFAULT_MODEL,
+            dimensions=DEFAULT_DIMENSIONS,
+            endpoint_class="openai_embeddings",
+        ).max_single_input_token_estimate
+        for value in inputs
+    ]
+    largest_input_ordinal = (
+        byte_sizes.index(max(byte_sizes)) + 1 if byte_sizes else None
+    )
+    return FullRequestShape(
+        total_input_count=diagnostics.input_count,
+        empty_input_count=diagnostics.empty_input_count,
+        aggregate_input_bytes=diagnostics.aggregate_input_bytes,
+        aggregate_input_token_estimate=(
+            diagnostics.aggregate_input_token_estimate
+        ),
+        max_single_input_bytes=diagnostics.max_single_input_bytes,
+        max_single_input_chars=diagnostics.max_single_input_chars,
+        max_single_input_token_estimate=(
+            diagnostics.max_single_input_token_estimate
+        ),
+        p50_input_bytes=_nearest_rank(byte_sizes, 50),
+        p95_input_bytes=_nearest_rank(byte_sizes, 95),
+        p99_input_bytes=_nearest_rank(byte_sizes, 99),
+        p50_input_chars=_nearest_rank(char_sizes, 50),
+        p95_input_chars=_nearest_rank(char_sizes, 95),
+        p99_input_chars=_nearest_rank(char_sizes, 99),
+        p50_input_token_estimate=_nearest_rank(token_estimates, 50),
+        p95_input_token_estimate=_nearest_rank(token_estimates, 95),
+        p99_input_token_estimate=_nearest_rank(token_estimates, 99),
+        largest_input_ordinal=largest_input_ordinal,
+        input_size_estimator_version=(
+            diagnostics.input_size_estimator_version
+        ),
+    )
+
+
+def _nearest_rank(values: List[int], percentile: int) -> int:
+    if not values:
+        return 0
+    ordered = sorted(values)
+    rank = max(1, math.ceil((percentile / 100) * len(ordered)))
+    return ordered[rank - 1]
 
 
 async def run_diagnostic_workflow(
@@ -257,6 +367,47 @@ def run_large_page_failure_diagnostic(
     )
 
 
+def run_live_shape_inspection(
+    *,
+    include_live: bool,
+    approved: bool,
+    environment: Mapping[str, str],
+    reader_client_override: Optional[NotionReaderClient] = None,
+) -> Dict[str, Any]:
+    if not include_live:
+        return {
+            "status": "skipped",
+            "message": "live full request-shape inspection is disabled",
+        }
+    if not approved or environment.get(RUN_FLAG_ENV, "").strip() != "1":
+        return {
+            "status": "failed",
+            "message": "live full request-shape inspection requires approval",
+        }
+    notion_token = environment.get(NOTION_TOKEN_ENV, "").strip()
+    target_page_id = environment.get(PAGE_ID_ENV, "").strip()
+    if not notion_token or not target_page_id:
+        return {
+            "status": "failed",
+            "message": "live full request-shape configuration is incomplete",
+        }
+
+    reader_client = reader_client_override or NotionAPIReaderClient(
+        token=notion_token,
+        timeout_seconds=DIAGNOSTIC_NOTION_TIMEOUT_SECONDS,
+    )
+    try:
+        shape = asyncio.run(
+            run_shape_inspection_workflow(
+                reader_client=reader_client,
+                target_page_id=target_page_id,
+            )
+        )
+    except ShapeInspectionError as exc:
+        return {"status": "failed", "message": str(exc)}
+    return shape.to_safe_dict()
+
+
 def _build_live_clients(
     *,
     notion_token: str,
@@ -375,6 +526,14 @@ def _case_result(
 
 
 def _build_chunk_inputs(structured_content: Dict[str, Any]) -> List[str]:
+    return [
+        chunk_text
+        for chunk_text in _build_all_chunk_inputs(structured_content)
+        if chunk_text.strip()
+    ]
+
+
+def _build_all_chunk_inputs(structured_content: Dict[str, Any]) -> List[str]:
     page = structured_content.get("page")
     raw_blocks = structured_content.get("blocks")
     if not isinstance(page, dict) or not isinstance(raw_blocks, list):
@@ -391,7 +550,7 @@ def _build_chunk_inputs(structured_content: Dict[str, Any]) -> List[str]:
             ],
         )
     )
-    return [draft.chunk_text for draft in drafts if draft.chunk_text.strip()]
+    return [draft.chunk_text for draft in drafts]
 
 
 def _to_chunker_block(value: Any) -> Optional[ChunkerBlock]:
@@ -421,6 +580,7 @@ def main() -> int:
     parser.add_argument("--live", action="store_true")
     parser.add_argument("--approve", action="store_true")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--shape-only", action="store_true")
     parser.add_argument(
         "--bounded-count",
         type=int,
@@ -447,25 +607,37 @@ def main() -> int:
         default=DEFAULT_TOTAL_TOKEN_ESTIMATE_BUDGET,
     )
     args = parser.parse_args()
-    report = run_large_page_failure_diagnostic(
-        include_live=args.live,
-        approved=args.approve,
-        environment=os.environ,
-        bounded_batch_count=args.bounded_count,
-        max_aggregate_bytes=args.max_aggregate_bytes,
-        max_aggregate_token_estimate=args.max_aggregate_token_estimate,
-        max_request_count=args.max_request_count,
-        total_token_estimate_budget=args.total_token_estimate_budget,
-    )
-    safe_report = report.to_safe_dict()
+    if args.shape_only:
+        safe_report = run_live_shape_inspection(
+            include_live=args.live,
+            approved=args.approve,
+            environment=os.environ,
+        )
+        report_status = safe_report.get("status")
+        report_message = safe_report.get(
+            "message", "full request-shape inspection completed"
+        )
+    else:
+        report = run_large_page_failure_diagnostic(
+            include_live=args.live,
+            approved=args.approve,
+            environment=os.environ,
+            bounded_batch_count=args.bounded_count,
+            max_aggregate_bytes=args.max_aggregate_bytes,
+            max_aggregate_token_estimate=args.max_aggregate_token_estimate,
+            max_request_count=args.max_request_count,
+            total_token_estimate_budget=args.total_token_estimate_budget,
+        )
+        safe_report = report.to_safe_dict()
+        report_status = report.status
+        report_message = report.message
     if args.json:
         print(json.dumps(safe_report, sort_keys=True))
     else:
         print(
-            f"status={report.status} diagnosis={report.diagnosis} "
-            f"message={report.message}"
+            f"status={report_status or 'passed'} message={report_message}"
         )
-    return 0 if report.status in {"passed", "skipped"} else 1
+    return 0 if report_status in {None, "passed", "skipped"} else 1
 
 
 if __name__ == "__main__":

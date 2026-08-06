@@ -45,6 +45,15 @@ or enter the page replacement transaction. Normal indexing still completes
 embedding during page preparation and fails closed before replacement when the
 provider fails. Step 97 owns configurable timeout, retry, and batching behavior.
 
+The follow-up shape-only path stops before embedding:
+
+```text
+read the approved page through notion_reader
+-> build the full current body-only input list in memory
+-> emit only safe count, distribution, maximum, ordinal, and estimator fields
+-> stop without constructing an embedding client or persisting data
+```
+
 Worker import boundary (Step 88):
 - API enqueue and the worker share the canonical module-level callable
   `src.worker.telegram.process_telegram_webhook_job`.

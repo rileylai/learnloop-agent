@@ -505,6 +505,11 @@ estimator version, HTTP status, normalized category, retryability, bounded
 numeric `Retry-After`, fixed diagnostic case, and duration. Token estimates are
 not provider-reported billing usage.
 
+The Step 96 full request-shape inspection may additionally emit total input
+count, p50/p95/p99 byte/character/token estimates, and the one-based ordinal of
+the first maximum-byte input. The ordinal is not a chunk identifier. Shape-only
+success output contains no provider, model, endpoint, page, or content field.
+
 Raw response bodies, raw provider messages or unknown codes, serialized
 payloads, chunk/block/page content, page identity/path, embeddings, endpoint
 URLs/hosts, authorization headers, tokens, and credentials are prohibited from

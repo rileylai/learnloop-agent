@@ -259,6 +259,28 @@ configured embedding provider, and a generic HTTP 400 may remain unresolved.
 The command provides bounded dependency evidence only and does not authorize
 Step 97 or a payload-size root-cause claim.
 
+The initial approved matrix passed through 64 inputs and 24,916 bytes / 6,254
+estimated tokens without reproducing HTTP 400. It established no provider
+category or failure boundary.
+
+The next proposed command is a distinct no-embedding Phase A inspection. It is
+documented but not approved for live execution:
+
+```bash
+LEARNLOOP_RUN_LARGE_PAGE_DIAGNOSTIC=1 \
+  uv run --no-env-file --frozen python \
+  tests/evals/large_page_failure_diagnostic.py \
+  --live --approve --shape-only --json
+```
+
+This mode requires only `NOTION_TOKEN` and
+`LEARNLOOP_NOTION_DIAGNOSTIC_PAGE_ID`. It uses the diagnostic 30-second
+read-only client, chunks the same page, and returns only total/empty counts,
+aggregate and maximum sizes, p50/p95/p99 byte/character/token estimates, the
+one-based ordinal of the first maximum-byte input, and estimator version. It
+does not create an OpenAI client, send an embedding request, persist data, or
+authorize the subsequent boundary matrix.
+
 ## Guarded Notion Read/Index/QA Canary
 
 After the adapter matrix passes, the read-only Notion canary may be run against
