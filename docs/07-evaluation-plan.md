@@ -40,10 +40,11 @@ A skipped matrix leaves the HTTP 400 root cause unresolved.
 
 The user-executed initial live-dependency matrix passed through 64 inputs and
 24,916 bytes / 6,254 estimated tokens with the configured model and dimensions.
-Because it observed neither an error category nor a failing boundary, Step 96
-remains `doing`. The follow-up `--shape-only` mode is deterministically tested
-to read/chunk without constructing an embedding client and requires separate
-approval before live execution.
+The follow-up `--shape-only` evidence measured 2,483 production-equivalent
+inputs, exceeding the documented 2,048-input request limit. This supports the
+primary HTTP 400 cause without direct provider error-code confirmation. The
+222,642 aggregate token value is an estimate and is not the diagnosed cause.
+Phase B is cancelled; Step 96 is `done`.
 
 Current audit baseline on 2026-08-01: the full deterministic suite completed
 with `399 passed, 3 skipped`. The skipped cases are opt-in live PostgreSQL

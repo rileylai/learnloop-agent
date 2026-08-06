@@ -263,8 +263,7 @@ The initial approved matrix passed through 64 inputs and 24,916 bytes / 6,254
 estimated tokens without reproducing HTTP 400. It established no provider
 category or failure boundary.
 
-The next proposed command is a distinct no-embedding Phase A inspection. It is
-documented but not approved for live execution:
+The completed no-embedding Phase A inspection used:
 
 ```bash
 LEARNLOOP_RUN_LARGE_PAGE_DIAGNOSTIC=1 \
@@ -278,8 +277,12 @@ This mode requires only `NOTION_TOKEN` and
 read-only client, chunks the same page, and returns only total/empty counts,
 aggregate and maximum sizes, p50/p95/p99 byte/character/token estimates, the
 one-based ordinal of the first maximum-byte input, and estimator version. It
-does not create an OpenAI client, send an embedding request, persist data, or
-authorize the subsequent boundary matrix.
+does not create an OpenAI client, send an embedding request, or persist data.
+The result contained 2,483 inputs, exceeding the documented 2,048-input request
+limit. This supports input count as the primary cause of the original HTTP 400,
+without direct provider error-code confirmation. The proposed Phase B live
+matrix is cancelled and must not be run for Step 96. The 222,642-token value is
+an estimate and is not the diagnosed root cause.
 
 ## Guarded Notion Read/Index/QA Canary
 

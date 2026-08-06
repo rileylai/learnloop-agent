@@ -183,18 +183,31 @@ Rules:
 Observed live evidence shows that increasing the Notion reader's per-request
 timeout from 10 to 30 seconds allowed one large read-only traversal to reach
 the embedding stage, where the existing single page-wide request returned HTTP
-400. This evidence does not establish payload size as the cause; model,
-dimensions, endpoint compatibility, empty input, single-input size, aggregate
-size, and other validation hypotheses remain open until bounded diagnostics
-establish a provider category or controlled failure boundary.
+400. At that stage, this evidence did not establish a cause; model, dimensions,
+endpoint compatibility, empty input, single-input size, aggregate size, and
+other validation hypotheses remained open pending bounded diagnostics or a
+production-equivalent shape checked against a documented hard contract.
 
 The first guarded matrix subsequently passed with the configured OpenAI
 embedding endpoint class, `text-embedding-3-small`, and `dimensions=1536` for
 1, 4, 8, 16, 32, and 64 inputs. The largest tested request contained 24,916
 bytes / 6,254 estimated tokens, and no input was empty. This proves only that
 the tested model/dimensions and tested multi-input shapes work. It produced no
-provider category or failure boundary and does not explain the original
-page-wide HTTP 400.
+provider category or failure boundary by itself.
+
+The Phase A production-equivalent shape contained 2,483 inputs, zero empty
+inputs, 886,852 bytes, and 222,642 estimated tokens. The
+[OpenAI Embeddings request contract](https://developers.openai.com/api/reference/resources/embeddings/methods/create)
+limits an input array to 2,048 entries. Therefore:
+
+> The production-equivalent page request contained 2,483 inputs, exceeding the
+> documented 2,048-input request limit. This is the supported primary root
+> cause of the original HTTP 400. The original provider error body was not
+> captured, so there is no direct provider error-code confirmation.
+
+The aggregate token count is estimator output, not the diagnosed cause. Phase
+B provider probing is cancelled as unnecessary; Step 97 owns the production
+bounded-execution fix.
 
 The deterministic Step 96 implementation adds typed, sanitized Notion and
 embedding errors plus versioned request-shape diagnostics. It classifies HTTP
@@ -210,10 +223,8 @@ production sub-batching. It never persists diagnostic embeddings or enters
 page replacement. Step 97 remains responsible for the embedding execution
 contract, bounded batching, retry, and aggregate usage.
 
-The next diagnostic phase is shape-only: read and chunk the same page, compute
-the full original request's count and byte/token distribution in memory, and
-emit only aggregate/max/percentile estimates plus the safe ordinal of the
-largest input. It does not create an embedding client or provider request.
+The completed shape-only phase read and chunked the same page without creating
+an embedding client or provider request.
 
 ## Legacy Chunk Vector Gap Handling (Step 51)
 

@@ -509,6 +509,9 @@ The Step 96 full request-shape inspection may additionally emit total input
 count, p50/p95/p99 byte/character/token estimates, and the one-based ordinal of
 the first maximum-byte input. The ordinal is not a chunk identifier. Shape-only
 success output contains no provider, model, endpoint, page, or content field.
+The completed evidence recorded 2,483 total inputs and zero empty inputs; it
+did not add raw provider content or a provider error code that was never
+captured.
 
 Raw response bodies, raw provider messages or unknown codes, serialized
 payloads, chunk/block/page content, page identity/path, embeddings, endpoint
