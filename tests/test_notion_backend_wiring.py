@@ -21,6 +21,13 @@ def _clear_caches() -> None:
     get_tool_registry.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_dependency_caches():
+    _clear_caches()
+    yield
+    _clear_caches()
+
+
 def test_notion_backend_defaults_to_mock(monkeypatch) -> None:
     monkeypatch.delenv("NOTION_BACKEND", raising=False)
     monkeypatch.delenv("NOTION_TOKEN", raising=False)
@@ -38,6 +45,10 @@ def test_notion_backend_defaults_to_mock(monkeypatch) -> None:
 def test_live_backend_uses_api_reader_and_writer(monkeypatch) -> None:
     monkeypatch.setenv("NOTION_BACKEND", "live")
     monkeypatch.setenv("NOTION_TOKEN", "placeholder-token")
+    monkeypatch.setenv("NOTION_REQUEST_TIMEOUT_SECONDS", "45")
+    monkeypatch.setenv("NOTION_READ_MAX_ATTEMPTS", "4")
+    monkeypatch.setenv("NOTION_READ_RETRY_BASE_SECONDS", "2")
+    monkeypatch.setenv("NOTION_READ_RETRY_MAX_SECONDS", "20")
     _clear_caches()
 
     registry = get_tool_registry()
@@ -46,6 +57,10 @@ def test_live_backend_uses_api_reader_and_writer(monkeypatch) -> None:
     writer = registry.get_tool("notion_writer")._notion_writer_client
     assert isinstance(reader, NotionAPIReaderClient)
     assert isinstance(writer, NotionAPIWriterClient)
+    assert reader._transport._timeout_seconds == 45
+    assert reader._max_attempts == 4
+    assert reader._retry_base_seconds == 2
+    assert reader._retry_max_seconds == 20
 
 
 def test_live_backend_without_token_fails_closed(monkeypatch) -> None:

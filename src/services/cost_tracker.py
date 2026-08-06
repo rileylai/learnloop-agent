@@ -76,10 +76,10 @@ class CostTracker:
         pricing = self._embedding_pricing.get(
             _normalize_provider_model(provider_name, model)
         )
-        if pricing is None:
+        if pricing is None or token_input is None:
             return None
 
-        normalized_token_input = max(token_input or 0, 0)
+        normalized_token_input = max(token_input, 0)
         total_cost = (
             Decimal(normalized_token_input) * pricing.input_per_million_usd
         ) / MICRO_TOKEN_DENOMINATOR

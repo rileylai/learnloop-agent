@@ -3,6 +3,15 @@ from src.services.cost_tracker import (
     EmbeddingTokenPricing,
     LLMTokenPricing,
 )
+from src.services.embedding_batch_service import (
+    EmbeddingBatch,
+    EmbeddingBatchError,
+    EmbeddingBatchLimits,
+    EmbeddingBatchPlan,
+    EmbeddingBatchService,
+    EmbeddingExecutionResult,
+    EmbeddingRetryPolicy,
+)
 from src.services.cost_budget import (
     COST_SCOPE_7D,
     COST_SCOPE_MONTH,
@@ -163,6 +172,13 @@ from src.policies.synthetic_data import (
 )
 
 __all__ = [
+    "EmbeddingBatch",
+    "EmbeddingBatchError",
+    "EmbeddingBatchLimits",
+    "EmbeddingBatchPlan",
+    "EmbeddingBatchService",
+    "EmbeddingExecutionResult",
+    "EmbeddingRetryPolicy",
     "CostTracker",
     "CostBudgetDecision",
     "CostBudgetService",

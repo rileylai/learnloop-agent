@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import math
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
 from urllib import error, request
 from urllib.parse import quote, urlencode
 
@@ -28,6 +30,15 @@ DEFAULT_NOTION_VERSION = "2022-06-28"
 DEFAULT_NOTION_PAGE_PATH_PREFIX = "Knowledge"
 MAX_NOTION_PAGE_SIZE = 100
 _NOTION_UUID_HEX_PATTERN = re.compile(r"^[0-9a-fA-F]{32}$")
+_RETRYABLE_NOTION_CATEGORIES = frozenset(
+    {
+        ExternalErrorCategory.TIMEOUT,
+        ExternalErrorCategory.TRANSPORT_UNAVAILABLE,
+        ExternalErrorCategory.REQUEST_TIMEOUT,
+        ExternalErrorCategory.RATE_LIMITED,
+        ExternalErrorCategory.UPSTREAM_SERVER_ERROR,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -264,6 +275,10 @@ class NotionAPIReaderClient(NotionReaderClient):
         page_path_prefix: str = DEFAULT_NOTION_PAGE_PATH_PREFIX,
         page_size: int = MAX_NOTION_PAGE_SIZE,
         timeout_seconds: float = 10.0,
+        max_attempts: int = 3,
+        retry_base_seconds: float = 1.0,
+        retry_max_seconds: float = 30.0,
+        sleeper: Optional[Callable[[float], None]] = None,
     ) -> None:
         normalized_token = token.strip()
         if not normalized_token:
@@ -281,11 +296,21 @@ class NotionAPIReaderClient(NotionReaderClient):
             raise ValueError("page_path_prefix must not be empty")
         if not 1 <= page_size <= MAX_NOTION_PAGE_SIZE:
             raise ValueError(f"page_size must be between 1 and {MAX_NOTION_PAGE_SIZE}")
+        if max_attempts <= 0:
+            raise ValueError("max_attempts must be positive")
+        if not math.isfinite(retry_base_seconds) or retry_base_seconds <= 0:
+            raise ValueError("retry_base_seconds must be positive and finite")
+        if not math.isfinite(retry_max_seconds) or retry_max_seconds <= 0:
+            raise ValueError("retry_max_seconds must be positive and finite")
 
         self._token = normalized_token
         self._notion_version = normalized_version
         self._page_path_prefix = normalized_prefix
         self._page_size = page_size
+        self._max_attempts = max_attempts
+        self._retry_base_seconds = retry_base_seconds
+        self._retry_max_seconds = retry_max_seconds
+        self._sleeper = sleeper or time.sleep
         self._transport = transport or UrllibNotionHTTPTransport(
             base_url=base_url,
             timeout_seconds=timeout_seconds,
@@ -484,48 +509,59 @@ class NotionAPIReaderClient(NotionReaderClient):
         payload: Optional[Mapping[str, Any]] = None,
         not_found_code: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        try:
-            headers = {
-                "Authorization": f"Bearer {self._token}",
-                "Notion-Version": self._notion_version,
-                "Accept": "application/json",
-            }
-            if method == "POST":
-                response = self._transport.post_json(
-                    path=path,
-                    query=query,
-                    headers=headers,
-                    payload=payload or {},
+        headers = {
+            "Authorization": f"Bearer {self._token}",
+            "Notion-Version": self._notion_version,
+            "Accept": "application/json",
+        }
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                if method == "POST":
+                    response = self._transport.post_json(
+                        path=path,
+                        query=query,
+                        headers=headers,
+                        payload=payload or {},
+                    )
+                else:
+                    response = self._transport.get_json(
+                        path=path,
+                        query=query,
+                        headers=headers,
+                    )
+            except NotionHTTPTransportError as exc:
+                diagnostic = exc.diagnostic or ExternalErrorDiagnostic(
+                    category=ExternalErrorCategory.TRANSPORT_UNAVAILABLE,
+                    retryable=True,
                 )
-            else:
-                response = self._transport.get_json(
-                    path=path,
-                    query=query,
-                    headers=headers,
-                )
-        except NotionHTTPTransportError as exc:
-            diagnostic = exc.diagnostic or ExternalErrorDiagnostic(
-                category=ExternalErrorCategory.TRANSPORT_UNAVAILABLE,
-                retryable=True,
-            )
-            raise NotionAPIClientError(
-                code="NOTION_BLOCK_FETCH_FAILED",
-                message="Notion API transport request failed",
-                diagnostic=diagnostic,
-            ) from None
-        except Exception:
-            raise NotionAPIClientError(
-                code="NOTION_BLOCK_FETCH_FAILED",
-                message="Notion API request failed",
-                diagnostic=ExternalErrorDiagnostic(
-                    category=ExternalErrorCategory.RESPONSE_INVALID,
-                    retryable=False,
-                ),
-            ) from None
+                if self._should_retry(diagnostic, attempt):
+                    self._sleeper(self._retry_delay(diagnostic, attempt))
+                    continue
+                raise NotionAPIClientError(
+                    code="NOTION_BLOCK_FETCH_FAILED",
+                    message="Notion API transport request failed",
+                    diagnostic=diagnostic,
+                ) from None
+            except Exception:
+                raise NotionAPIClientError(
+                    code="NOTION_BLOCK_FETCH_FAILED",
+                    message="Notion API request failed",
+                    diagnostic=ExternalErrorDiagnostic(
+                        category=ExternalErrorCategory.RESPONSE_INVALID,
+                        retryable=False,
+                    ),
+                ) from None
 
-        diagnostic = response.diagnostic
-        if diagnostic is None and not 200 <= response.status_code < 300:
-            diagnostic = classify_http_error(status_code=response.status_code)
+            diagnostic = response.diagnostic
+            if diagnostic is None and not 200 <= response.status_code < 300:
+                diagnostic = classify_http_error(status_code=response.status_code)
+            if diagnostic is not None and self._should_retry(diagnostic, attempt):
+                self._sleeper(self._retry_delay(diagnostic, attempt))
+                continue
+            break
+
         if response.status_code in (401, 403):
             raise NotionAPIClientError(
                 code="NOTION_AUTH_FAILED",
@@ -551,6 +587,26 @@ class NotionAPIReaderClient(NotionReaderClient):
                 ),
             )
         return response.payload
+
+    def _should_retry(
+        self,
+        diagnostic: ExternalErrorDiagnostic,
+        attempt: int,
+    ) -> bool:
+        return bool(
+            attempt < self._max_attempts
+            and diagnostic.retryable
+            and diagnostic.category in _RETRYABLE_NOTION_CATEGORIES
+        )
+
+    def _retry_delay(
+        self,
+        diagnostic: ExternalErrorDiagnostic,
+        attempt: int,
+    ) -> float:
+        backoff = self._retry_base_seconds * (2 ** (attempt - 1))
+        retry_after = float(diagnostic.retry_after_seconds or 0)
+        return min(self._retry_max_seconds, max(backoff, retry_after))
 
 
 def _extract_page_title(page_payload: Mapping[str, Any]) -> str:

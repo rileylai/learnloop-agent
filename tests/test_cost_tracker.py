@@ -64,3 +64,16 @@ def test_cost_tracker_returns_none_for_unknown_model() -> None:
         )
         is None
     )
+
+
+def test_cost_tracker_keeps_embedding_cost_unknown_when_usage_is_missing() -> None:
+    tracker = CostTracker()
+
+    assert (
+        tracker.estimate_embedding_cost(
+            provider_name="openai",
+            model="text-embedding-3-small",
+            token_input=None,
+        )
+        is None
+    )

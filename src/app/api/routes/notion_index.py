@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from src.app.config import get_settings
 from src.app.dependencies import (
+    build_embedding_batch_service,
     get_cost_tracker,
     get_embedding_client,
     get_tool_registry,
@@ -51,7 +52,7 @@ def _build_index_orchestrator(
         tool_registry=tool_registry,
         unit_of_work_factory=unit_of_work_factory,
         workflow_run_service=WorkflowRunService(db_session_factory),
-        embedding_client=embedding_client,
+        embedding_batch_service=build_embedding_batch_service(embedding_client),
         cost_tracker=cost_tracker,
         source_is_synthetic=get_settings().notion_backend == "mock",
     )

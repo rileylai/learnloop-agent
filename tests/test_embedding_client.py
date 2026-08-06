@@ -2,7 +2,7 @@ import asyncio
 import io
 import json
 import traceback
-from typing import Any, Dict
+from typing import Any, Dict, List
 from urllib import error
 
 import pytest
@@ -33,9 +33,9 @@ def test_openai_embedding_client_returns_embeddings_with_mock_transport() -> Non
         captured_headers.update(headers)
         captured_payload.update(payload)
         return {
-            "data": [
-                {"embedding": [0.1, 0.2, 0.3]},
-                {"embedding": [0.4, 0.5, 0.6]},
+                "data": [
+                    {"index": 0, "embedding": [0.1, 0.2, 0.3]},
+                    {"index": 1, "embedding": [0.4, 0.5, 0.6]},
             ],
             "usage": {"prompt_tokens": 12},
         }
@@ -60,6 +60,7 @@ def test_openai_embedding_client_returns_embeddings_with_mock_transport() -> Non
     assert response.model == "text-embedding-3-small"
     assert response.token_input == 12
     assert response.embeddings == [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
+    assert response.indices == [0, 1]
 
 
 def test_openai_embedding_client_uses_request_model_and_dimensions() -> None:
@@ -72,7 +73,7 @@ def test_openai_embedding_client_uses_request_model_and_dimensions() -> None:
     ) -> Dict[str, Any]:
         _ = url, headers
         captured_payload.update(payload)
-        return {"data": [{"embedding": [0.01, 0.02]}]}
+        return {"data": [{"index": 0, "embedding": [0.01, 0.02]}]}
 
     client = OpenAIEmbeddingClient(
         api_key="test-key",
@@ -110,6 +111,40 @@ def test_openai_embedding_client_raises_error_for_invalid_transport_output() -> 
 
     with pytest.raises(EmbeddingClientError):
         asyncio.run(client.embed(request))
+
+
+@pytest.mark.parametrize(
+    "indices",
+    [
+        [0, 0],
+        [0, 2],
+        [1, 0],
+        [0],
+    ],
+)
+def test_openai_embedding_client_rejects_duplicate_missing_out_of_range_or_unordered_indices(
+    indices: List[int],
+) -> None:
+    def fake_transport(
+        url: str,
+        headers: Dict[str, str],
+        payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        _ = url, headers, payload
+        return {
+            "data": [
+                {"index": index, "embedding": [float(position)]}
+                for position, index in enumerate(indices)
+            ]
+        }
+
+    client = OpenAIEmbeddingClient(api_key="test-key", transport=fake_transport)
+
+    with pytest.raises(EmbeddingClientError) as exc_info:
+        asyncio.run(client.embed(EmbeddingRequest(inputs=["one", "two"])))
+
+    assert exc_info.value.category == ExternalErrorCategory.RESPONSE_INVALID
+    assert exc_info.value.retryable is False
 
 
 def test_openai_embedding_client_rejects_empty_api_key() -> None:

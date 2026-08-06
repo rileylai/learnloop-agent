@@ -43,7 +43,7 @@ The diagnostic command is separately opt-in and is not a full-index workflow.
 It does not retry, split a production request, write Notion, persist vectors,
 or enter the page replacement transaction. Normal indexing still completes
 embedding during page preparation and fails closed before replacement when the
-provider fails. Step 97 owns configurable timeout, retry, and batching behavior.
+provider fails.
 
 The follow-up shape-only path stops before embedding:
 
@@ -53,6 +53,24 @@ read the approved page through notion_reader
 -> emit only safe count, distribution, maximum, ordinal, and estimator fields
 -> stop without constructing an embedding client or persisting data
 ```
+
+Step 97 implements the production reliability path:
+
+```text
+read one page through notion_reader with configured timeout and read-only retry
+-> build the complete current body-only chunk list
+-> preflight stable contiguous embedding batches
+-> execute one bounded batch at a time with bounded retry
+-> validate batch-local indices, count, model, provider, and dimensions
+-> reassemble one complete in-memory result in original chunk order
+-> construct one complete prepared page snapshot
+-> replace that page's blocks, chunks, and vectors in one transaction
+```
+
+Embedding concurrency is fixed at `1`. A failed first, middle, or last batch
+returns no partial aggregate and cannot open the page replacement transaction.
+Full index retains its existing page-level partial outcome: earlier pages stay
+committed, the failed page remains unchanged, and later pages are not attempted.
 
 Worker import boundary (Step 88):
 - API enqueue and the worker share the canonical module-level callable

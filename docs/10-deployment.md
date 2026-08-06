@@ -284,6 +284,53 @@ without direct provider error-code confirmation. The proposed Phase B live
 matrix is cancelled and must not be run for Step 96. The 222,642-token value is
 an estimate and is not the diagnosed root cause.
 
+## Step 97 Large-page Reliability Configuration
+
+Production page indexing uses these positive settings:
+
+- `NOTION_REQUEST_TIMEOUT_SECONDS` (default `30`)
+- `NOTION_READ_MAX_ATTEMPTS` (default `3`)
+- `NOTION_READ_RETRY_BASE_SECONDS` / `NOTION_READ_RETRY_MAX_SECONDS`
+- `EMBEDDING_BATCH_MAX_INPUTS` (default `512`)
+- `EMBEDDING_BATCH_MAX_SINGLE_INPUT_BYTES`
+- `EMBEDDING_BATCH_MAX_SINGLE_INPUT_TOKEN_ESTIMATE`
+- `EMBEDDING_BATCH_MAX_AGGREGATE_BYTES`
+- `EMBEDDING_BATCH_MAX_AGGREGATE_TOKEN_ESTIMATE`
+- `EMBEDDING_REQUEST_MAX_ATTEMPTS` (default `3`)
+- `EMBEDDING_RETRY_BASE_SECONDS` / `EMBEDDING_RETRY_MAX_SECONDS`
+
+Embedding concurrency is fixed at `1` and has no setting in Step 97. The
+token-estimate settings use the conservative, versioned operational estimator;
+provider-reported usage remains the only source for usage/cost metadata.
+
+The separately approved single-page verification command is:
+
+```bash
+LEARNLOOP_RUN_LARGE_PAGE_RELIABILITY=1 \
+  UV_CACHE_DIR=/tmp/learnloop-uv-cache \
+  uv run --no-env-file --frozen python \
+  tests/evals/large_page_indexing_reliability.py \
+  --live --approve --json \
+  --max-request-count 16 \
+  --total-token-estimate-budget 3000000
+```
+
+Before running, set `NOTION_TOKEN`, `OPENAI_API_KEY`, and
+`LEARNLOOP_NOTION_RELIABILITY_PAGE_ID` without printing their values, and
+verify that `DATABASE_URL` names the intended local database. The command is
+triple-gated, targets exactly one page, requires a multi-batch plan, and checks
+the worst-case request/token-estimate budget across configured retry attempts
+before the first embedding request. It performs production page replacement
+for that target in the configured local database. It does not write Notion,
+run a full index, send Telegram, or clean Redis/database state.
+
+The safe report contains only bounded shapes, provider/model/dimensions,
+batch/retry counts, complete usage/cost when known, duration, aggregate indexed
+counts, and allowlisted failure reason. It never emits page identity/path,
+content, inputs/payloads, vectors, endpoint URL, raw provider response/message,
+credentials, or environment values. This command is documented only; it was
+not executed during deterministic Step 97 implementation.
+
 ## Guarded Notion Read/Index/QA Canary
 
 After the adapter matrix passes, the read-only Notion canary may be run against

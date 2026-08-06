@@ -8,6 +8,7 @@ from fastapi import Depends, Header, HTTPException
 from src.app.config import (
     NOTION_BACKEND_LIVE,
     NotionBackendConfigurationError,
+    Settings,
     get_settings,
     normalize_notion_backend,
 )
@@ -29,6 +30,9 @@ from src.queue import QueueClient, RQQueueClient
 from src.services import (
     CostTracker,
     CostBudgetService,
+    EmbeddingBatchLimits,
+    EmbeddingBatchService,
+    EmbeddingRetryPolicy,
     MetricsService,
     PromptTemplateLoader,
     ReadinessService,
@@ -233,10 +237,12 @@ def _build_notion_clients(
                 "NOTION_BACKEND=live requires NOTION_TOKEN"
             )
         return (
-            # NotionAPIReaderClient(token=settings.notion_token),
             NotionAPIReaderClient(
                 token=settings.notion_token,
-                timeout_seconds=30.0,
+                timeout_seconds=settings.notion_request_timeout_seconds,
+                max_attempts=settings.notion_read_max_attempts,
+                retry_base_seconds=settings.notion_read_retry_base_seconds,
+                retry_max_seconds=settings.notion_read_retry_max_seconds,
             ),
             NotionAPIWriterClient(token=settings.notion_token),
         )
@@ -279,6 +285,41 @@ def get_embedding_client() -> Optional[EmbeddingClient]:
     if not settings.openai_api_key:
         return None
     return OpenAIEmbeddingClient(api_key=settings.openai_api_key)
+
+
+def build_embedding_batch_service(
+    embedding_client: Optional[EmbeddingClient],
+    *,
+    settings: Optional[Settings] = None,
+) -> Optional[EmbeddingBatchService]:
+    if embedding_client is None:
+        return None
+    selected_settings = settings or get_settings()
+    return EmbeddingBatchService(
+        embedding_client=embedding_client,
+        model="text-embedding-3-small",
+        dimensions=1536,
+        limits=EmbeddingBatchLimits(
+            max_inputs=selected_settings.embedding_batch_max_inputs,
+            max_single_input_bytes=(
+                selected_settings.embedding_batch_max_single_input_bytes
+            ),
+            max_single_input_tokens=(
+                selected_settings.embedding_batch_max_single_input_token_estimate
+            ),
+            max_aggregate_bytes=(
+                selected_settings.embedding_batch_max_aggregate_bytes
+            ),
+            max_aggregate_tokens=(
+                selected_settings.embedding_batch_max_aggregate_token_estimate
+            ),
+        ),
+        retry_policy=EmbeddingRetryPolicy(
+            max_attempts=selected_settings.embedding_request_max_attempts,
+            base_delay_seconds=selected_settings.embedding_retry_base_seconds,
+            max_delay_seconds=selected_settings.embedding_retry_max_seconds,
+        ),
+    )
 
 
 @lru_cache(maxsize=1)

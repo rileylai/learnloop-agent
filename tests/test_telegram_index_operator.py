@@ -22,7 +22,12 @@ from src.db.models import (
 )
 from src.db.session import get_db_session, get_db_session_factory, get_unit_of_work_factory
 from src.db.unit_of_work import SqlAlchemyUnitOfWork
-from src.providers import EmbeddingClient, EmbeddingRequest, EmbeddingResponse
+from src.providers import (
+    EmbeddingClient,
+    EmbeddingRequest,
+    EmbeddingResponse,
+    get_openai_embedding_capabilities,
+)
 from src.services import (
     InMemoryTelegramIndexSessionStore,
     InMemoryTelegramSessionStore,
@@ -43,11 +48,18 @@ class _Embedding(EmbeddingClient):
     def name(self) -> str:
         return "openai"
 
+    def get_capabilities(self, *, model: str, dimensions: int):
+        return get_openai_embedding_capabilities(
+            model=model,
+            dimensions=dimensions,
+        )
+
     async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
         return EmbeddingResponse(
             provider="openai",
             model="text-embedding-3-small",
             embeddings=[[1.0] * 1536 for _ in request.inputs],
+            indices=list(range(len(request.inputs))),
             token_input=len(request.inputs) * 10,
         )
 

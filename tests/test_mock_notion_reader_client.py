@@ -13,7 +13,12 @@ from src.db.base import Base
 from src.db.models import KnowledgeChunk, NotionBlock, NotionPage, WorkflowRun
 from src.db.unit_of_work import SqlAlchemyUnitOfWork
 from src.orchestrators import NotionPageIndexOrchestrator
-from src.providers import EmbeddingClient, EmbeddingRequest, EmbeddingResponse
+from src.providers import (
+    EmbeddingClient,
+    EmbeddingRequest,
+    EmbeddingResponse,
+    get_openai_embedding_capabilities,
+)
 from src.services import WorkflowRunService
 from src.tools import (
     DEFAULT_MOCK_NOTION_DATA_DIR,
@@ -30,6 +35,12 @@ class _FakeEmbeddingClient(EmbeddingClient):
     def name(self) -> str:
         return "openai"
 
+    def get_capabilities(self, *, model: str, dimensions: int):
+        return get_openai_embedding_capabilities(
+            model=model,
+            dimensions=dimensions,
+        )
+
     async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
         embeddings = [
             [float(index + 1)] * 1536
@@ -39,6 +50,7 @@ class _FakeEmbeddingClient(EmbeddingClient):
             provider="openai",
             model="text-embedding-3-small",
             embeddings=embeddings,
+            indices=list(range(len(request.inputs))),
             token_input=len(request.inputs) * 10,
         )
 

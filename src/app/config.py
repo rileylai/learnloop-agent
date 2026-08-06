@@ -69,7 +69,19 @@ class Settings(BaseModel):
     mock_notion_data_dir: Optional[str] = None
     notion_backend: str = Field(default=NOTION_BACKEND_MOCK)
     notion_token: Optional[str] = None
+    notion_request_timeout_seconds: float = 30.0
+    notion_read_max_attempts: int = 3
+    notion_read_retry_base_seconds: float = 1.0
+    notion_read_retry_max_seconds: float = 30.0
     openai_api_key: Optional[str] = None
+    embedding_batch_max_inputs: int = 512
+    embedding_batch_max_single_input_bytes: int = 32768
+    embedding_batch_max_single_input_token_estimate: int = 8000
+    embedding_batch_max_aggregate_bytes: int = 1000000
+    embedding_batch_max_aggregate_token_estimate: int = 250000
+    embedding_request_max_attempts: int = 3
+    embedding_retry_base_seconds: float = 1.0
+    embedding_retry_max_seconds: float = 30.0
     telegram_bot_token: Optional[str] = None
     api_bearer_token: Optional[str] = None
     telegram_webhook_secret: Optional[str] = None
@@ -89,7 +101,73 @@ class Settings(BaseModel):
             notion_backend=_read_optional_env("NOTION_BACKEND")
             or NOTION_BACKEND_MOCK,
             notion_token=_read_optional_env("NOTION_TOKEN"),
+            notion_request_timeout_seconds=(
+                _read_optional_positive_float_env(
+                    "NOTION_REQUEST_TIMEOUT_SECONDS"
+                )
+                or 30.0
+            ),
+            notion_read_max_attempts=_read_optional_positive_int_env(
+                "NOTION_READ_MAX_ATTEMPTS",
+                default=3,
+            ),
+            notion_read_retry_base_seconds=(
+                _read_optional_positive_float_env(
+                    "NOTION_READ_RETRY_BASE_SECONDS"
+                )
+                or 1.0
+            ),
+            notion_read_retry_max_seconds=(
+                _read_optional_positive_float_env(
+                    "NOTION_READ_RETRY_MAX_SECONDS"
+                )
+                or 30.0
+            ),
             openai_api_key=_read_optional_env("OPENAI_API_KEY"),
+            embedding_batch_max_inputs=_read_optional_positive_int_env(
+                "EMBEDDING_BATCH_MAX_INPUTS",
+                default=512,
+            ),
+            embedding_batch_max_single_input_bytes=(
+                _read_optional_positive_int_env(
+                    "EMBEDDING_BATCH_MAX_SINGLE_INPUT_BYTES",
+                    default=32768,
+                )
+            ),
+            embedding_batch_max_single_input_token_estimate=(
+                _read_optional_positive_int_env(
+                    "EMBEDDING_BATCH_MAX_SINGLE_INPUT_TOKEN_ESTIMATE",
+                    default=8000,
+                )
+            ),
+            embedding_batch_max_aggregate_bytes=(
+                _read_optional_positive_int_env(
+                    "EMBEDDING_BATCH_MAX_AGGREGATE_BYTES",
+                    default=1000000,
+                )
+            ),
+            embedding_batch_max_aggregate_token_estimate=(
+                _read_optional_positive_int_env(
+                    "EMBEDDING_BATCH_MAX_AGGREGATE_TOKEN_ESTIMATE",
+                    default=250000,
+                )
+            ),
+            embedding_request_max_attempts=_read_optional_positive_int_env(
+                "EMBEDDING_REQUEST_MAX_ATTEMPTS",
+                default=3,
+            ),
+            embedding_retry_base_seconds=(
+                _read_optional_positive_float_env(
+                    "EMBEDDING_RETRY_BASE_SECONDS"
+                )
+                or 1.0
+            ),
+            embedding_retry_max_seconds=(
+                _read_optional_positive_float_env(
+                    "EMBEDDING_RETRY_MAX_SECONDS"
+                )
+                or 30.0
+            ),
             telegram_bot_token=_read_optional_env("TELEGRAM_BOT_TOKEN"),
             api_bearer_token=_read_optional_env("API_BEARER_TOKEN"),
             telegram_webhook_secret=_read_optional_env("TELEGRAM_WEBHOOK_SECRET"),

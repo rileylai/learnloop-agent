@@ -34,8 +34,20 @@ class EmbeddingResponse(BaseModel):
     provider: str
     model: str
     embeddings: List[List[float]]
+    indices: Optional[List[int]] = None
     token_input: Optional[int] = None
     raw_response: Optional[Dict[str, Any]] = None
+
+
+@dataclass(frozen=True)
+class EmbeddingCapabilities:
+    provider: str
+    model: str
+    dimensions: int
+    max_input_count: int
+    max_single_input_tokens: int
+    max_aggregate_tokens: int
+    tokenizer_model: str
 
 
 @dataclass(frozen=True)
@@ -112,6 +124,15 @@ class EmbeddingClient(ABC):
     def name(self) -> str:
         raise NotImplementedError
 
+    def get_capabilities(
+        self,
+        *,
+        model: str,
+        dimensions: int,
+    ) -> Optional[EmbeddingCapabilities]:
+        _ = model, dimensions
+        return None
+
     @abstractmethod
     async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
         raise NotImplementedError
@@ -150,6 +171,19 @@ class OpenAIEmbeddingClient(EmbeddingClient):
     @property
     def name(self) -> str:
         return "openai"
+
+    def get_capabilities(
+        self,
+        *,
+        model: str,
+        dimensions: int,
+    ) -> Optional[EmbeddingCapabilities]:
+        if self._endpoint_class != "openai_embeddings":
+            return None
+        return get_openai_embedding_capabilities(
+            model=model,
+            dimensions=dimensions,
+        )
 
     async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
         model_name = (request.model or self._default_model).strip()
@@ -215,15 +249,32 @@ class OpenAIEmbeddingClient(EmbeddingClient):
 
         try:
             data = raw_response["data"]
-            embeddings = [item["embedding"] for item in data]
             usage = raw_response.get("usage", {})
             prompt_tokens = usage.get("prompt_tokens")
         except (AttributeError, KeyError, TypeError):
             raise _invalid_response_error(request_diagnostics) from None
 
-        if not isinstance(data, list) or not all(
-            isinstance(embedding, list) for embedding in embeddings
-        ):
+        if not isinstance(data, list):
+            raise _invalid_response_error(request_diagnostics)
+
+        embeddings: List[List[float]] = []
+        indices: List[int] = []
+        for item in data:
+            if not isinstance(item, dict):
+                raise _invalid_response_error(request_diagnostics)
+            embedding = item.get("embedding")
+            index = item.get("index")
+            if (
+                not isinstance(embedding, list)
+                or not isinstance(index, int)
+                or isinstance(index, bool)
+            ):
+                raise _invalid_response_error(request_diagnostics)
+            embeddings.append(embedding)
+            indices.append(index)
+
+        expected_indices = list(range(len(request.inputs)))
+        if len(embeddings) != len(request.inputs) or indices != expected_indices:
             raise _invalid_response_error(request_diagnostics)
 
         try:
@@ -231,6 +282,7 @@ class OpenAIEmbeddingClient(EmbeddingClient):
                 provider=self.name,
                 model=model_name,
                 embeddings=embeddings,
+                indices=indices,
                 token_input=prompt_tokens,
             )
         except ValidationError:
@@ -260,6 +312,25 @@ def build_embedding_request_diagnostics(
         max_single_input_token_estimate=max(token_estimates, default=0),
         aggregate_input_bytes=sum(encoded_sizes),
         aggregate_input_token_estimate=sum(token_estimates),
+    )
+
+
+def get_openai_embedding_capabilities(
+    *,
+    model: str,
+    dimensions: int,
+) -> Optional[EmbeddingCapabilities]:
+    normalized_model = model.strip()
+    if normalized_model != "text-embedding-3-small" or dimensions != 1536:
+        return None
+    return EmbeddingCapabilities(
+        provider="openai",
+        model=normalized_model,
+        dimensions=dimensions,
+        max_input_count=2048,
+        max_single_input_tokens=8192,
+        max_aggregate_tokens=300000,
+        tokenizer_model=normalized_model,
     )
 
 

@@ -7,7 +7,11 @@ from urllib import error
 
 import pytest
 
-from src.observability.external_error import ExternalErrorCategory
+from src.observability.external_error import (
+    ExternalErrorCategory,
+    ExternalErrorDiagnostic,
+    classify_http_error,
+)
 from src.tools import notion_api_reader_client as notion_reader_module
 from src.tools import (
     NotionAPIReaderClient,
@@ -423,6 +427,7 @@ def test_notion_api_reader_exposes_safe_http_diagnostics(
 ) -> None:
     client = NotionAPIReaderClient(
         token="secret-token",
+        max_attempts=1,
         transport=_FakeNotionHTTPTransport(
             [
                 NotionHTTPResponse(
@@ -442,6 +447,72 @@ def test_notion_api_reader_exposes_safe_http_diagnostics(
     assert error_value.http_status == status_code
     assert "private page contents" not in str(error_value)
     assert "secret-token" not in str(error_value)
+
+
+@pytest.mark.parametrize("status_code", [408, 429, 500, 502, 503, 504])
+def test_notion_api_reader_retries_allowlisted_transient_status_only_for_current_read(
+    status_code: int,
+) -> None:
+    transport = _FakeNotionHTTPTransport(
+        [
+            NotionHTTPResponse(
+                status_code=status_code,
+                payload=None,
+                diagnostic=classify_http_error(status_code=status_code),
+            ),
+            _page_response(),
+            NotionHTTPResponse(
+                status_code=200,
+                payload={"results": [], "has_more": False, "next_cursor": None},
+            ),
+        ]
+    )
+    sleeps: List[float] = []
+    client = NotionAPIReaderClient(
+        token="secret-token",
+        transport=transport,
+        sleeper=sleeps.append,
+    )
+
+    page = client.fetch_page_tree("page-1")
+
+    assert page is not None
+    assert [call[0] for call in transport.calls] == [
+        "/v1/pages/page-1",
+        "/v1/pages/page-1",
+        "/v1/blocks/page-1/children",
+    ]
+    assert sleeps == [1.0]
+
+
+def test_notion_api_reader_caps_retry_after_and_stops_at_max_attempts() -> None:
+    diagnostic = ExternalErrorDiagnostic(
+        category=ExternalErrorCategory.RATE_LIMITED,
+        retryable=True,
+        http_status=429,
+        retry_after_seconds=120,
+    )
+    transport = _FakeNotionHTTPTransport(
+        [
+            NotionHTTPResponse(status_code=429, payload=None, diagnostic=diagnostic),
+            NotionHTTPResponse(status_code=429, payload=None, diagnostic=diagnostic),
+        ]
+    )
+    sleeps: List[float] = []
+    client = NotionAPIReaderClient(
+        token="secret-token",
+        transport=transport,
+        max_attempts=2,
+        retry_max_seconds=30,
+        sleeper=sleeps.append,
+    )
+
+    with pytest.raises(NotionAPIClientError) as exc_info:
+        client.fetch_page_tree("page-1")
+
+    assert exc_info.value.category == ExternalErrorCategory.RATE_LIMITED
+    assert len(transport.calls) == 2
+    assert sleeps == [30]
 
 
 def test_notion_api_reader_exposes_invalid_response_diagnostic() -> None:

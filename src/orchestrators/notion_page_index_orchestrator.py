@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from pydantic import BaseModel, Field, ValidationError
 
 from src.db.unit_of_work import SqlAlchemyUnitOfWork, UnitOfWorkFactory
-from src.providers import EmbeddingClient, EmbeddingClientError, EmbeddingRequest
+from src.providers import EmbeddingClient
 from src.rag import (
     BlockPathNode,
     BlockPathSnapshot,
@@ -26,6 +26,8 @@ from src.repositories import (
 )
 from src.services import (
     CostTracker,
+    EmbeddingBatchError,
+    EmbeddingBatchService,
     STANDARD_FAILURE_REASONS,
     WorkflowRunService,
     is_known_synthetic_notion_page_id,
@@ -70,6 +72,8 @@ class NotionIndexedPageSnapshot:
     embedding_dimensions: Optional[int] = None
     embedding_token_input: Optional[int] = None
     embedding_estimated_cost: Optional[float] = None
+    embedding_batch_count: Optional[int] = None
+    embedding_retry_count: Optional[int] = None
 
 
 @dataclass
@@ -121,6 +125,7 @@ class NotionPageIndexOrchestrator:
         unit_of_work_factory: UnitOfWorkFactory,
         workflow_run_service: WorkflowRunService,
         embedding_client: Optional[EmbeddingClient] = None,
+        embedding_batch_service: Optional[EmbeddingBatchService] = None,
         cost_tracker: Optional[CostTracker] = None,
         allow_synthetic_postgres_persistence: bool = False,
         source_is_synthetic: bool = False,
@@ -128,7 +133,17 @@ class NotionPageIndexOrchestrator:
         self._tool_registry = tool_registry
         self._unit_of_work_factory = unit_of_work_factory
         self._workflow_run_service = workflow_run_service
-        self._embedding_client = embedding_client
+        if embedding_client is not None and embedding_batch_service is not None:
+            raise ValueError(
+                "Provide embedding_batch_service instead of embedding_client"
+            )
+        self._embedding_batch_service = embedding_batch_service
+        if self._embedding_batch_service is None and embedding_client is not None:
+            self._embedding_batch_service = EmbeddingBatchService(
+                embedding_client=embedding_client,
+                model="text-embedding-3-small",
+                dimensions=EMBEDDING_DIMENSIONS,
+            )
         self._cost_tracker = cost_tracker
         self._allow_synthetic_postgres_persistence = (
             allow_synthetic_postgres_persistence
@@ -469,6 +484,12 @@ class NotionPageIndexOrchestrator:
             embedding_estimated_cost=prepared_snapshot.embedding_metadata[
                 "embedding_estimated_cost"
             ],
+            embedding_batch_count=prepared_snapshot.embedding_metadata[
+                "embedding_batch_count"
+            ],
+            embedding_retry_count=prepared_snapshot.embedding_metadata[
+                "embedding_retry_count"
+            ],
         )
 
     def _persist_indexed_page(
@@ -561,7 +582,7 @@ class NotionPageIndexOrchestrator:
         request_workflow_id: str,
         chunk_upserts: List[NotionChunkUpsert],
     ) -> Tuple[List[NotionChunkUpsert], Dict[str, Optional[object]]]:
-        if self._embedding_client is None:
+        if self._embedding_batch_service is None:
             raise NotionPageIndexError(
                 error_code="EMBEDDING_PROVIDER_NOT_CONFIGURED",
                 message="Embedding provider is not configured for indexing",
@@ -570,48 +591,24 @@ class NotionPageIndexOrchestrator:
             )
 
         try:
-            response = await self._embedding_client.embed(
-                EmbeddingRequest(
-                    inputs=[chunk.chunk_text for chunk in chunk_upserts],
-                    dimensions=EMBEDDING_DIMENSIONS,
-                    metadata={
-                        "workflow_id": request_workflow_id,
-                        "operation": "index_page_snapshot",
-                        "page_id": page_id,
-                    },
-                )
+            response = await self._embedding_batch_service.embed(
+                [chunk.chunk_text for chunk in chunk_upserts],
+                metadata={
+                    "workflow_id": request_workflow_id,
+                    "operation": "index_page_snapshot",
+                },
             )
-        except EmbeddingClientError as exc:
+        except EmbeddingBatchError as exc:
+            failure_reason = exc.failure_reason
             raise NotionPageIndexError(
-                error_code="EMBEDDING_PROVIDER_ERROR",
-                message=f"Failed to generate chunk embeddings: {exc}",
+                error_code=failure_reason,
+                message="Failed to generate chunk embeddings",
                 http_status_code=HTTPStatus.BAD_GATEWAY,
-                failure_reason="EMBEDDING_PROVIDER_ERROR",
-            ) from exc
-
-        if len(response.embeddings) != len(chunk_upserts):
-            raise NotionPageIndexError(
-                error_code="EMBEDDING_PROVIDER_ERROR",
-                message=(
-                    "Embedding provider returned an unexpected number of embeddings: "
-                    f"expected={len(chunk_upserts)} actual={len(response.embeddings)}"
-                ),
-                http_status_code=HTTPStatus.BAD_GATEWAY,
-                failure_reason="EMBEDDING_PROVIDER_ERROR",
-            )
+                failure_reason=failure_reason,
+            ) from None
 
         embedded_chunks: List[NotionChunkUpsert] = []
         for chunk, embedding in zip(chunk_upserts, response.embeddings):
-            if len(embedding) != EMBEDDING_DIMENSIONS:
-                raise NotionPageIndexError(
-                    error_code="VECTOR_DIMENSION_MISMATCH",
-                    message=(
-                        "Embedding provider returned an unexpected vector length: "
-                        f"expected={EMBEDDING_DIMENSIONS} actual={len(embedding)}"
-                    ),
-                    http_status_code=HTTPStatus.BAD_GATEWAY,
-                    failure_reason="VECTOR_DIMENSION_MISMATCH",
-                )
             embedded_chunks.append(
                 NotionChunkUpsert(
                     chunk_index=chunk.chunk_index,
@@ -637,6 +634,8 @@ class NotionPageIndexOrchestrator:
             "embedding_dimensions": EMBEDDING_DIMENSIONS,
             "embedding_token_input": response.token_input,
             "embedding_estimated_cost": estimated_cost,
+            "embedding_batch_count": response.batch_count,
+            "embedding_retry_count": response.retry_count,
         }
 
     def _build_success_metadata(
@@ -664,6 +663,10 @@ class NotionPageIndexOrchestrator:
             metadata["embedding_token_input"] = snapshot.embedding_token_input
         if snapshot.embedding_estimated_cost is not None:
             metadata["embedding_estimated_cost"] = snapshot.embedding_estimated_cost
+        if snapshot.embedding_batch_count is not None:
+            metadata["embedding_batch_count"] = snapshot.embedding_batch_count
+        if snapshot.embedding_retry_count is not None:
+            metadata["embedding_retry_count"] = snapshot.embedding_retry_count
         return metadata
 
     def _empty_embedding_metadata(self) -> Dict[str, Optional[object]]:
@@ -673,6 +676,8 @@ class NotionPageIndexOrchestrator:
             "embedding_dimensions": None,
             "embedding_token_input": None,
             "embedding_estimated_cost": None,
+            "embedding_batch_count": None,
+            "embedding_retry_count": None,
         }
 
     def _extract_chunk_block_ids(self, citation_meta: Dict[str, Any]) -> List[str]:

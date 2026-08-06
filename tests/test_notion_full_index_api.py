@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from typing import Dict
 
 from fastapi.testclient import TestClient
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -13,7 +16,27 @@ from src.db.base import Base
 from src.db.models import KnowledgeChunk, NotionBlock, NotionPage, WorkflowRun
 from src.db.session import get_db_session, get_db_session_factory, get_unit_of_work_factory
 from src.db.unit_of_work import SqlAlchemyUnitOfWork
-from src.providers import EmbeddingClient, EmbeddingRequest, EmbeddingResponse
+from src.observability.external_error import (
+    ExternalErrorCategory,
+    ExternalErrorDiagnostic,
+)
+from src.orchestrators import (
+    NotionFullIndexOrchestrator,
+    NotionPageIndexError,
+    NotionPageIndexOrchestrator,
+)
+from src.providers import (
+    EmbeddingClient,
+    EmbeddingClientError,
+    EmbeddingRequest,
+    EmbeddingResponse,
+    get_openai_embedding_capabilities,
+)
+from src.services import (
+    EmbeddingBatchLimits,
+    EmbeddingBatchService,
+    WorkflowRunService,
+)
 from src.tools import (
     InMemoryNotionReaderClient,
     NotionBlockNode,
@@ -28,13 +51,37 @@ class _FakeEmbeddingClient(EmbeddingClient):
     def name(self) -> str:
         return "openai"
 
+    def get_capabilities(self, *, model: str, dimensions: int):
+        return get_openai_embedding_capabilities(
+            model=model,
+            dimensions=dimensions,
+        )
+
     async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
         return EmbeddingResponse(
             provider="openai",
             model="text-embedding-3-small",
             embeddings=[[1.0] * 1536 for _ in request.inputs],
+            indices=list(range(len(request.inputs))),
             token_input=len(request.inputs) * 10,
         )
+
+
+class _FailOnThirdEmbeddingCall(_FakeEmbeddingClient):
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
+        self.call_count += 1
+        if self.call_count == 3:
+            raise EmbeddingClientError(
+                diagnostic=ExternalErrorDiagnostic(
+                    category=ExternalErrorCategory.REQUEST_INVALID,
+                    retryable=False,
+                    http_status=400,
+                )
+            )
+        return await super().embed(request)
 
 
 def _build_session_factory():
@@ -69,6 +116,40 @@ def _tree(page_id: str, title: str, block_id: str, text: str) -> NotionPageTree:
                 block_path=f"{path}/{text}",
             )
         ],
+    )
+
+
+def _three_chunk_tree(page_id: str, title: str, prefix: str) -> NotionPageTree:
+    path = f"Knowledge/{title}"
+    return NotionPageTree(
+        page_id=page_id,
+        title=title,
+        notion_path=path,
+        blocks=[
+            NotionBlockNode(
+                block_id=f"{prefix}-{index}",
+                block_type="heading_2",
+                content_text=f"{prefix} section {index}",
+                block_path=f"{path}/{prefix} section {index}",
+            )
+            for index in range(3)
+        ],
+    )
+
+
+def _page_orchestrator(
+    *,
+    session_factory,
+    pages: Dict[str, NotionPageTree],
+    embedding_service: EmbeddingBatchService,
+) -> tuple[ToolRegistry, NotionPageIndexOrchestrator]:
+    registry = ToolRegistry()
+    registry.register_tool(NotionReaderTool(InMemoryNotionReaderClient(pages)))
+    return registry, NotionPageIndexOrchestrator(
+        tool_registry=registry,
+        unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(session_factory),
+        workflow_run_service=WorkflowRunService(session_factory),
+        embedding_batch_service=embedding_service,
     )
 
 
@@ -209,3 +290,91 @@ def test_index_status_returns_not_found_for_unknown_workflow() -> None:
         )
     finally:
         app.dependency_overrides.clear()
+
+
+def test_full_index_middle_page_batch_failure_preserves_existing_partial_outcome() -> None:
+    session_factory = _build_session_factory()
+    pages = {
+        "page-1": _tree("page-1", "Page One", "page-1-old", "Old One"),
+        "page-2": _tree("page-2", "Page Two", "page-2-old", "Old Two"),
+        "page-3": _tree("page-3", "Page Three", "page-3-old", "Old Three"),
+    }
+    seed_client = _FakeEmbeddingClient()
+    seed_service = EmbeddingBatchService(
+        embedding_client=seed_client,
+        model="text-embedding-3-small",
+        dimensions=1536,
+        limits=EmbeddingBatchLimits(max_inputs=1),
+        token_counter=lambda value: 1,
+    )
+    _, seed_page_orchestrator = _page_orchestrator(
+        session_factory=session_factory,
+        pages=pages,
+        embedding_service=seed_service,
+    )
+    for page_id in pages:
+        asyncio.run(
+            seed_page_orchestrator.index_page_snapshot(
+                page_id=page_id,
+                request_workflow_id="seed-full-index-partial-outcome",
+            )
+        )
+
+    pages["page-1"] = _tree("page-1", "Page One", "page-1-new", "New One")
+    pages["page-2"] = _three_chunk_tree("page-2", "Page Two", "page-2-new")
+    pages["page-3"] = _tree("page-3", "Page Three", "page-3-new", "New Three")
+    failing_client = _FailOnThirdEmbeddingCall()
+    failing_service = EmbeddingBatchService(
+        embedding_client=failing_client,
+        model="text-embedding-3-small",
+        dimensions=1536,
+        limits=EmbeddingBatchLimits(max_inputs=1),
+        token_counter=lambda value: 1,
+    )
+    registry, page_orchestrator = _page_orchestrator(
+        session_factory=session_factory,
+        pages=pages,
+        embedding_service=failing_service,
+    )
+    full_orchestrator = NotionFullIndexOrchestrator(
+        tool_registry=registry,
+        page_index_orchestrator=page_orchestrator,
+        workflow_run_service=WorkflowRunService(session_factory),
+    )
+
+    with pytest.raises(NotionPageIndexError) as exc_info:
+        asyncio.run(
+            full_orchestrator.index_all(
+                request_workflow_id="wf-full-index-middle-batch-failure"
+            )
+        )
+
+    assert exc_info.value.error_code == "EMBEDDING_PROVIDER_ERROR"
+    assert failing_client.call_count == 3
+    session: Session = session_factory()
+    try:
+        blocks_by_page = {
+            page.notion_page_id: {
+                block.notion_block_id
+                for block in session.query(NotionBlock)
+                .filter(NotionBlock.notion_page_id == page.id)
+                .all()
+            }
+            for page in session.query(NotionPage).all()
+        }
+        assert blocks_by_page == {
+            "page-1": {"page-1-new"},
+            "page-2": {"page-2-old"},
+            "page-3": {"page-3-old"},
+        }
+        workflow = session.query(WorkflowRun).one()
+        metadata = json.loads(workflow.metadata_json or "{}")
+        assert workflow.status == "failed"
+        assert workflow.failure_reason == "EMBEDDING_PROVIDER_ERROR"
+        assert metadata["processed_page_count"] == 1
+        assert metadata["succeeded_page_ids"] == ["page-1"]
+        assert metadata["failed_page_id"] == "page-2"
+        assert metadata["failed_page_index"] == 1
+        assert metadata["remaining_page_ids"] == ["page-3"]
+    finally:
+        session.close()

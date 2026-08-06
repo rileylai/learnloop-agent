@@ -27,6 +27,7 @@ from src.providers import (
     LLMRequest,
     LLMResponse,
     ProviderRouter,
+    get_openai_embedding_capabilities,
 )
 
 
@@ -54,6 +55,12 @@ class _FakeEmbeddingClient(EmbeddingClient):
     def name(self) -> str:
         return "openai"
 
+    def get_capabilities(self, *, model: str, dimensions: int):
+        return get_openai_embedding_capabilities(
+            model=model,
+            dimensions=dimensions,
+        )
+
     async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
         embeddings = [
             [float(index + 1)] * 1536
@@ -63,6 +70,7 @@ class _FakeEmbeddingClient(EmbeddingClient):
             provider="openai",
             model="text-embedding-3-small",
             embeddings=embeddings,
+            indices=list(range(len(request.inputs))),
             token_input=len(request.inputs) * 10,
         )
 

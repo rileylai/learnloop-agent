@@ -244,7 +244,17 @@ Telegram ingestion observability:
   guessing.
 - Indexing workflows that generate chunk vectors should record
   `embedding_provider`, `embedding_model`, `embedding_dimensions`,
-  `embedding_token_input`, and `embedding_estimated_cost`.
+  `embedding_token_input`, `embedding_estimated_cost`,
+  `embedding_batch_count`, and `embedding_retry_count`.
+- Step 97 records provider input-token usage and cost only when usage is
+  complete across every successful batch and no retry makes failed-attempt
+  consumption unknowable. Missing or unknowable usage stays absent/unknown;
+  planner estimates never substitute for provider usage.
+- Safe embedding execution diagnostics are limited to provider/model/
+  dimensions, bounded input and batch shapes, attempt/retry counts, duration,
+  allowlisted status/category/retryability, and complete usage/cost. They must
+  not contain raw provider responses/messages, embedding payloads or vectors,
+  chunk text, Notion content or page identity/path, endpoint URLs, or secrets.
 - Manual incremental sync should aggregate embedding token and cost metadata
   across all successfully re-indexed pages in the workflow.
 - Each incremental-sync page is committed through its own short business

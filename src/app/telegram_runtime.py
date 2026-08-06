@@ -5,6 +5,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from src.app.config import get_settings, normalize_notion_backend
+from src.app.dependencies import build_embedding_batch_service
 from src.db.readiness import SqlAlchemyReadinessProbe
 from src.db.session import engine
 from src.db.session import SessionFactory, UnitOfWorkFactory
@@ -115,7 +116,7 @@ def build_telegram_gateway_orchestrator(
         tool_registry=tool_registry,
         unit_of_work_factory=unit_of_work_factory,
         workflow_run_service=workflow_run_service,
-        embedding_client=embedding_client,
+        embedding_batch_service=build_embedding_batch_service(embedding_client),
         cost_tracker=cost_tracker,
         source_is_synthetic=get_settings().notion_backend == "mock",
     )

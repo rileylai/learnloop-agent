@@ -87,9 +87,10 @@ first provider request.
 - If adding the next input would exceed any limit, the current non-empty batch
   closes and a new batch starts with that input.
 - Inputs are never sorted by size, deduplicated, or reordered.
-- The current versioned UTF-8-byte estimator may be used for operational token
-  estimates. Its values remain estimates, not tokenizer truth or provider
-  usage.
+- The initial implementation uses the versioned conservative estimator
+  `utf8_chars_or_three_quarters_bytes_v1` for operational token gating. It
+  takes the greater of character count and three quarters of UTF-8 byte count.
+  Its values remain safety estimates, not tokenizer truth or provider usage.
 
 The initial execution concurrency is fixed at `1` and is not configurable in
 Step 97.
@@ -125,6 +126,8 @@ batch result is accepted, the service validates:
 
 - provider and model match the requested capability profile;
 - response embedding count equals that batch's input count;
+- response indices are batch-local, unique, complete, in range, and in request
+  order;
 - every vector has exactly 1,536 dimensions.
 
 Each accepted vector is associated with the input's original ordinal. After
@@ -138,7 +141,8 @@ result to the orchestrator.
 - Provider-reported input-token usage is summed across successful batches.
 - If any successful batch omits provider usage, page-level token usage and
   estimated cost remain unknown rather than undercounted.
-- Failed attempts are not assigned estimated provider usage.
+- If a batch is retried, page-level usage and estimated cost remain unknown
+  because failed-attempt provider consumption is not available.
 - Cost is calculated once from the complete provider-reported token total and
   the existing pricing contract after all batches succeed.
 - Batch count and retry count may be recorded as safe numeric metadata. Input

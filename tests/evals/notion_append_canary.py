@@ -37,6 +37,7 @@ from src.orchestrators import (  # noqa: E402
 )
 from src.providers import (  # noqa: E402
     EmbeddingClient,
+    EmbeddingCapabilities,
     EmbeddingRequest,
     EmbeddingResponse,
     LLMProvider,
@@ -182,6 +183,24 @@ class _DeterministicEmbeddingClient(EmbeddingClient):
     def name(self) -> str:
         return CANARY_PROVIDER
 
+    def get_capabilities(
+        self,
+        *,
+        model: str,
+        dimensions: int,
+    ) -> Optional[EmbeddingCapabilities]:
+        if dimensions != EMBEDDING_DIMENSIONS:
+            return None
+        return EmbeddingCapabilities(
+            provider=CANARY_PROVIDER,
+            model=model,
+            dimensions=dimensions,
+            max_input_count=2048,
+            max_single_input_tokens=8192,
+            max_aggregate_tokens=300000,
+            tokenizer_model=model,
+        )
+
     async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
         dimensions = request.dimensions or EMBEDDING_DIMENSIONS
         embeddings: List[List[float]] = []
@@ -192,8 +211,9 @@ class _DeterministicEmbeddingClient(EmbeddingClient):
             embeddings.append(vector)
         return EmbeddingResponse(
             provider=CANARY_PROVIDER,
-            model=CANARY_MODEL,
+            model=request.model or CANARY_MODEL,
             embeddings=embeddings,
+            indices=list(range(len(request.inputs))),
             token_input=sum(len(value.split()) for value in request.inputs),
         )
 

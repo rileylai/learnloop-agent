@@ -107,8 +107,11 @@ Goal:
 Components:
 - `EmbeddingClient`: abstract embedding interface for orchestrator/service usage.
 - `EmbeddingRequest`: input schema (`inputs`, optional `model`, optional `dimensions`, optional metadata).
-- `EmbeddingResponse`: output schema (`embeddings`, token usage, provider/model metadata).
+- `EmbeddingResponse`: output schema (`embeddings`, batch-local indices, token
+  usage, and provider/model metadata).
 - `OpenAIEmbeddingClient`: OpenAI-first adapter implementing `EmbeddingClient`.
+- `EmbeddingCapabilities`: reviewed provider/model/dimensions hard ceilings
+  used by indexing-time execution.
 
 Rules:
 - Orchestrators and services should depend on `EmbeddingClient`, not provider SDKs.
@@ -148,8 +151,8 @@ Rules:
 - For each page id:
   - Re-read current page tree from Notion reader tool.
   - Rebuild page blocks with page-level replacement.
-  - Rebuild notion chunks, batch them through `EmbeddingClient`, and upsert
-    live vectors with page-level replacement.
+  - Rebuild notion chunks, execute them through the shared bounded embedding
+    service, and upsert live vectors with page-level replacement.
 - If one page fails, fail the incremental workflow deterministically with failure reason and workflow id.
 
 ## Shared Live Embedding Indexing Path (Step 50)
@@ -169,12 +172,29 @@ Flow:
 Rules:
 - Build chunk drafts from the current page snapshot before mutating page
   blocks or chunk rows.
-- Batch all chunk text for one page through `EmbeddingClient` with explicit
+- Send all chunk text through `EmbeddingBatchService`, which preflights stable
+  contiguous batches and calls `EmbeddingClient` sequentially with explicit
   `dimensions=1536`.
+- The initial operational count limit is 512 inputs per request. Planning also
+  enforces configured single-input byte/token and aggregate byte/token budgets;
+  settings may narrow but cannot expand the reviewed provider capability.
+- The versioned `utf8_chars_or_three_quarters_bytes_v1` safety estimator is
+  deliberately conservative for operational gating. It is not provider token
+  usage and is not persisted as billing data.
+- Validate provider/model, batch-local index uniqueness/completeness/order,
+  response count, and 1,536-dimensional vectors before accepting a batch.
+- Keep every successful batch result in memory until the complete page result
+  is validated in original chunk order.
 - Persist successful embeddings to both `knowledge_chunks.embedding` and the
   transitional `knowledge_chunks.embedding_text`.
 - Missing embedding configuration or embedding-provider failure must fail
   closed before block or chunk replacement begins.
+- Retry only the current failed batch for timeout, transport, HTTP 408/429, or
+  allowlisted 500/502/503/504 failures. Deterministic 4xx and invalid responses
+  are not retried.
+- Provider usage is aggregated only when complete. A retry or missing batch
+  usage leaves page usage and cost unknown rather than reporting a partial
+  total.
 - Manual incremental sync and auto-after-accept re-index must reuse the same
   page indexing orchestrator instead of implementing vector writes separately.
 
@@ -206,8 +226,8 @@ limits an input array to 2,048 entries. Therefore:
 > captured, so there is no direct provider error-code confirmation.
 
 The aggregate token count is estimator output, not the diagnosed cause. Phase
-B provider probing is cancelled as unnecessary; Step 97 owns the production
-bounded-execution fix.
+B provider probing is cancelled as unnecessary; Step 97 implements the
+production bounded-execution fix.
 
 The deterministic Step 96 implementation adds typed, sanitized Notion and
 embedding errors plus versioned request-shape diagnostics. It classifies HTTP

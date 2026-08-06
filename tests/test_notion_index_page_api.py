@@ -23,7 +23,17 @@ from src.orchestrators.notion_page_index_orchestrator import (
     NotionPageIndexError,
     NotionPageIndexOrchestrator,
 )
-from src.providers import EmbeddingClient, EmbeddingRequest, EmbeddingResponse
+from src.observability.external_error import (
+    ExternalErrorCategory,
+    ExternalErrorDiagnostic,
+)
+from src.providers import (
+    EmbeddingClient,
+    EmbeddingClientError,
+    EmbeddingRequest,
+    EmbeddingResponse,
+    get_openai_embedding_capabilities,
+)
 from src.repositories import (
     ChunkRepository,
     ChunkRepositoryError,
@@ -31,7 +41,11 @@ from src.repositories import (
     NotionBlockSnapshot,
     NotionChunkUpsert,
 )
-from src.services import WorkflowRunService
+from src.services import (
+    EmbeddingBatchLimits,
+    EmbeddingBatchService,
+    WorkflowRunService,
+)
 from src.tools import (
     InMemoryNotionReaderClient,
     NotionBlockNode,
@@ -46,6 +60,12 @@ class _FakeEmbeddingClient(EmbeddingClient):
     def name(self) -> str:
         return "openai"
 
+    def get_capabilities(self, *, model: str, dimensions: int):
+        return get_openai_embedding_capabilities(
+            model=model,
+            dimensions=dimensions,
+        )
+
     async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
         embeddings = [
             [float(index + 1)] * 1536
@@ -55,8 +75,27 @@ class _FakeEmbeddingClient(EmbeddingClient):
             provider="openai",
             model="text-embedding-3-small",
             embeddings=embeddings,
+            indices=list(range(len(request.inputs))),
             token_input=len(request.inputs) * 10,
         )
+
+
+class _SelectedBatchFailingEmbeddingClient(_FakeEmbeddingClient):
+    def __init__(self, *, fail_at_call: int) -> None:
+        self.call_count = 0
+        self._fail_at_call = fail_at_call
+
+    async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
+        self.call_count += 1
+        if self.call_count == self._fail_at_call:
+            raise EmbeddingClientError(
+                diagnostic=ExternalErrorDiagnostic(
+                    category=ExternalErrorCategory.REQUEST_INVALID,
+                    retryable=False,
+                    http_status=400,
+                )
+            )
+        return await super().embed(request)
 
 
 def _build_session_factory():
@@ -272,6 +311,24 @@ def _rollback_tree_v2() -> NotionPageTree:
                 content_text="New content should not survive rollback",
                 block_path="Knowledge/Rollback/Updated/New content",
             )
+        ],
+    )
+
+
+def _rollback_tree_with_three_chunks() -> NotionPageTree:
+    path = "Knowledge/Rollback/Updated"
+    return NotionPageTree(
+        page_id="page-rollback",
+        title="Rollback Page Updated",
+        notion_path=path,
+        blocks=[
+            NotionBlockNode(
+                block_id=f"blk-rollback-new-{index}",
+                block_type="heading_2",
+                content_text=f"Updated section {index}",
+                block_path=f"{path}/Updated section {index}",
+            )
+            for index in range(3)
         ],
     )
 
@@ -552,6 +609,135 @@ def test_index_page_snapshot_rolls_back_page_mutations_when_persist_stage_fails(
     _assert_existing_rollback_page_is_unchanged(session_factory)
 
 
+@pytest.mark.parametrize("fail_at_call", [1, 2, 3])
+def test_embedding_batch_failure_never_opens_replacement_transaction(
+    fail_at_call: int,
+) -> None:
+    session_factory = _build_session_factory()
+    _seed_existing_rollback_page(session_factory)
+    client = _SelectedBatchFailingEmbeddingClient(
+        fail_at_call=fail_at_call,
+    )
+    service = EmbeddingBatchService(
+        embedding_client=client,
+        model="text-embedding-3-small",
+        dimensions=1536,
+        limits=EmbeddingBatchLimits(max_inputs=1),
+        token_counter=lambda value: 1,
+    )
+    replacement_factory_calls = 0
+
+    def replacement_factory() -> SqlAlchemyUnitOfWork:
+        nonlocal replacement_factory_calls
+        replacement_factory_calls += 1
+        return SqlAlchemyUnitOfWork(session_factory)
+
+    orchestrator = NotionPageIndexOrchestrator(
+        tool_registry=_build_tool_registry(
+            {"page-rollback": _rollback_tree_with_three_chunks()}
+        ),
+        unit_of_work_factory=replacement_factory,
+        workflow_run_service=WorkflowRunService(session_factory),
+        embedding_batch_service=service,
+    )
+
+    with pytest.raises(NotionPageIndexError) as exc_info:
+        asyncio.run(
+            orchestrator.index_page_snapshot(
+                page_id="page-rollback",
+                request_workflow_id="wf-selected-batch-failure",
+            )
+        )
+
+    assert exc_info.value.error_code == "EMBEDDING_PROVIDER_ERROR"
+    assert client.call_count == fail_at_call
+    assert replacement_factory_calls == 0
+    _assert_existing_rollback_page_is_unchanged(session_factory)
+
+
+def test_middle_batch_failure_for_new_page_persists_no_rows() -> None:
+    session_factory = _build_session_factory()
+    client = _SelectedBatchFailingEmbeddingClient(fail_at_call=2)
+    service = EmbeddingBatchService(
+        embedding_client=client,
+        model="text-embedding-3-small",
+        dimensions=1536,
+        limits=EmbeddingBatchLimits(max_inputs=1),
+        token_counter=lambda value: 1,
+    )
+    replacement_factory_calls = 0
+
+    def replacement_factory() -> SqlAlchemyUnitOfWork:
+        nonlocal replacement_factory_calls
+        replacement_factory_calls += 1
+        return SqlAlchemyUnitOfWork(session_factory)
+
+    orchestrator = NotionPageIndexOrchestrator(
+        tool_registry=_build_tool_registry(
+            {"page-new": replace(_rollback_tree_with_three_chunks(), page_id="page-new")}
+        ),
+        unit_of_work_factory=replacement_factory,
+        workflow_run_service=WorkflowRunService(session_factory),
+        embedding_batch_service=service,
+    )
+
+    with pytest.raises(NotionPageIndexError):
+        asyncio.run(
+            orchestrator.index_page_snapshot(
+                page_id="page-new",
+                request_workflow_id="wf-new-page-batch-failure",
+            )
+        )
+
+    assert client.call_count == 2
+    assert replacement_factory_calls == 0
+    session: Session = session_factory()
+    try:
+        assert session.query(NotionPage).count() == 0
+        assert session.query(NotionBlock).count() == 0
+        assert session.query(KnowledgeChunk).count() == 0
+    finally:
+        session.close()
+
+
+def test_successful_multi_batch_page_uses_one_replacement_transaction() -> None:
+    session_factory = _build_session_factory()
+    client = _FakeEmbeddingClient()
+    service = EmbeddingBatchService(
+        embedding_client=client,
+        model="text-embedding-3-small",
+        dimensions=1536,
+        limits=EmbeddingBatchLimits(max_inputs=1),
+        token_counter=lambda value: 1,
+    )
+    replacement_factory_calls = 0
+
+    def replacement_factory() -> SqlAlchemyUnitOfWork:
+        nonlocal replacement_factory_calls
+        replacement_factory_calls += 1
+        return SqlAlchemyUnitOfWork(session_factory)
+
+    orchestrator = NotionPageIndexOrchestrator(
+        tool_registry=_build_tool_registry(
+            {"page-rollback": _rollback_tree_with_three_chunks()}
+        ),
+        unit_of_work_factory=replacement_factory,
+        workflow_run_service=WorkflowRunService(session_factory),
+        embedding_batch_service=service,
+    )
+
+    snapshot = asyncio.run(
+        orchestrator.index_page_snapshot(
+            page_id="page-rollback",
+            request_workflow_id="wf-multi-batch-success",
+        )
+    )
+
+    assert replacement_factory_calls == 1
+    assert snapshot.indexed_chunk_count == 3
+    assert snapshot.embedding_batch_count == 3
+
+
 def test_index_page_api_persists_page_and_nested_blocks() -> None:
     session_factory = _build_session_factory()
     pages = {"page-1": _sample_tree_v1()}
@@ -631,6 +817,8 @@ def test_index_page_api_persists_page_and_nested_blocks() -> None:
             assert workflow_metadata["embedding_dimensions"] == 1536
             assert workflow_metadata["embedding_token_input"] == 10
             assert workflow_metadata["embedding_estimated_cost"] == pytest.approx(0.0000002)
+            assert workflow_metadata["embedding_batch_count"] == 1
+            assert workflow_metadata["embedding_retry_count"] == 0
         finally:
             session.close()
     finally:
