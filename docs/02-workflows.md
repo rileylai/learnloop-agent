@@ -28,6 +28,13 @@ idempotency, append-only, and human-acceptance rules.
 The deterministic write policy, state-transition, transaction, RAG-exclusion,
 and retry rules remain mandatory for every configured adapter.
 
+Every production queue call supplies an explicit execution timeout. Ordinary
+webhook and scheduled settle jobs use `TELEGRAM_JOB_TIMEOUT_SECONDS` (default
+`180`). Full indexing uses a separate dedicated job with
+`TELEGRAM_INDEXING_JOB_TIMEOUT_SECONDS` (default `10800`); the latter is a
+configurable deployment safety bound, not a latency SLA. Queue retry policies
+remain unchanged.
+
 Step 96 large-page diagnostics preserve the existing indexing mutation
 boundary:
 
@@ -401,6 +408,24 @@ Rules:
   upload-session claims make old webhook retries and settle jobs safe to
   replay. Operators inspect them with the read-only queue inspector instead
   of deleting or cleaning a registry.
+
+### Telegram dedicated full-index workflow (97.x)
+
+```text
+Telegram webhook
+-> bounded generic Telegram job
+-> atomically claim index_full_confirm callback
+-> create durable indexing workflow
+-> enqueue process_telegram_full_index_job with the existing workflow id
+-> return running + workflow id + /index-status guidance
+-> dedicated job runs NotionFullIndexOrchestrator
+```
+
+The dedicated full-index job has no automatic RQ retry. Duplicate update or
+callback claims do not enqueue a second job. Queue enqueue failure marks the
+durable workflow with `TELEGRAM_QUEUE_UNAVAILABLE`. The durable workflow is
+the primary progress and completion surface. When Redis is absent, the
+existing synchronous full-index path is retained.
 
 ## Telegram Operator Command Contract (Steps 89-93)
 

@@ -35,12 +35,15 @@ from src.providers import (
 from src.services import (
     EmbeddingBatchLimits,
     EmbeddingBatchService,
+    InfrastructureExecutionTimeout,
     WorkflowRunService,
 )
 from src.tools import (
     InMemoryNotionReaderClient,
     NotionBlockNode,
     NotionPageTree,
+    NotionPageSummary,
+    NotionReaderClient,
     NotionReaderTool,
     ToolRegistry,
 )
@@ -82,6 +85,23 @@ class _FailOnThirdEmbeddingCall(_FakeEmbeddingClient):
                 )
             )
         return await super().embed(request)
+
+
+class _TimeoutOnPageReader(NotionReaderClient):
+    def __init__(self, pages: Dict[str, NotionPageTree], timeout_page_id: str) -> None:
+        self._pages = pages
+        self._timeout_page_id = timeout_page_id
+
+    def fetch_page_tree(self, page_id: str):
+        if page_id == self._timeout_page_id:
+            raise InfrastructureExecutionTimeout()
+        return self._pages.get(page_id)
+
+    def list_pages(self):
+        return [
+            NotionPageSummary(page_id=page.page_id, title=page.title)
+            for page in sorted(self._pages.values(), key=lambda item: item.page_id)
+        ]
 
 
 def _build_session_factory():
@@ -376,5 +396,84 @@ def test_full_index_middle_page_batch_failure_preserves_existing_partial_outcome
         assert metadata["failed_page_id"] == "page-2"
         assert metadata["failed_page_index"] == 1
         assert metadata["remaining_page_ids"] == ["page-3"]
+    finally:
+        session.close()
+
+
+def test_full_index_queue_timeout_preserves_failed_page_replacement_atomicity() -> None:
+    session_factory = _build_session_factory()
+    initial_pages = {
+        "page-1": _tree("page-1", "Page One", "page-1-old", "Old One"),
+        "page-2": _tree("page-2", "Page Two", "page-2-old", "Old Two"),
+    }
+    seed_service = EmbeddingBatchService(
+        embedding_client=_FakeEmbeddingClient(),
+        model="text-embedding-3-small",
+        dimensions=1536,
+        limits=EmbeddingBatchLimits(max_inputs=1),
+        token_counter=lambda value: 1,
+    )
+    _, seed_page_orchestrator = _page_orchestrator(
+        session_factory=session_factory,
+        pages=initial_pages,
+        embedding_service=seed_service,
+    )
+    for page_id in initial_pages:
+        asyncio.run(
+            seed_page_orchestrator.index_page_snapshot(
+                page_id=page_id,
+                request_workflow_id="seed-timeout-atomicity",
+            )
+        )
+
+    updated_pages = {
+        "page-1": _tree("page-1", "Page One", "page-1-new", "New One"),
+        "page-2": _tree("page-2", "Page Two", "page-2-new", "New Two"),
+    }
+    registry = ToolRegistry()
+    registry.register_tool(
+        NotionReaderTool(_TimeoutOnPageReader(updated_pages, "page-2"))
+    )
+    page_orchestrator = NotionPageIndexOrchestrator(
+        tool_registry=registry,
+        unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(session_factory),
+        workflow_run_service=WorkflowRunService(session_factory),
+        embedding_batch_service=seed_service,
+    )
+    full_orchestrator = NotionFullIndexOrchestrator(
+        tool_registry=registry,
+        page_index_orchestrator=page_orchestrator,
+        workflow_run_service=WorkflowRunService(session_factory),
+    )
+
+    with pytest.raises(InfrastructureExecutionTimeout):
+        asyncio.run(
+            full_orchestrator.index_all(
+                request_workflow_id="wf-full-index-timeout-atomicity"
+            )
+        )
+
+    session: Session = session_factory()
+    try:
+        blocks_by_page = {
+            page.notion_page_id: {
+                block.notion_block_id
+                for block in session.query(NotionBlock)
+                .filter(NotionBlock.notion_page_id == page.id)
+                .all()
+            }
+            for page in session.query(NotionPage).all()
+        }
+        assert blocks_by_page == {
+            "page-1": {"page-1-new"},
+            "page-2": {"page-2-old"},
+        }
+        workflow = session.query(WorkflowRun).one()
+        metadata = json.loads(workflow.metadata_json or "{}")
+        assert workflow.status == "failed"
+        assert workflow.failure_reason == "QUEUE_JOB_TIMEOUT"
+        assert metadata["processed_page_count"] == 1
+        assert metadata["failed_page_id"] == "page-2"
+        assert metadata["error_code"] == "QUEUE_JOB_TIMEOUT"
     finally:
         session.close()

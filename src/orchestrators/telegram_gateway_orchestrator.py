@@ -272,6 +272,7 @@ class TelegramGatewayOrchestrator:
         trust_boundary: Optional[TrustBoundaryService] = None,
         update_idempotency_service: Optional[TelegramUpdateIdempotencyService] = None,
         queue_client: Optional[QueueClient] = None,
+        telegram_job_timeout_seconds: int = 180,
     ) -> None:
         self._tool_registry = tool_registry
         self._workflow_run_service = workflow_run_service
@@ -287,6 +288,7 @@ class TelegramGatewayOrchestrator:
         self._trust_boundary = trust_boundary
         self._update_idempotency_service = update_idempotency_service
         self._queue_client = queue_client
+        self._telegram_job_timeout_seconds = telegram_job_timeout_seconds
         self._logger = get_logger("learnloop.telegram.gateway")
 
     async def handle_webhook(
@@ -352,6 +354,25 @@ class TelegramGatewayOrchestrator:
             message_id=message_id,
             media_group_id=media_group_id,
             callback=callback,
+            request_workflow_id=request_workflow_id,
+        )
+
+    async def run_full_index_job(
+        self,
+        *,
+        workflow_run_id: int,
+        request_workflow_id: str,
+    ):
+        if self._telegram_index_orchestrator is None:
+            raise TelegramGatewayError(
+                error_code="TELEGRAM_INDEX_NOT_CONFIGURED",
+                message="Telegram full indexing is not configured",
+                http_status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                failure_reason="UNKNOWN_ERROR",
+                workflow_run_id=workflow_run_id,
+            )
+        return await self._telegram_index_orchestrator.run_full_index_job(
+            workflow_run_id=workflow_run_id,
             request_workflow_id=request_workflow_id,
         )
 
@@ -423,6 +444,7 @@ class TelegramGatewayOrchestrator:
                 ),
                 description="Process one Telegram webhook update",
                 retry_policy=retry_policy,
+                timeout_seconds=self._telegram_job_timeout_seconds,
             )
         except Exception as exc:
             error = TelegramGatewayError(
@@ -3080,6 +3102,7 @@ class TelegramGatewayOrchestrator:
             ),
             description="Settle one Telegram media group upload session",
             retry_policy=QueueRetryPolicy(max_retries=2, retry_intervals=(1, 3)),
+            timeout_seconds=self._telegram_job_timeout_seconds,
         )
 
     def _build_reply_for_command(self, command: str) -> str:

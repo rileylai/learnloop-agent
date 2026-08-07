@@ -77,6 +77,7 @@ def build_telegram_gateway_orchestrator(
     knowledge_stats_service: Optional[KnowledgeStatsService] = None,
 ) -> TelegramGatewayOrchestrator:
     workflow_run_service = WorkflowRunService(db_session_factory)
+    settings = get_settings()
     update_idempotency_service = TelegramUpdateIdempotencyService(
         db_session_factory
     )
@@ -183,6 +184,8 @@ def build_telegram_gateway_orchestrator(
         or InMemoryTelegramIndexSessionStore(),
         workflow_run_service=workflow_run_service,
         workflow_observability_service=workflow_observability_service,
+        queue_client=queue_client,
+        indexing_job_timeout_seconds=settings.telegram_indexing_job_timeout_seconds,
     )
     telegram_operator_orchestrator = TelegramOperatorOrchestrator(
         workflow_observability_service=workflow_observability_service,
@@ -219,4 +222,5 @@ def build_telegram_gateway_orchestrator(
         trust_boundary=trust_boundary,
         update_idempotency_service=update_idempotency_service,
         queue_client=queue_client,
+        telegram_job_timeout_seconds=settings.telegram_job_timeout_seconds,
     )

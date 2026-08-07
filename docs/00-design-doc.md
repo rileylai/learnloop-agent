@@ -258,6 +258,12 @@ Telegram queue behavior:
   outcomes, while unexpected crashes remain eligible for RQ retry.
 - Without `REDIS_URL`, Telegram uses the synchronous compatibility path. Local
   readiness still reports the queue dependency as missing.
+- `QueueClient.enqueue()` and `enqueue_in()` expose an optional per-job
+  `timeout_seconds` contract. Production ordinary Telegram work explicitly
+  uses `TELEGRAM_JOB_TIMEOUT_SECONDS` (default `180`); dedicated full indexing
+  explicitly uses `TELEGRAM_INDEXING_JOB_TIMEOUT_SECONDS` (default `10800`).
+  RQ receives an explicit `job_timeout` and a bounded adapter fallback; no
+  queue-wide long timeout is configured.
 
 Boundary rules:
 - API routes and orchestrators must not import OpenAI, Claude, Gemini, Notion, Redis, PostgreSQL, or external API SDKs directly.
@@ -273,13 +279,24 @@ Boundary rules:
 ## 11. Main Workflows
 ### 11.1 Initial Indexing
 ```text
-Run full indexing
+Telegram webhook -> bounded Telegram job
+-> claim /index-full confirmation
+-> create durable indexing workflow
+-> enqueue dedicated module-level full-index job
+-> return workflow id and /index-status guidance
+-> dedicated job runs full indexing
 -> Read Notion pages and blocks
 -> Normalize and chunk
 -> Batch chunk text through EmbeddingClient
 -> Persist blocks and vectors through ChunkRepository
 -> Save index run status
 ```
+
+The dedicated full-index job reuses the existing workflow id and
+`NotionFullIndexOrchestrator`. Its configurable `10800` second bound is a
+deployment safety limit, not a latency SLA. Without Redis, the synchronous
+compatibility path remains available; page-level replacement and full-index
+partial outcomes are unchanged.
 Checklist:
 - [x] Deterministic tests cover the implemented page/block indexing structure.
 - [x] Stored chunk metadata includes the Notion path used for citations.

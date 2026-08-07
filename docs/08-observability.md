@@ -350,6 +350,11 @@ Operator command output and workflow metadata follow the bounded contract in
 - `/index-full` warning/confirmation state is held in ephemeral operator
   session storage. The durable indexing workflow records page counts and
   deterministic failure state; Telegram output keeps only safe bounded fields.
+- Queue-backed `/index-full` records the dedicated job's durable workflow id
+  before enqueue. Queue submission failure uses `TELEGRAM_QUEUE_UNAVAILABLE`.
+  Infrastructure execution timeout uses the content-free
+  `QUEUE_JOB_TIMEOUT`; it must never be represented as
+  `NOTION_BLOCK_FETCH_FAILED`.
 - `/pending` records bounded review action/status and safe proposal display
   fields only. View is read-only; Accept/reject/change-target actions retain
   existing review and append/re-index audit semantics. The outer Telegram
@@ -464,7 +469,7 @@ append evidence.
   `URL_FETCH_FAILED`, `YOUTUBE_TRANSCRIPT_NOT_FOUND`,
   `PROVIDER_NOT_FOUND`, `LLM_PROVIDER_ERROR`, `LLM_OUTPUT_INVALID`,
   `EMBEDDING_PROVIDER_NOT_CONFIGURED`, `EMBEDDING_PROVIDER_ERROR`,
-  `TELEGRAM_QUEUE_UNAVAILABLE`, `REDIS_URL_NOT_CONFIGURED`, `REDIS_UNAVAILABLE`,
+  `TELEGRAM_QUEUE_UNAVAILABLE`, `QUEUE_JOB_TIMEOUT`, `REDIS_URL_NOT_CONFIGURED`, `REDIS_UNAVAILABLE`,
   `AUTHENTICATION_FAILED`, `AUTHORIZATION_FAILED`,
   `TELEGRAM_UPDATE_LEDGER_FAILED`,
   `IDEMPOTENCY_KEY_CONFLICT`, `IDEMPOTENCY_IN_PROGRESS`,

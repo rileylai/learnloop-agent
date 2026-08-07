@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import secrets
 import shlex
+import json
 from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any, Optional
@@ -10,6 +11,7 @@ from src.orchestrators.notion_full_index_orchestrator import (
     NotionFullIndexOrchestrator,
 )
 from src.orchestrators.notion_page_index_orchestrator import NotionPageIndexError
+from src.queue import QueueClient, get_callable_import_path
 from src.services import (
     TelegramFullIndexSession,
     TelegramIndexSessionStore,
@@ -68,11 +70,15 @@ class TelegramIndexOrchestrator:
         index_session_store: TelegramIndexSessionStore,
         workflow_run_service: WorkflowRunService,
         workflow_observability_service: WorkflowObservabilityService,
+        queue_client: Optional[QueueClient] = None,
+        indexing_job_timeout_seconds: int = 10800,
     ) -> None:
         self._full_index_orchestrator = full_index_orchestrator
         self._index_session_store = index_session_store
         self._workflow_run_service = workflow_run_service
         self._workflow_observability_service = workflow_observability_service
+        self._queue_client = queue_client
+        self._indexing_job_timeout_seconds = indexing_job_timeout_seconds
 
     def start_full_index_session(
         self,
@@ -121,6 +127,14 @@ class TelegramIndexOrchestrator:
                     "This full index request is already being processed or has "
                     "finished. Use /index-status to inspect it."
                 ),
+            )
+
+        if self._queue_client is not None:
+            return self._enqueue_full_index(
+                session_id=session_id,
+                chat_id=chat_id,
+                user_id=user_id,
+                request_workflow_id=request_workflow_id,
             )
 
         try:
@@ -188,6 +202,104 @@ class TelegramIndexOrchestrator:
             remaining_page_count=0,
             estimated_cost_usd=estimated_cost,
             stale=status_view.stale if status_view else None,
+        )
+
+    async def run_full_index_job(
+        self,
+        *,
+        workflow_run_id: int,
+        request_workflow_id: str,
+    ):
+        """Run a previously created durable full-index workflow."""
+
+        return await self._full_index_orchestrator.index_all(
+            request_workflow_id=request_workflow_id,
+            workflow_run_id=workflow_run_id,
+        )
+
+    def _enqueue_full_index(
+        self,
+        *,
+        session_id: str,
+        chat_id: str,
+        user_id: str,
+        request_workflow_id: str,
+    ) -> TelegramIndexResult:
+        workflow_run_id = self._full_index_orchestrator.start_full_index_workflow(
+            request_workflow_id=request_workflow_id,
+        )
+        try:
+            from src.worker.telegram import (
+                TELEGRAM_FULL_INDEX_JOB_PATH,
+                process_telegram_full_index_job,
+            )
+
+            if (
+                get_callable_import_path(process_telegram_full_index_job)
+                != TELEGRAM_FULL_INDEX_JOB_PATH
+            ):
+                raise RuntimeError("Telegram full-index worker path is not canonical")
+
+            self._index_session_store.mark_full_index_queued(
+                session_id=session_id,
+                chat_id=chat_id,
+                user_id=user_id,
+                workflow_run_id=workflow_run_id,
+            )
+            self._queue_client.enqueue(
+                queue_name="telegram",
+                function=process_telegram_full_index_job,
+                args=(workflow_run_id, request_workflow_id),
+                description="Run one durable Telegram full-index workflow",
+                timeout_seconds=self._indexing_job_timeout_seconds,
+            )
+        except Exception as exc:
+            self._workflow_run_service.mark_workflow_failed(
+                workflow_run_id,
+                failure_reason="TELEGRAM_QUEUE_UNAVAILABLE",
+                metadata_json=json.dumps(
+                    {
+                        "operation": "index_full",
+                        "error_code": "TELEGRAM_QUEUE_UNAVAILABLE",
+                    },
+                    sort_keys=True,
+                ),
+            )
+            self._index_session_store.complete_full_index(
+                session_id=session_id,
+                chat_id=chat_id,
+                user_id=user_id,
+                state="failed",
+                workflow_run_id=workflow_run_id,
+                discovered_page_count=0,
+                processed_page_count=0,
+                failed_page_count=0,
+                remaining_page_count=0,
+                failure_reason="TELEGRAM_QUEUE_UNAVAILABLE",
+            )
+            raise TelegramIndexError(
+                error_code="TELEGRAM_QUEUE_UNAVAILABLE",
+                message="Telegram full-index background queue is unavailable",
+                http_status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                failure_reason="TELEGRAM_QUEUE_UNAVAILABLE",
+                metadata={
+                    "index_workflow_run_id": workflow_run_id,
+                    "index_status": "failed",
+                },
+            ) from exc
+
+        return TelegramIndexResult(
+            status="running",
+            reply_text=(
+                f"Full Notion index queued as workflow #{workflow_run_id}. "
+                "Use /index-status "
+                f"{workflow_run_id} to follow progress."
+            ),
+            workflow_run_id=workflow_run_id,
+            discovered_page_count=0,
+            processed_page_count=0,
+            failed_page_count=0,
+            remaining_page_count=0,
         )
 
     def cancel_full_index(

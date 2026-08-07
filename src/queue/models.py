@@ -18,6 +18,16 @@ class QueueRetryPolicy:
             raise ValueError("retry intervals must be non-negative")
 
 
+def validate_timeout_seconds(timeout_seconds: Optional[int]) -> Optional[int]:
+    """Validate the backend-agnostic per-job execution timeout."""
+
+    if timeout_seconds is None:
+        return None
+    if isinstance(timeout_seconds, bool) or timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be a positive integer")
+    return int(timeout_seconds)
+
+
 @dataclass(frozen=True)
 class EnqueuedJob:
     job_id: str
@@ -26,3 +36,4 @@ class EnqueuedJob:
     args: Tuple[Any, ...]
     kwargs: Dict[str, Any]
     retry_policy: Optional[QueueRetryPolicy] = None
+    timeout_seconds: Optional[int] = None

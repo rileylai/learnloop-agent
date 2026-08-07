@@ -12,7 +12,11 @@ from src.orchestrators.notion_page_index_orchestrator import (
     NotionPageIndexOrchestrator,
     NotionIndexedPageSnapshot,
 )
-from src.services import STANDARD_FAILURE_REASONS, WorkflowRunService
+from src.services import (
+    InfrastructureExecutionTimeout,
+    STANDARD_FAILURE_REASONS,
+    WorkflowRunService,
+)
 from src.tools import ToolContext, ToolRegistry
 
 NOTION_READER_TOOL_NAME = "notion_reader"
@@ -53,7 +57,7 @@ class NotionFullIndexOrchestrator:
         self._page_index_orchestrator = page_index_orchestrator
         self._workflow_run_service = workflow_run_service
 
-    async def index_all(self, *, request_workflow_id: str) -> NotionFullIndexResult:
+    def start_full_index_workflow(self, *, request_workflow_id: str) -> int:
         workflow_run = self._workflow_run_service.start_workflow(
             workflow_type="indexing",
             metadata_json=json.dumps(
@@ -64,7 +68,17 @@ class NotionFullIndexOrchestrator:
                 sort_keys=True,
             ),
         )
-        workflow_run_id = int(workflow_run.id)
+        return int(workflow_run.id)
+
+    async def index_all(
+        self,
+        *,
+        request_workflow_id: str,
+        workflow_run_id: Optional[int] = None,
+    ) -> NotionFullIndexResult:
+        workflow_run_id = workflow_run_id or self.start_full_index_workflow(
+            request_workflow_id=request_workflow_id,
+        )
         indexed_pages: List[NotionFullIndexedPageResult] = []
         page_ids: List[str] = []
         current_page_id = ""
@@ -95,6 +109,32 @@ class NotionFullIndexOrchestrator:
                     sort_keys=True,
                 ),
             )
+        except InfrastructureExecutionTimeout:
+            remaining_page_ids = (
+                page_ids[failed_page_index + 1 :]
+                if failed_page_index is not None
+                else page_ids
+            )
+            self._workflow_run_service.mark_workflow_failed(
+                workflow_run_id,
+                failure_reason="QUEUE_JOB_TIMEOUT",
+                metadata_json=json.dumps(
+                    {
+                        "operation": "index_full",
+                        "discovered_page_count": len(page_ids),
+                        "processed_page_count": len(indexed_pages),
+                        "succeeded_page_ids": [
+                            page.page_id for page in indexed_pages
+                        ],
+                        "failed_page_id": current_page_id or None,
+                        "failed_page_index": failed_page_index,
+                        "remaining_page_ids": remaining_page_ids,
+                        "error_code": "QUEUE_JOB_TIMEOUT",
+                    },
+                    sort_keys=True,
+                ),
+            )
+            raise
         except NotionPageIndexError as exc:
             remaining_page_ids = (
                 page_ids[failed_page_index + 1 :]

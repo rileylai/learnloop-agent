@@ -39,6 +39,7 @@ def test_fake_queue_client_enqueue() -> None:
     assert enqueued.function_name == get_callable_import_path(sample_task)
     assert enqueued.args == ("hello",)
     assert enqueued.kwargs == {}
+    assert enqueued.timeout_seconds is None
     assert len(client.enqueued_jobs) == 1
 
 
@@ -51,6 +52,7 @@ def test_rq_queue_client_enqueue_with_local_connection() -> None:
         function=sample_task,
         args=("hello",),
         description="test job",
+        timeout_seconds=321,
     )
 
     queue = Queue(name="default", connection=connection)
@@ -61,6 +63,8 @@ def test_rq_queue_client_enqueue_with_local_connection() -> None:
     assert fetched_job.func_name == get_callable_import_path(sample_task)
     assert enqueued.function_name == fetched_job.func_name
     assert fetched_job.args == ("hello",)
+    assert fetched_job.timeout == 321
+    assert enqueued.timeout_seconds == 321
 
 
 def test_rq_queue_client_persists_bounded_retry_policy() -> None:
@@ -79,6 +83,7 @@ def test_rq_queue_client_persists_bounded_retry_policy() -> None:
     )
     assert fetched_job is not None
     assert fetched_job.retries_left == 2
+    assert fetched_job.timeout == 180
     assert client.is_available() is True
 
 
@@ -133,6 +138,7 @@ def test_rq_scheduler_promotes_delayed_job_before_worker_consumes_it() -> None:
         function=sample_task,
         seconds=0,
         args=("hello",),
+        timeout_seconds=77,
     )
 
     queue = Queue(name="telegram", connection=connection)
@@ -147,6 +153,7 @@ def test_rq_scheduler_promotes_delayed_job_before_worker_consumes_it() -> None:
     fetched_job = queue.fetch_job(enqueued.job_id)
     assert fetched_job is not None
     assert fetched_job.is_finished
+    assert fetched_job.timeout == 77
     assert fetched_job.return_value() == "HELLO"
     assert ScheduledJobRegistry(queue=queue).get_job_count(cleanup=False) == 0
 

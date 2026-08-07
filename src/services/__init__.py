@@ -76,6 +76,7 @@ from src.services.workflow_observability import (
     WorkflowObservabilityService,
     WorkflowStatusView,
 )
+from src.services.infrastructure_errors import InfrastructureExecutionTimeout
 from src.services.metrics import MetricsService
 from src.services.trust_boundary import TrustBoundaryError, TrustBoundaryService
 from src.services.telegram_update_idempotency import (
@@ -232,6 +233,7 @@ __all__ = [
     "WorkflowRunService",
     "WorkflowRunServiceError",
     "WorkflowRunValidationError",
+    "InfrastructureExecutionTimeout",
     "WorkflowObservabilityService",
     "WorkflowStatusView",
     "TrustBoundaryError",

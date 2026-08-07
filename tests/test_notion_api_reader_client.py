@@ -6,6 +6,7 @@ from typing import Dict, List, Mapping, Tuple
 from urllib import error
 
 import pytest
+from rq.timeouts import JobTimeoutException
 
 from src.observability.external_error import (
     ExternalErrorCategory,
@@ -24,6 +25,8 @@ from src.tools import (
     UrllibNotionHTTPTransport,
     normalize_notion_page_id,
 )
+from src.queue import classify_rq_execution_exception
+from src.services import InfrastructureExecutionTimeout
 
 
 class _FakeNotionHTTPTransport(NotionHTTPTransport):
@@ -386,7 +389,11 @@ def test_notion_api_reader_maps_upstream_failure_without_response_body() -> None
         ]
     )
     tool = NotionReaderTool(
-        NotionAPIReaderClient(token="secret-token", transport=transport)
+        NotionAPIReaderClient(
+            token="secret-token",
+            transport=transport,
+            max_attempts=1,
+        )
     )
 
     result = asyncio.run(
@@ -401,6 +408,24 @@ def test_notion_api_reader_maps_upstream_failure_without_response_body() -> None
     assert result.error.code == "NOTION_BLOCK_FETCH_FAILED"
     assert result.error.message == "Notion API request failed"
     assert "private page contents" not in result.error.message
+
+
+class _RQTimeoutTransport(NotionHTTPTransport):
+    def get_json(self, **kwargs) -> NotionHTTPResponse:
+        _ = kwargs
+        raise JobTimeoutException("rq timeout body must not escape")
+
+
+def test_rq_timeout_is_not_classified_as_notion_failure() -> None:
+    client = NotionAPIReaderClient(
+        token="secret-token",
+        transport=_RQTimeoutTransport(),
+        max_attempts=1,
+        infrastructure_exception_classifier=classify_rq_execution_exception,
+    )
+
+    with pytest.raises(InfrastructureExecutionTimeout):
+        client.fetch_page_tree("page-1")
 
 
 @pytest.mark.parametrize(

@@ -165,10 +165,14 @@ operator orchestrator. Orchestrators call services, repositories, tools, and
 
 When `REDIS_URL` is configured, the route claims the update ledger and queues
 one serializable Telegram envelope on the `telegram` queue before operator
-business work. The worker reconstructs the orchestrator and performs the
-workflow. Without Redis, the existing synchronous compatibility path remains
-available for local/test operation; this does not permit routes to call
-Notion, PostgreSQL, Redis, or provider clients directly.
+business work. The bounded generic worker atomically claims an
+`index_full_confirm`, creates the durable indexing workflow, and queues the
+module-level `process_telegram_full_index_job` with that workflow id. The
+confirmation returns `running` plus `/index-status <workflow_id>` guidance;
+`/index-status` is the primary progress surface. Without Redis, the existing
+synchronous compatibility path remains available for local/test operation;
+this does not permit routes to call Notion, PostgreSQL, Redis, or provider
+clients directly.
 
 Operator work must use these boundaries:
 
@@ -198,7 +202,9 @@ for operator status. No raw PostgreSQL or Redis client is an LLM-facing tool.
 - The Telegram outer workflow reports only bounded sync status/count fields;
   original Notion notes and `AI Supplement Zone` are never written.
 - Full-index confirmation is represented by an expiring, owner-bound session;
-  only the one-shot confirm callback starts `NotionFullIndexOrchestrator`.
+  only the one-shot confirm callback creates and queues the dedicated durable
+  full-index workflow when Redis is configured. Duplicate callbacks do not
+  create a second job. The dedicated job has no automatic RQ retry.
 - `/index-status` exposes bounded persisted workflow fields and never calls
   the Notion reader or indexing orchestrator.
 - `/cost` accepts only `today`, rolling `7d`, calendar `month`, and

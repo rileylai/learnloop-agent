@@ -4,7 +4,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from src.queue.base import QueueClient, get_callable_import_path
-from src.queue.models import EnqueuedJob, QueueRetryPolicy
+from src.queue.models import EnqueuedJob, QueueRetryPolicy, validate_timeout_seconds
 
 
 class FakeQueueClient(QueueClient):
@@ -20,8 +20,10 @@ class FakeQueueClient(QueueClient):
         kwargs: Optional[Dict[str, Any]] = None,
         description: Optional[str] = None,
         retry_policy: Optional[QueueRetryPolicy] = None,
+        timeout_seconds: Optional[int] = None,
     ) -> EnqueuedJob:
         _ = description
+        timeout_seconds = validate_timeout_seconds(timeout_seconds)
         job = EnqueuedJob(
             job_id=str(uuid4()),
             queue_name=queue_name,
@@ -29,6 +31,7 @@ class FakeQueueClient(QueueClient):
             args=args,
             kwargs=kwargs or {},
             retry_policy=retry_policy,
+            timeout_seconds=timeout_seconds,
         )
         self.enqueued_jobs.append(job)
         return job
@@ -50,6 +53,7 @@ class FakeQueueClient(QueueClient):
         kwargs: Optional[Dict[str, Any]] = None,
         description: Optional[str] = None,
         retry_policy: Optional[QueueRetryPolicy] = None,
+        timeout_seconds: Optional[int] = None,
     ) -> EnqueuedJob:
         _ = seconds
         return self.enqueue(
@@ -59,4 +63,5 @@ class FakeQueueClient(QueueClient):
             kwargs=kwargs,
             description=description,
             retry_policy=retry_policy,
+            timeout_seconds=timeout_seconds,
         )

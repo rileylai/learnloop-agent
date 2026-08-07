@@ -28,6 +28,7 @@ from src.services import (
     CostTracker,
     EmbeddingBatchError,
     EmbeddingBatchService,
+    InfrastructureExecutionTimeout,
     STANDARD_FAILURE_REASONS,
     WorkflowRunService,
     is_known_synthetic_notion_page_id,
@@ -370,6 +371,8 @@ class NotionPageIndexOrchestrator:
             )
         except NotionPageIndexError:
             raise
+        except InfrastructureExecutionTimeout:
+            raise
         except Exception as exc:
             raise NotionPageIndexError(
                 error_code="INDEX_PAGE_PREPARATION_FAILED",
@@ -396,6 +399,8 @@ class NotionPageIndexOrchestrator:
                     unit_of_work=owned_unit_of_work,
                 )
         except NotionPageIndexError:
+            raise
+        except InfrastructureExecutionTimeout:
             raise
         except StaleNotionPageSnapshotError as exc:
             raise NotionPageIndexError(

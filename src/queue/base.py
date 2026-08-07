@@ -36,6 +36,7 @@ class QueueClient(ABC):
         kwargs: Optional[Dict[str, Any]] = None,
         description: Optional[str] = None,
         retry_policy: Optional[QueueRetryPolicy] = None,
+        timeout_seconds: Optional[int] = None,
     ) -> EnqueuedJob:
         raise NotImplementedError
 
@@ -74,6 +75,7 @@ class QueueClient(ABC):
         kwargs: Optional[Dict[str, Any]] = None,
         description: Optional[str] = None,
         retry_policy: Optional[QueueRetryPolicy] = None,
+        timeout_seconds: Optional[int] = None,
     ) -> EnqueuedJob:
         """Enqueue a delayed job through the queue adapter.
 
@@ -88,4 +90,5 @@ class QueueClient(ABC):
             kwargs=kwargs,
             description=description,
             retry_policy=retry_policy,
+            timeout_seconds=timeout_seconds,
         )

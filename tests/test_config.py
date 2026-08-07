@@ -43,6 +43,8 @@ def test_settings_load_without_optional_env(monkeypatch) -> None:
         "MAX_WORKFLOW_COST_USD",
         "MAX_DAILY_COST_USD",
         "WORKFLOW_STALE_AFTER_SECONDS",
+        "TELEGRAM_JOB_TIMEOUT_SECONDS",
+        "TELEGRAM_INDEXING_JOB_TIMEOUT_SECONDS",
     ]
     for key in env_keys:
         monkeypatch.delenv(key, raising=False)
@@ -77,6 +79,8 @@ def test_settings_load_without_optional_env(monkeypatch) -> None:
     assert settings.max_workflow_cost_usd is None
     assert settings.max_daily_cost_usd is None
     assert settings.workflow_stale_after_seconds == 3600
+    assert settings.telegram_job_timeout_seconds == 180
+    assert settings.telegram_indexing_job_timeout_seconds == 10800
 
 
 def test_settings_load_with_env_override(monkeypatch) -> None:
@@ -107,6 +111,8 @@ def test_settings_load_with_env_override(monkeypatch) -> None:
     monkeypatch.setenv("MAX_WORKFLOW_COST_USD", "0.25")
     monkeypatch.setenv("MAX_DAILY_COST_USD", "5")
     monkeypatch.setenv("WORKFLOW_STALE_AFTER_SECONDS", "900")
+    monkeypatch.setenv("TELEGRAM_JOB_TIMEOUT_SECONDS", "240")
+    monkeypatch.setenv("TELEGRAM_INDEXING_JOB_TIMEOUT_SECONDS", "7200")
 
     _clear_settings_cache()
     settings = get_settings()
@@ -138,6 +144,8 @@ def test_settings_load_with_env_override(monkeypatch) -> None:
     assert settings.max_workflow_cost_usd == 0.25
     assert settings.max_daily_cost_usd == 5.0
     assert settings.workflow_stale_after_seconds == 900
+    assert settings.telegram_job_timeout_seconds == 240
+    assert settings.telegram_indexing_job_timeout_seconds == 7200
 
 
 @pytest.mark.parametrize(
@@ -150,6 +158,8 @@ def test_settings_load_with_env_override(monkeypatch) -> None:
         ("EMBEDDING_BATCH_MAX_AGGREGATE_BYTES", "invalid"),
         ("EMBEDDING_REQUEST_MAX_ATTEMPTS", "-1"),
         ("EMBEDDING_RETRY_MAX_SECONDS", "inf"),
+        ("TELEGRAM_JOB_TIMEOUT_SECONDS", "0"),
+        ("TELEGRAM_INDEXING_JOB_TIMEOUT_SECONDS", "invalid"),
     ],
 )
 def test_step_97_numeric_settings_fail_closed(

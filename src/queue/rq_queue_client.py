@@ -6,12 +6,30 @@ from typing import Any, Callable, Dict, Optional, Tuple
 from rq import Queue, Retry
 
 from src.queue.base import QueueClient, get_callable_import_path
-from src.queue.models import EnqueuedJob, QueueRetryPolicy
+from src.queue.models import EnqueuedJob, QueueRetryPolicy, validate_timeout_seconds
+
+RQ_QUEUE_FALLBACK_TIMEOUT_SECONDS = 180
+
+
+def classify_rq_execution_exception(exc: BaseException):
+    """Convert RQ's worker timeout into the neutral application error."""
+
+    from rq.timeouts import JobTimeoutException
+
+    if isinstance(exc, JobTimeoutException):
+        from src.services.infrastructure_errors import InfrastructureExecutionTimeout
+
+        return InfrastructureExecutionTimeout()
+    return None
 
 
 class RQQueueClient(QueueClient):
     def __init__(self, connection: Any) -> None:
         self._connection = connection
+
+    @staticmethod
+    def _effective_timeout(timeout_seconds: Optional[int]) -> int:
+        return validate_timeout_seconds(timeout_seconds) or RQ_QUEUE_FALLBACK_TIMEOUT_SECONDS
 
     def enqueue(
         self,
@@ -22,11 +40,18 @@ class RQQueueClient(QueueClient):
         kwargs: Optional[Dict[str, Any]] = None,
         description: Optional[str] = None,
         retry_policy: Optional[QueueRetryPolicy] = None,
+        timeout_seconds: Optional[int] = None,
     ) -> EnqueuedJob:
-        queue = Queue(name=queue_name, connection=self._connection)
+        effective_timeout = self._effective_timeout(timeout_seconds)
+        queue = Queue(
+            name=queue_name,
+            connection=self._connection,
+            default_timeout=RQ_QUEUE_FALLBACK_TIMEOUT_SECONDS,
+        )
         function_path = get_callable_import_path(function)
         enqueue_kwargs: Dict[str, Any] = {
             "description": description,
+            "job_timeout": effective_timeout,
         }
         if retry_policy is not None and retry_policy.max_retries:
             enqueue_kwargs["retry"] = Retry(
@@ -46,6 +71,7 @@ class RQQueueClient(QueueClient):
             args=args,
             kwargs=kwargs or {},
             retry_policy=retry_policy,
+            timeout_seconds=effective_timeout,
         )
 
     def is_available(self) -> bool:
@@ -59,7 +85,11 @@ class RQQueueClient(QueueClient):
 
         try:
             return (
-                Queue(name=queue_name, connection=self._connection).scheduler_pid
+                Queue(
+                    name=queue_name,
+                    connection=self._connection,
+                    default_timeout=RQ_QUEUE_FALLBACK_TIMEOUT_SECONDS,
+                ).scheduler_pid
                 is not None
             )
         except Exception:
@@ -77,7 +107,11 @@ class RQQueueClient(QueueClient):
             raise ValueError("limit must be positive")
         from rq.registry import StartedJobRegistry
 
-        queue = Queue(name=queue_name, connection=self._connection)
+        queue = Queue(
+            name=queue_name,
+            connection=self._connection,
+            default_timeout=RQ_QUEUE_FALLBACK_TIMEOUT_SECONDS,
+        )
         scheduled = queue.scheduled_job_registry
         started = StartedJobRegistry(name=queue_name, connection=self._connection)
         scheduled_ids = scheduled.get_job_ids(
@@ -134,13 +168,20 @@ class RQQueueClient(QueueClient):
         kwargs: Optional[Dict[str, Any]] = None,
         description: Optional[str] = None,
         retry_policy: Optional[QueueRetryPolicy] = None,
+        timeout_seconds: Optional[int] = None,
     ) -> EnqueuedJob:
         if seconds < 0:
             raise ValueError("seconds must be non-negative")
-        queue = Queue(name=queue_name, connection=self._connection)
+        effective_timeout = self._effective_timeout(timeout_seconds)
+        queue = Queue(
+            name=queue_name,
+            connection=self._connection,
+            default_timeout=RQ_QUEUE_FALLBACK_TIMEOUT_SECONDS,
+        )
         function_path = get_callable_import_path(function)
         enqueue_kwargs: Dict[str, Any] = {
             "description": description,
+            "job_timeout": effective_timeout,
             "scheduled_time": datetime.now(timezone.utc) + timedelta(seconds=seconds),
         }
         if retry_policy is not None and retry_policy.max_retries:
@@ -162,4 +203,5 @@ class RQQueueClient(QueueClient):
             args=args,
             kwargs=kwargs or {},
             retry_policy=retry_policy,
+            timeout_seconds=effective_timeout,
         )

@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from src.tools.base import Tool
 from src.tools.models import ToolContext, ToolResult, ToolSpec
+from src.services.infrastructure_errors import InfrastructureExecutionTimeout
 
 
 @dataclass
@@ -129,6 +130,8 @@ class NotionReaderTool(Tool):
             page_tree = self._notion_reader_client.fetch_page_tree(page_id)
         except NotionReaderClientError as exc:
             return ToolResult.failure(code=exc.code, message=exc.message)
+        except InfrastructureExecutionTimeout:
+            raise
         except Exception as exc:
             _ = exc
             return ToolResult.failure(
@@ -167,6 +170,8 @@ class NotionReaderTool(Tool):
             pages = self._notion_reader_client.list_pages()
         except NotionReaderClientError as exc:
             return ToolResult.failure(code=exc.code, message=exc.message)
+        except InfrastructureExecutionTimeout:
+            raise
         except Exception as exc:
             _ = exc
             return ToolResult.failure(

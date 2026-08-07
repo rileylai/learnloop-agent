@@ -65,6 +65,12 @@ not establish production-wide or cloud deployment readiness.
   worker on macOS is rejected. Jobs use two bounded retries after the initial
   attempt;
   expected Telegram/domain failures are persisted as terminal ledger outcomes.
+- `TELEGRAM_JOB_TIMEOUT_SECONDS` bounds ordinary webhook and scheduled settle
+  work (default `180`); `TELEGRAM_INDEXING_JOB_TIMEOUT_SECONDS` bounds the
+  dedicated full-index job (default `10800`). These are explicit per-job
+  deployment bounds; `10800` is not a latency SLA. RQ receives `job_timeout`
+  explicitly, no global long queue default is used, and the dedicated job has
+  no automatic RQ retry.
 - Tesseract OCR requires all three traineddata languages `eng`, `chi_tra`, and
   `chi_sim`. The current host passes this preflight and the real-adapter
   fixture. Step 88 provides user-confirmed guarded Telegram live E2E evidence;
@@ -298,6 +304,8 @@ Production page indexing uses these positive settings:
 - `EMBEDDING_BATCH_MAX_AGGREGATE_TOKEN_ESTIMATE`
 - `EMBEDDING_REQUEST_MAX_ATTEMPTS` (default `3`)
 - `EMBEDDING_RETRY_BASE_SECONDS` / `EMBEDDING_RETRY_MAX_SECONDS`
+- `TELEGRAM_JOB_TIMEOUT_SECONDS` (default `180`)
+- `TELEGRAM_INDEXING_JOB_TIMEOUT_SECONDS` (default `10800`)
 
 Embedding concurrency is fixed at `1` and has no setting in Step 97. The
 token-estimate settings use the conservative, versioned operational estimator;

@@ -26,7 +26,11 @@ from src.providers import (
     OpenAIEmbeddingClient,
     ProviderRouter,
 )
-from src.queue import QueueClient, RQQueueClient
+from src.queue import (
+    QueueClient,
+    RQQueueClient,
+    classify_rq_execution_exception,
+)
 from src.services import (
     CostTracker,
     CostBudgetService,
@@ -243,6 +247,7 @@ def _build_notion_clients(
                 max_attempts=settings.notion_read_max_attempts,
                 retry_base_seconds=settings.notion_read_retry_base_seconds,
                 retry_max_seconds=settings.notion_read_retry_max_seconds,
+                infrastructure_exception_classifier=classify_rq_execution_exception,
             ),
             NotionAPIWriterClient(token=settings.notion_token),
         )

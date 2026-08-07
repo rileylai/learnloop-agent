@@ -279,6 +279,9 @@ class NotionAPIReaderClient(NotionReaderClient):
         retry_base_seconds: float = 1.0,
         retry_max_seconds: float = 30.0,
         sleeper: Optional[Callable[[float], None]] = None,
+        infrastructure_exception_classifier: Optional[
+            Callable[[BaseException], Optional[BaseException]]
+        ] = None,
     ) -> None:
         normalized_token = token.strip()
         if not normalized_token:
@@ -311,6 +314,9 @@ class NotionAPIReaderClient(NotionReaderClient):
         self._retry_base_seconds = retry_base_seconds
         self._retry_max_seconds = retry_max_seconds
         self._sleeper = sleeper or time.sleep
+        self._infrastructure_exception_classifier = (
+            infrastructure_exception_classifier
+        )
         self._transport = transport or UrllibNotionHTTPTransport(
             base_url=base_url,
             timeout_seconds=timeout_seconds,
@@ -544,15 +550,15 @@ class NotionAPIReaderClient(NotionReaderClient):
                     message="Notion API transport request failed",
                     diagnostic=diagnostic,
                 ) from None
-            except Exception:
-                raise NotionAPIClientError(
-                    code="NOTION_BLOCK_FETCH_FAILED",
-                    message="Notion API request failed",
-                    diagnostic=ExternalErrorDiagnostic(
-                        category=ExternalErrorCategory.RESPONSE_INVALID,
-                        retryable=False,
-                    ),
-                ) from None
+            except Exception as exc:
+                infrastructure_error = (
+                    self._infrastructure_exception_classifier(exc)
+                    if self._infrastructure_exception_classifier is not None
+                    else None
+                )
+                if infrastructure_error is not None:
+                    raise infrastructure_error from exc
+                raise
 
             diagnostic = response.diagnostic
             if diagnostic is None and not 200 <= response.status_code < 300:

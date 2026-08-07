@@ -1456,15 +1456,21 @@ pages already committed by the child indexing workflow.
 
 `/index-full` returns a bounded warning with opaque `index_full_confirm` and
 `index_full_cancel` callbacks. Only the owner-bound, TTL-valid confirmation
-starts the existing full indexing orchestrator. Response fields include only
-the full indexing workflow reference, status, discovered/processed/
-failed/remaining counts, deterministic failure reason, stale state, and known
-or `unknown` embedding cost.
+claims the callback, creates a durable indexing workflow, and enqueues the
+dedicated full-index job when Redis is configured. The confirmation response
+is `running` with the workflow reference and `/index-status <workflow_id>`
+guidance. Response fields include only the full indexing workflow reference,
+status, discovered/processed/failed/remaining counts, deterministic failure
+reason, stale state, and known or `unknown` embedding cost. Without Redis, the
+synchronous compatibility path retains the terminal response behavior.
 
 `/index-status [workflow_id]` reads the latest or requested persisted
 `indexing` workflow. It does not call the Notion reader, embedding provider, or
 indexing orchestrator. Unknown workflow ids return a bounded not-found error;
 raw metadata, page ids, page content, and exception bodies are not returned.
+The dedicated job has no automatic RQ retry and reuses the workflow id created
+by confirmation; page-level atomic replacement and partial outcomes remain
+unchanged.
 
 ### Cost and workflow runtime contract (Step 92)
 

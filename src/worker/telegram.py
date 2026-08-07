@@ -26,9 +26,11 @@ from src.orchestrators import (
     TelegramDocumentAttachment,
     TelegramGatewayError,
     TelegramPhotoAttachment,
+    NotionPageIndexError,
 )
 
 TELEGRAM_WEBHOOK_JOB_PATH = f"{__name__}.process_telegram_webhook_job"
+TELEGRAM_FULL_INDEX_JOB_PATH = f"{__name__}.process_telegram_full_index_job"
 
 
 def process_telegram_webhook_job(
@@ -156,6 +158,52 @@ def process_telegram_upload_settle_job(
         return {
             "status": "failed",
             "error_code": exc.error_code,
+            "failure_reason": exc.failure_reason,
+        }
+    finally:
+        db_session.close()
+
+
+def process_telegram_full_index_job(
+    workflow_run_id: int,
+    request_workflow_id: str,
+) -> Dict[str, Any]:
+    """Run one already-created full-index workflow without RQ retries."""
+
+    db_session_factory = get_db_session_factory()
+    db_session = db_session_factory()
+    try:
+        gateway = build_telegram_gateway_orchestrator(
+            db_session=db_session,
+            db_session_factory=db_session_factory,
+            unit_of_work_factory=get_unit_of_work_factory(),
+            tool_registry=get_tool_registry(),
+            provider_router=get_provider_router(),
+            embedding_client=get_embedding_client(),
+            cost_tracker=get_cost_tracker(),
+            prompt_template_loader=get_prompt_template_loader(),
+            trust_boundary=get_trust_boundary(),
+            telegram_session_store=get_telegram_session_store(),
+            telegram_sync_session_store=get_telegram_sync_session_store(),
+            telegram_index_session_store=get_telegram_index_session_store(),
+            queue_client=get_queue_client(),
+        )
+        result = asyncio.run(
+            gateway.run_full_index_job(
+                workflow_run_id=workflow_run_id,
+                request_workflow_id=request_workflow_id,
+            )
+        )
+        return {
+            "status": result.status,
+            "workflow_run_id": result.workflow_run_id,
+            "discovered_page_count": result.discovered_page_count,
+            "processed_page_count": result.processed_page_count,
+        }
+    except NotionPageIndexError as exc:
+        return {
+            "status": "failed",
+            "workflow_run_id": exc.workflow_run_id or workflow_run_id,
             "failure_reason": exc.failure_reason,
         }
     finally:

@@ -68,6 +68,17 @@ class TelegramIndexSessionStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def mark_full_index_queued(
+        self,
+        *,
+        session_id: str,
+        chat_id: str,
+        user_id: str,
+        workflow_run_id: int,
+    ) -> Optional[TelegramFullIndexSession]:
+        raise NotImplementedError
+
+    @abstractmethod
     def complete_full_index(
         self,
         *,
@@ -152,6 +163,16 @@ class InMemoryTelegramIndexSessionStore(TelegramIndexSessionStore):
                 session.updated_at = time.time()
             return session
 
+    def mark_full_index_queued(self, **kwargs):
+        with self._lock:
+            session = self._get_unlocked(**kwargs)
+            if session is None:
+                return None
+            session.state = "running"
+            session.workflow_run_id = int(kwargs["workflow_run_id"])
+            session.updated_at = time.time()
+            return session
+
     def complete_full_index(self, **kwargs):
         with self._lock:
             session = self._get_unlocked(**kwargs)
@@ -227,6 +248,18 @@ class RedisTelegramIndexSessionStore(TelegramIndexSessionStore):
                 session.state = "cancelled"
                 session.updated_at = time.time()
                 self._redis.setex(key, self._ttl_seconds, _session_to_json(session))
+            return session
+
+    def mark_full_index_queued(self, **kwargs):
+        key = _session_key(kwargs["chat_id"], kwargs["user_id"], kwargs["session_id"])
+        with self._locked(key):
+            session = self.get_full_index_session(**kwargs)
+            if session is None:
+                return None
+            session.state = "running"
+            session.workflow_run_id = int(kwargs["workflow_run_id"])
+            session.updated_at = time.time()
+            self._redis.setex(key, self._ttl_seconds, _session_to_json(session))
             return session
 
     def complete_full_index(self, **kwargs):

@@ -63,18 +63,22 @@ def select_worker_class(
 
 
 def validate_telegram_job_import() -> None:
-    """Fail fast if RQ cannot resolve the queued Telegram callable."""
+    """Fail fast if RQ cannot resolve either Telegram job callable."""
 
     from src.worker.telegram import (
+        TELEGRAM_FULL_INDEX_JOB_PATH,
         TELEGRAM_WEBHOOK_JOB_PATH,
+        process_telegram_full_index_job,
         process_telegram_webhook_job,
     )
 
-    resolved = import_attribute(TELEGRAM_WEBHOOK_JOB_PATH)
-    if resolved is not process_telegram_webhook_job:
-        raise RuntimeError(
-            "RQ resolved a different Telegram worker callable"
-        )
+    for path, function in (
+        (TELEGRAM_WEBHOOK_JOB_PATH, process_telegram_webhook_job),
+        (TELEGRAM_FULL_INDEX_JOB_PATH, process_telegram_full_index_job),
+    ):
+        resolved = import_attribute(path)
+        if resolved is not function:
+            raise RuntimeError("RQ resolved a different Telegram worker callable")
 
 
 def main() -> int:

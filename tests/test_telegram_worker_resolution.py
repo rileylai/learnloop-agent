@@ -15,7 +15,9 @@ from src.orchestrators.telegram_gateway_orchestrator import TelegramGatewayResul
 from src.queue import RQQueueClient, get_callable_import_path
 import src.worker.telegram as telegram_worker
 from src.worker.telegram import (
+    TELEGRAM_FULL_INDEX_JOB_PATH,
     TELEGRAM_WEBHOOK_JOB_PATH,
+    process_telegram_full_index_job,
     process_telegram_webhook_job,
 )
 
@@ -150,6 +152,10 @@ def test_rq_import_attribute_resolves_canonical_worker_path() -> None:
     assert resolved is process_telegram_webhook_job
     assert get_callable_import_path(process_telegram_webhook_job) == (
         TELEGRAM_WEBHOOK_JOB_PATH
+    )
+    assert import_attribute(TELEGRAM_FULL_INDEX_JOB_PATH) is process_telegram_full_index_job
+    assert get_callable_import_path(process_telegram_full_index_job) == (
+        TELEGRAM_FULL_INDEX_JOB_PATH
     )
 
 
