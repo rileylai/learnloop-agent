@@ -502,3 +502,9 @@ managed inputs and gates before vector capture. Citation identity and answer
 context always project back to original chunks and paths; derived headers are
 never citable. A candidate that passes evaluation is only an ADR candidate and
 still requires a separate production rollout step and re-index approval.
+
+The original `step98-exp-001` evidence is retained as
+`aborted_pre_capture_contract_gap` with zero external attempts and no capture
+artifact. `step98-exp-002` independently freezes the unchanged decision set and
+adds the enforceable global-attempt, immutable-artifact, preflight, and offline
+Phase C contracts. Exp-002 evidence cannot overwrite or relabel exp-001.

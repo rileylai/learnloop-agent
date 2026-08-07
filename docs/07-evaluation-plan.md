@@ -579,3 +579,10 @@ safety uses the real `ChunkRepository` and `ProductionChunkRetriever` seams to
 verify eligible candidates before top-k for pending, rejected, non-Notion,
 wrong-page, and wrong-section decoys. Disposable PostgreSQL/pgvector adapter
 integration remains an independent gate for any later adoption decision.
+
+`step98-exp-001` ended before capture because its frozen harness could not
+mechanically enforce the approved contract; it made zero external attempts and
+created no canonical capture artifact. `step98-exp-002` is a separate frozen
+experiment over the unchanged 72-query decision set. Its 15 logical requests
+share a persisted pre-call budget of 16 external attempts, and its Phase C CLI
+accepts only a complete immutable capture bundle.

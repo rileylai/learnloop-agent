@@ -562,3 +562,10 @@ Phase C can deterministically replay ranking. Creation is explicit,
 create-only, bounded, and separately approved. It is not workflow telemetry or
 production database state. Any managed digest mismatch rejects capture or
 scoring instead of silently producing new evidence.
+
+For `step98-exp-002`, every provider attempt consumes a globally persisted slot
+before the call. Success and failure publish a create-only safe receipt in a
+single canonical run directory; only complete success publishes vectors.
+Failure receipts exclude inputs, partial vectors, provider bodies, credentials,
+and database target names. These are local integrity/provenance receipts, not
+cryptographic authentication of an external authority.

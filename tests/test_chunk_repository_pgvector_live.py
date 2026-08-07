@@ -15,6 +15,9 @@ from src.repositories import ChunkRepository
 
 VECTOR_DIMENSIONS = 1536
 ADMIN_DATABASE_URL = "postgresql+psycopg://learnloop:learnloop@localhost:5432/postgres"
+DATABASE_PREFIX_ENV = "LEARNLOOP_PGVECTOR_TEST_DATABASE_PREFIX"
+DEFAULT_DATABASE_PREFIX = "learnloop_step52_"
+ALLOWED_DATABASE_PREFIXES = {DEFAULT_DATABASE_PREFIX, "learnloop_step98_"}
 
 
 def _embedding(*leading_values: float) -> list[float]:
@@ -32,7 +35,10 @@ def pgvector_session() -> Iterator[Session]:
     admin_url = make_url(
         os.getenv("LEARNLOOP_PGVECTOR_ADMIN_DATABASE_URL", ADMIN_DATABASE_URL)
     )
-    database_name = f"learnloop_step52_{uuid.uuid4().hex[:8]}"
+    database_prefix = os.getenv(DATABASE_PREFIX_ENV, DEFAULT_DATABASE_PREFIX)
+    if database_prefix not in ALLOWED_DATABASE_PREFIXES:
+        raise RuntimeError("unapproved disposable database prefix")
+    database_name = f"{database_prefix}{uuid.uuid4().hex[:8]}"
     test_database_url = admin_url.set(database=database_name)
 
     admin_engine = create_engine(
