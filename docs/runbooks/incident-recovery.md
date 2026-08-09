@@ -2,82 +2,59 @@
 
 ## First response
 
-Pause API and worker mutations. Do not attempt a Notion write while the
-database state, workflow outcome, or append identity is uncertain.
+Pause API and worker mutations while database state, workflow outcome, or
+append identity is uncertain. Record only workflow references, status,
+failure reasons, migration/readiness checks, bounded counts, and whether the
+affected Notion page was manually edited.
 
-Capture only safe operator evidence:
-
-- workflow id, type, status, and failure reason;
-- migration revision and readiness checks;
-- count/status from `/metrics` and protected operator endpoints;
-- whether the affected Notion page was manually edited;
-- whether the durable `change-request-<id>` identity is visible.
-
-Never capture tokens, connection URLs, page contents, proposal text, or raw
+Do not capture secrets, connection URLs, page content, proposal text, or raw
 external exception bodies.
 
-## Choose the recovery path
+## Recovery checklist
 
-Generate the deterministic checklist first:
+Generate a deterministic read-only checklist first:
 
 ```bash
 uv run --no-env-file --frozen python \
-  scripts/notion_db_recovery_drill.py \
-  --database-restored \
-  --json
+  scripts/notion_db_recovery_drill.py --json
 ```
-
-Use the flags that describe the incident. The script is read-only and does not
-contact PostgreSQL or Notion.
 
 ### PostgreSQL was restored
 
-1. Verify the migration head and `/ready` against the restored target.
-2. Treat the restored PostgreSQL state as derived state, not authoritative
-   note content.
-3. Run `POST /api/notion/index/full` to rebuild the database and vectors from
-   current Notion content. Do not append during this rebuild.
-4. Verify scoped QA citations and production-RAG exclusion before resuming.
+1. Verify migrations, `/ready`, and pgvector against the restored target.
+2. Treat PostgreSQL as derived state, not authoritative note content.
+3. Run full Notion indexing; do not append during the rebuild.
+4. Verify scoped citations and exclusion of pending/rejected content.
 
-### A user manually edited Notion
+### A user changed Notion
 
-1. Read the current page from Notion; current Notion content wins.
-2. Run `POST /api/notion/index/incremental` with the known affected page ids.
-3. The index path must use page-level replacement, including block deletion and
-   chunk replacement for the affected page.
-4. If the affected page set is unknown, use the full index route after an
-   operator review.
-
-The agent must not repair divergence by editing, deleting, moving, or manually
-appending Notion blocks.
+1. Treat current Notion content as authoritative.
+2. Run page-scoped incremental indexing for known affected page ids.
+3. Use full indexing when the affected page set is unknown.
+4. Never repair divergence by editing, deleting, moving, or manually appending
+   Notion blocks from the application database.
 
 ### An append result is uncertain
 
-1. Read the target page and search for the durable
-   `change-request-<id>` identity. This is a read-only verification step.
-2. If the identity exists, treat Notion as authoritative, run page-level
-   incremental indexing, and reconcile the workflow only after the index
+1. Read the target page and search for `change-request-<id>`.
+2. If present, run page-level indexing and reconcile the workflow after it
    succeeds.
-3. If the identity is absent, keep the change request unresolved and retry only
-   through the existing human accept flow after confirming the target and
-   approval. Never manually append a substitute block.
-4. If identity visibility is unavailable, stop. Do not guess whether the write
-   happened and do not retry.
+3. If absent, keep the request unresolved and retry only through the existing
+   human accept flow after confirming target and approval.
+4. If identity visibility is unavailable, stop; do not guess or retry.
 
 ### A workflow is stale or audit reconciliation failed
 
-1. Inspect the protected workflow detail and confirm the business outcome from
-   the external evidence before changing the workflow status.
-2. Use `scripts/reconcile_workflow.py` without `--apply` first.
-3. Apply a terminal reconciliation only when the outcome is known and the
-   failure reason is deterministic. This command never reruns business work.
-4. If the business outcome is unknown, leave the workflow unresolved and
-   escalate for human review.
+1. Inspect protected workflow detail and confirm business outcome from safe
+   external evidence.
+2. Run `scripts/reconcile_workflow.py` without `--apply`.
+3. Apply only a known terminal outcome. The command never reruns business work.
+4. Leave the workflow unresolved when the outcome is unknown.
 
 ### Telegram business committed but preview delivery failed
 
-Do not upload again and do not rerun OCR, LLM generation, source persistence,
-or proposal creation. Inspect the existing committed outcome first:
+Do not upload again or rerun OCR, LLM generation, source persistence, or
+proposal creation. Inspect the existing outcome first:
 
 ```bash
 uv run --no-env-file --frozen python \
@@ -91,23 +68,14 @@ uv run --no-env-file --frozen python \
 ```
 
 The command is dry-run unless `--apply` is supplied. Apply only after the
-inspection proves that the ledger, Telegram workflow, existing source row,
-pending change request, source link, and target page describe the same
-recoverable outcome. `resend-preview` may send only the already stored proposal
-preview. If delivery already occurred, use `--action reconcile-success` with
-`--delivery-confirmed`; that action sends no Telegram message. If any identity
-or outcome check is uncertain, stop and leave the rows unchanged.
+ledger, workflow, source, pending request, source link, and target page agree.
+If any identity is uncertain, stop and leave rows unchanged.
 
 ## Resume criteria
 
-Resume mutations only after all of these are true:
+Resume mutations only after migrations and readiness pass, Notion-derived page
+state is current, any append identity is resolved, scoped QA returns a current
+Notion citation, and pending/rejected content remains outside production RAG.
 
-- migration and readiness checks pass;
-- Notion-derived page state has been rebuilt or incrementally reconciled;
-- the append identity, if relevant, has been resolved;
-- scoped QA returns a current Notion citation;
-- pending and rejected change requests remain excluded from production RAG;
-- the operator has signed off the recovery evidence.
-
-The project does not provide automatic incident remediation or an always-on
-Notion sync in MVP.
+The MVP does not provide automatic incident remediation or continuous Notion
+sync.

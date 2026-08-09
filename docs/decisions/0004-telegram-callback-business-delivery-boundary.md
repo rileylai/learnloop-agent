@@ -4,41 +4,28 @@
 
 Accepted
 
-## Date
-
-2026-07-30
-
 ## Context
 
-Step 88 originally acknowledged a Telegram page-picker callback after OCR,
-proposal generation, and preview delivery. A transient acknowledgement error
-therefore raised `TELEGRAM_SEND_FAILED` after the source document and pending
-change request had already committed. The workflow and update ledger became
-failed even though the business outcome was successful, and a retry could be
-ambiguous.
+Telegram callback acknowledgement is a user-interface side effect. It can
+fail independently from OCR, proposal creation, review, or preview delivery.
+Treating it as the business transaction can incorrectly mark committed work as
+failed and make a retry ambiguous.
 
 ## Decision
 
-- Validate callback token ownership, session state, and selected page first.
-- Call `answerCallbackQuery` immediately before OCR, provider, or proposal
-  work. Record `callback_ack_status` and classify transport failure as
+- Validate callback ownership and session state before business work.
+- Call `answerCallbackQuery` before long OCR, provider, or proposal work.
+- Record acknowledgement status separately and classify delivery failure as
   `TELEGRAM_CALLBACK_ACK_FAILED`.
-- Treat callback acknowledgement as a Telegram UX side effect. It never owns,
-  rolls back, or determines the source-document/change-request transaction.
-- Commit the source document and pending change request before preview delivery.
-- Track preview delivery separately. A failed preview send uses
-  `TELEGRAM_PREVIEW_DELIVERY_FAILED`, retains the pending change request, and
-  may be recovered by resending the existing preview only.
-- Keep `telegram_update_ledger.update_id` and the upload-session target claim as
-  the idempotency boundaries. Duplicate updates and unexpected RQ retries must
-  not repeat OCR, LLM generation, or business-row creation.
-- Store only safe workflow metadata; never store Telegram payloads, callback
-  tokens, image/OCR text, proposal source content, or secrets.
+- Commit source/proposal business state before preview delivery.
+- Record preview delivery separately; a failure uses
+  `TELEGRAM_PREVIEW_DELIVERY_FAILED` and keeps the pending proposal recoverable.
+- Use the Telegram update ledger and upload-session claims as idempotency
+  boundaries so retries do not repeat business work.
+- Persist only safe metadata.
 
 ## Consequences
 
-Successful business work can have a failed callback acknowledgement while the
-workflow and ledger remain succeeded. Preview delivery can be failed and
-recoverable without changing the pending proposal. Operators use
-`scripts/reconcile_telegram_outcome.py` in dry-run mode first; it verifies the
-existing rows and does not use ad-hoc SQL or rerun business work.
+Business success, callback acknowledgement, and preview delivery can be
+diagnosed independently. Recovery can resend an existing preview without
+rerunning OCR, the LLM, or proposal persistence.

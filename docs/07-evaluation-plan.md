@@ -1,478 +1,62 @@
-# 07 Evaluation Plan
+# Evaluation Plan
 
-## Purpose
-This document defines retrieval hit rate, citation accuracy, write safety, and sync reconciliation tests.
+The repository uses deterministic tests for policy and workflow correctness.
+External dependency checks are separate, explicitly enabled operations and
+must use synthetic or dedicated resources.
 
-## Status
-Active for evaluation and regression steps.
+## Default checks
 
-## Verification Levels
-
-Evaluation evidence must state its dependency level:
-
-| Level | Meaning | Current examples |
-|---|---|---|
-| `deterministic` | Fake/in-memory adapters and synthetic public-safe data. | Golden retrieval, citation, vector fallback, write safety, manual sync, mock demo. |
-| `adapter_integration` | Real parser/client library against controlled fixtures or an injected HTTP transport. | `pypdf`, trafilatura, Notion REST, Telegram HTTP, OpenAI transport mapping, and conditional Tesseract adapter coverage. |
-| `live_dependency` | Real credential or service for one bounded dependency. | Step 82 Notion read/index/QA, Step 83 approved sandbox append, and Step 87 PostgreSQL cleanup/release gate passed within their stated scopes. |
-| `live_e2e` | Real user flow across all required external systems. | None currently. |
-
-Passing deterministic tests must not be reported as proof of real Notion,
-OpenAI generation, Telegram, URL, YouTube, or OCR E2E readiness.
-
-## Step 96 Large-page Diagnostic Verification
-
-The deterministic Step 96 matrix uses injected transports and public-safe
-synthetic text. It covers HTTP 400, 401, 403, 408, 413, 422, 429,
-representative 5xx responses, client timeout, transport failure, invalid JSON,
-invalid response schema, and empty input. It verifies normalized category,
-retryability, bounded numeric `Retry-After`, and the absence of raw content or
-credentials. Page-index transaction regressions separately verify that the
-existing fail-before-replacement behavior remains unchanged.
-
-`tests/evals/large_page_failure_diagnostic.py` is `live_dependency` evidence,
-not deterministic or live-E2E evidence. Its default path is skipped and makes
-zero external requests. The live matrix requires independent environment,
-CLI, and approval gates; reads only one configured page; executes sequential
-single/small/progressively bounded embedding probes under explicit request,
-byte, and token-estimate budgets; and writes no Notion or database state.
-A skipped matrix leaves the HTTP 400 root cause unresolved.
-
-The user-executed initial live-dependency matrix passed through 64 inputs and
-24,916 bytes / 6,254 estimated tokens with the configured model and dimensions.
-The follow-up `--shape-only` evidence measured 2,483 production-equivalent
-inputs, exceeding the documented 2,048-input request limit. This supports the
-primary HTTP 400 cause without direct provider error-code confirmation. The
-222,642 aggregate token value is an estimate and is not the diagnosed cause.
-Phase B is cancelled; Step 96 is `done`.
-
-Current audit baseline on 2026-08-01: the full deterministic suite completed
-with `399 passed, 3 skipped`. The skipped cases are opt-in live PostgreSQL
-repository tests and are not passing live evidence. The test-profile preflight
-passed with warnings for unconfigured live dependencies.
-
-## Golden Question Set
-
-The versioned golden question set is stored at:
-
-`tests/evals/golden_questions.yaml`
-
-It contains synthetic examples only. It must not contain private Notion content.
-
-Step 36 starts with three required categories:
-
-| Category | Purpose |
-|---|---|
-| `nlp` | Verify retrieval and citation for existing manual notes. |
-| `iso_9001` | Verify a second knowledge domain and path shape. |
-| `ai_supplement_zone` | Verify accepted AI supplement content can be retrieved from production RAG. |
-
-Each question records:
-
-- a stable unique id and query
-- deterministic page, section, source-kind, and top-k scope
-- expected Notion paths
-- expected content state: `manual_note` or `accepted_ai_supplement`
-- answer terms that must or must not appear
-- deterministic retrieval, citation, and production-RAG exclusion checks
-
-Accepted AI supplement expected paths must be under `AI Supplement Zone`.
-Manual note expected paths must not be under `AI Supplement Zone`.
-Pending and rejected change request content must never be an expected production result.
-
-## Loading and Validation
-
-`tests/evals/golden_questions.py` loads YAML with `yaml.safe_load` and validates
-the complete structure before an eval can run. It rejects unknown fields,
-duplicate ids, invalid scopes, and ownership-model path mismatches.
-
-Run the standalone validation command:
+Install the locked development environment and run the normal suite:
 
 ```bash
-uv run --no-env-file --frozen python tests/evals/golden_questions.py
+uv sync --dev
+uv run --no-env-file --frozen pytest -q
 ```
 
-## Deterministic Metrics
-
-- Retrieval hit rate: expected path appears in top-k retrieved paths.
-- Citation accuracy: returned citation path matches an expected source path.
-- Vector retrieval regression: semantic ranking, lexical fallback reason,
-  citation de-duplication, and production-RAG exclusion stay deterministic.
-- Write safety: original blocks stay unchanged and append occurs only under
-  `AI Supplement Zone`.
-- Manual sync reconciliation: deleted Notion content is removed after
-  page-level replacement sync.
-- Production-RAG exclusion: pending and rejected content is absent.
-
-No LLM-as-judge is used in MVP evaluation.
-
-## Retrieval Hit Rate Evaluation
-
-`tests/evals/retrieval_eval.py` measures whether each golden question's expected
-path appears in the top-k paths returned by `ProductionChunkRetriever`.
-
-The MVP Step 37 script uses a synthetic in-memory SQLite fixture built from the
-golden question set. This keeps the regression deterministic before public mock
-Notion data exists. It still exercises the real repository and retriever path:
-
-`Golden Questions -> Synthetic Notion chunks -> ChunkRepository -> ProductionChunkRetriever -> Hit-rate calculation`
-
-Matching rules:
-
-- Compare expected paths against retrieved top-k paths with exact string match.
-- Count one hit per golden question when at least one expected path appears.
-- Compute `hit_rate = hit_count / total_questions`.
-- Keep retrieval scoped to `source_kind="notion"`.
-- Exclude non-production source chunks from retrieved results.
-
-Run:
+Useful focused commands are:
 
 ```bash
+uv run --no-env-file --frozen python scripts/preflight.py --profile test --json
 uv run --no-env-file --frozen python tests/evals/retrieval_eval.py
-```
-
-Expected output includes:
-
-```text
-retrieval_hit_rate: 1.000 (3/3)
-```
-
-## Citation Accuracy Evaluation
-
-`tests/evals/citation_accuracy_eval.py` measures whether deterministic QA
-citation paths match the expected source paths in the golden question set.
-
-The MVP Step 38 script uses the same synthetic in-memory SQLite fixture as the
-retrieval hit-rate eval. It retrieves production-safe Notion chunks, converts
-their `notion_path` values into unique citation paths, then compares those
-paths to each golden question's expected paths.
-
-Matching rules:
-
-- Compare citation paths against expected paths with exact string match.
-- Count one accurate citation result per golden question when at least one
-  expected path appears in the citation paths.
-- Compute `citation_accuracy = accurate_count / total_questions`.
-- Default threshold is `1.0`.
-- Keep citation sources scoped to `source_kind="notion"`.
-- Do not inspect or judge generated answer text.
-
-Run:
-
-```bash
 uv run --no-env-file --frozen python tests/evals/citation_accuracy_eval.py
-```
-
-Expected output includes:
-
-```text
-citation_accuracy: 1.000 (3/3)
-threshold: 1.000
-status: pass
-```
-
-## Vector Retrieval Regression Evaluation
-
-`tests/evals/vector_retrieval_eval.py` freezes deterministic vector-first QA
-retrieval behavior without real OpenAI calls, real PostgreSQL, or
-LLM-as-judge.
-
-The Step 54 eval uses a deterministic fake embedding fixture and an in-memory
-vector-capable repository fixture to exercise the real
-`ProductionChunkRetriever.retrieve_with_metadata()` decision path.
-
-Checks:
-
-- Semantic ranking returns `pgvector_exact_cosine` when vector results are
-  available.
-- Query-time vector failure falls back to lexical retrieval with
-  `retrieval_fallback_reason=VECTOR_QUERY_FAILED`.
-- Missing usable vectors in the filtered scope falls back to lexical retrieval
-  with `retrieval_fallback_reason=VECTOR_DATA_UNAVAILABLE`.
-- Duplicate retrieved paths collapse into unique citation paths.
-- Production RAG excludes non-Notion chunks even when they would otherwise be
-  the highest-scoring semantic match.
-
-Run:
-
-```bash
 uv run --no-env-file --frozen python tests/evals/vector_retrieval_eval.py
-```
-
-Expected output includes:
-
-```text
-vector_retrieval_regression: pass (4/4)
-```
-
-## Live PostgreSQL + OpenAI Vector Smoke Verification
-
-`tests/evals/live_vector_smoke.py` is the Step 55 opt-in live smoke command.
-It stays outside the default unit suite and only runs when a developer
-explicitly enables it.
-
-Purpose:
-
-- confirm shared page indexing stores live pgvector embeddings through the real
-  OpenAI embedding client
-- confirm PostgreSQL-side pgvector retrieval returns
-  `pgvector_exact_cosine`
-- confirm duplicate raw chunk hits collapse into unique citation paths
-- confirm scoped-empty QA requests return the deterministic
-  `insufficient_info` answer
-- confirm repeated page re-index does not create duplicate chunk rows
-
-This smoke step intentionally keeps the answer provider deterministic and local.
-It also uses an in-memory Notion reader rather than the real Notion API.
-The live dependency under test is the vector path:
-
-`NotionPageIndexOrchestrator -> OpenAIEmbeddingClient -> ChunkRepository -> PostgreSQL + pgvector -> ProductionChunkRetriever -> QAOrchestrator citations`
-
-Therefore, a passing Step 55 smoke proves the embedding/storage/retrieval
-boundary only. It does not prove real Notion indexing, real LLM answer
-generation, proposal review, Notion append, or Telegram E2E.
-
-The smoke command creates a temporary database, runs the project's real
-Alembic migrations to `head`, then executes the live checks against that
-isolated schema. It does not rely on partial `Base.metadata.create_all()`
-table creation.
-
-Prerequisites:
-
-- local PostgreSQL + pgvector is reachable, usually from
-  `docker compose up -d postgres`
-- `OPENAI_API_KEY` is set
-- the run is explicitly opted in with `LEARNLOOP_RUN_LIVE_VECTOR_SMOKE=1`
-
-Run:
-
-```bash
-LEARNLOOP_RUN_LIVE_VECTOR_SMOKE=1 \
-OPENAI_API_KEY=... \
-uv run --no-env-file --frozen python tests/evals/live_vector_smoke.py
-```
-
-Optional:
-
-```bash
-LEARNLOOP_RUN_LIVE_VECTOR_SMOKE=1 \
-OPENAI_API_KEY=... \
-uv run --no-env-file --frozen python tests/evals/live_vector_smoke.py --keep-database-on-failure
-```
-
-If local PostgreSQL is not on the default docker-compose URL, set
-`LEARNLOOP_PGVECTOR_ADMIN_DATABASE_URL` or pass `--admin-database-url`.
-
-Expected output includes:
-
-```text
-live_vector_smoke: pass (5/5)
-```
-
-## Write Safety Evaluation
-
-`tests/evals/write_safety_eval.py` checks deterministic Notion write-safety
-invariants using the in-memory Notion writer client. It does not call real
-Notion.
-
-Checks:
-
-- Accepted append keeps original/manual blocks unchanged.
-- The only write operation is `append_ai_supplement_zone`.
-- The append target path stays under `AI Supplement Zone`.
-- Retry with the same change request is idempotent and creates no duplicate
-  supplement entry.
-- Write-policy violations fail closed with `WRITE_POLICY_VIOLATION` and no
-  append operation.
-
-Run:
-
-```bash
 uv run --no-env-file --frozen python tests/evals/write_safety_eval.py
-```
-
-Expected output includes:
-
-```text
-write_safety: pass (4/4)
-```
-
-## Manual Sync Reconciliation Evaluation
-
-`tests/evals/manual_sync_eval.py` checks deterministic manual Notion sync
-reconciliation. It uses an in-memory Notion reader and SQLite database, then
-exercises the real indexing orchestrators, repositories, chunker, and production
-retriever path.
-
-The eval indexes a synthetic page that contains manual content and an accepted
-AI supplement under `AI Supplement Zone`. It then simulates the user manually
-deleting that AI supplement in Notion and runs manual incremental sync.
-
-Checks:
-
-- The AI supplement chunk is retrievable before manual sync.
-- After manual sync, the deleted AI supplement chunk is absent from production
-  retrieval and raw Notion chunks.
-- Manual note chunks from the same page remain retrievable.
-- Incremental sync completes with `sync_mode=manual` and page-level replacement
-  metadata.
-
-Run:
-
-```bash
 uv run --no-env-file --frozen python tests/evals/manual_sync_eval.py
-```
-
-Expected output includes:
-
-```text
-manual_sync_reconciliation: pass (4/4)
-```
-
-## Prompt-Injection and Adversarial Evaluation (Step 80)
-
-`tests/evals/prompt_injection_eval.py` runs deterministic checks with synthetic
-public-safe data. It does not call an LLM and does not require an API key.
-
-Checks include:
-
-- English and Traditional Chinese source/context instructions remain inside
-  explicit untrusted-data prompt blocks.
-- Proposal target paths remain scoped to the selected page's `AI Supplement Zone`.
-- Backend-derived citation paths stay accurate and production-RAG retrieval
-  excludes unsafe/pending/rejected paths.
-- Append-only write safety and fail-closed `WRITE_POLICY_VIOLATION` behavior
-  remain intact.
-
-Run:
-
-```bash
 uv run --no-env-file --frozen python tests/evals/prompt_injection_eval.py
 ```
 
-The evaluation reports `prompt_injection: pass (5/5)` when all deterministic
-checks pass. It is not evidence of live model resistance; live provider tests
-remain opt-in and must never replace backend invariants.
+The default suite must remain independent of real Notion writes, Telegram
+sends, provider quota, and destructive database operations.
 
-## Screenshot Proposal Quality Evaluation
+## Evaluation areas
 
-Screenshot OCR language coverage is deterministic at the adapter boundary:
+| Area | What the checks protect |
+| --- | --- |
+| API and schemas | Request validation, error envelopes, auth, and idempotent replay |
+| Indexing | Chunk order, page replacement, complete embeddings, and partial full-index outcomes |
+| Retrieval | Production filters, cosine ranking, lexical fallback, and citation paths |
+| Write safety | Append-only target, human acceptance, durable identity, and no duplicate retry |
+| Source ingestion | PDF, URL, YouTube, OCR, chat limits, SSRF protections, and content hashes |
+| Telegram | Update ledger, queue boundaries, callbacks, ownership, TTL, reviews, and recovery |
+| Observability | Redaction, readiness/liveness, cost unknowns, workflow status, and safe metrics |
+| Recovery | Migration, backup/restore, stale workflows, and Notion/database reconciliation |
 
-- `tests/test_image_ocr_tool.py` verifies that every Tesseract call uses the
-  exact `eng+chi_tra+chi_sim` language set and that a missing required
-  traineddata language fails before OCR without an English fallback.
-- `tests/test_preflight.py` injects a stdlib subprocess runner and covers
-  complete, missing, timed-out, failed, and malformed `tesseract --list-langs`
-  results without exposing command stderr.
-- `tests/test_source_ingest_api.py` uses public-safe mixed-script parser output
-  to prove that CJK characters and image order survive preprocessing,
-  persistence, and source-snapshot construction. It checks the existing
-  language enum without hard-coding a particular non-English enum.
+## Adapter checks
 
-These tests do not prove live Tesseract recognition quality. Real Chinese OCR
-requires installed `eng`, `chi_tra`, and `chi_sim` traineddata and a separately
-approved re-upload that creates a new source document.
-
-`tests/evals/test_screenshot_proposal_eval.py` uses the public-safe fixture
-`tests/fixtures/screenshot_proposal_fixtures.json`. It does not call an LLM,
-write to Notion, modify SQL data outside its isolated test database, or delete
-Redis state.
-
-The fixtures cover:
-
-- continuous content split across multiple images, merged in message-id order;
-- browser tab/address/navigation noise removal;
-- Traditional Chinese language selection with original technical terms;
-- reasonable English and Traditional Chinese paraphrase acceptance;
-- four- and five-image live-shaped MySQL/EXPLAIN Traditional Chinese titles
-  with CJK OCR spacing noise, 20–40 character noun phrases, no-number title
-  cases, mixed punctuation, and bounded claim-level diagnostics;
-- public-safe workflow-252/255-shaped proposals with exactly 15/16 validation
-  units and 7/9 matches, proving that counts span summary plus complete concept
-  and note items rather than splitting one summary into phrase fragments;
-- MySQL/索引/EXPLAIN/SQL title anchors, mixed technical punctuation, and
-  deterministic title fallback without another OCR/provider call, including
-  unmatched general CJK anchors that remain valid with a matched
-  high-specificity anchor;
-- deterministic rejection of unsupported products, numbers/percentages,
-  technical content, advice, comparisons, conclusions, and browser-noise
-  evidence without a second full-proposal LLM judge;
-- one summary-only repair using the same source snapshot, with a second
-  failure bounded to `LLM_OUTPUT_INVALID` and no new source/OCR row.
-- one body-only repair for safe multi-item paraphrase failures, including the
-  title-repair-to-body-repair transition and a second failure bounded to
-  `LLM_OUTPUT_INVALID`.
-- soft summary sentence preference: grounded 1-, 2-, and 3–6-sentence summaries
-  pass, while empty/oversized or unsupported sentences fail for their actual
-  schema/resource/grounding reason;
-- note coverage, 1–12 note bounds, duplicate-note rejection, and bounded
-  enterprise application/trade-off acceptance with fail-closed product,
-  number, command, absolute-advice, and destructive-content cases;
-- a public-safe four-image SQL/database fixture with Index, EXPLAIN, query
-  rewrite, and pagination concepts, a three-sentence summary, bounded
-  engineering context, unsupported initial product title, and source-faithful
-  repaired title.
-- a public-safe seven-attachment source-ownership fixture where a legacy
-  provider returns a display-string `source`; the provider schema drops only
-  backend-owned fields and final validation proves the persisted SourceDocument
-  supplies the structured source for screenshot, PDF, URL, YouTube, and chat
-  text proposals.
-- provider-output tests prove fabricated source identity, attachment count,
-  citation, and target fields cannot override backend state, and invalid
-  non-owned fields fail at the safe provider-output validation stage.
-
-Run:
-
-```bash
-uv run --no-env-file --frozen pytest -q tests/evals/test_screenshot_proposal_eval.py tests/evals/test_screenshot_proposal_v4_contract.py
-```
-
-## Real-Library Adapter Smoke Matrix (Step 81)
-
-`tests/evals/adapter_smoke_matrix.py` runs a small redacted matrix against the
-real PDF, OCR, and URL parser libraries. PDF and URL use in-process fixtures
-and injected transports, so the default run does not use the network, a
-credential, or an external write. OCR passes when the local Tesseract runtime
-is available and otherwise skips unless `--require-ocr` is supplied.
-
-Run the default matrix:
+The adapter matrix exercises PDF, URL, OCR, and other library boundaries with
+fixtures or injected transports:
 
 ```bash
 uv run --no-env-file --frozen python tests/evals/adapter_smoke_matrix.py --json
 ```
 
-The report contains only check id, dependency level, status, and fixed safe
-messages. It never includes API keys, URLs, exception bodies, or extracted
-source text. The default matrix is not evidence of live service connectivity.
+Live adapter checks require explicit `--live` or the corresponding environment
+flag. Telegram sends require a dedicated chat and an additional explicit send
+flag. A skipped live check is not a pass.
 
-Current 2026-08-01 result: the `pypdf`, Tesseract, and trafilatura fixture
-checks passed. YouTube, OpenAI, PostgreSQL, and Telegram live checks were
-skipped because live mode was disabled.
+## Guarded Notion checks
 
-Opt-in live checks require `--live` or
-`LEARNLOOP_RUN_ADAPTER_SMOKE_LIVE=1`. The YouTube check requires
-`LEARNLOOP_SMOKE_YOUTUBE_URL`; the OpenAI check requires `OPENAI_API_KEY`; the
-PostgreSQL check requires `LEARNLOOP_SMOKE_DATABASE_URL`; and the Telegram
-send check requires `TELEGRAM_BOT_TOKEN`,
-`LEARNLOOP_SMOKE_TELEGRAM_CHAT_ID`, and
-`LEARNLOOP_SMOKE_ALLOW_TELEGRAM_SEND=1`. Telegram sends a synthetic smoke
-message and must use a dedicated test chat. Live checks may use network,
-database, or provider quota and are never part of the default pytest suite.
-
-## Guarded Notion Read/Index/QA Canary (Step 82)
-
-`tests/evals/notion_read_index_qa_canary.py` is the opt-in canary for a
-dedicated synthetic Notion workspace. It discovers pages, runs full indexing,
-re-indexes one configured page through the manual incremental path, and runs
-scoped QA with a deterministic local answer provider. Its database state is
-ephemeral SQLite state and its embedding provider is deterministic, so the
-canary requires only a Notion token.
-
-The live wrapper requires `NOTION_TOKEN`,
-`LEARNLOOP_NOTION_CANARY_PAGE_ID`, and an optional
-`LEARNLOOP_NOTION_CANARY_QUERY` (default:
-`LearnLoop Step 82 canary anchor`). Run it only against a dedicated synthetic
-workspace:
+Read/index/QA canary:
 
 ```bash
 LEARNLOOP_RUN_NOTION_READ_CANARY=1 \
@@ -480,109 +64,50 @@ LEARNLOOP_RUN_NOTION_READ_CANARY=1 \
   tests/evals/notion_read_index_qa_canary.py --json
 ```
 
-The wrapper records only fixed operation classes and blocks all write-shaped
-requests before dispatch. A passing report requires a full index, an
-incremental page, a scoped citation, and zero Notion write attempts. A failed
-report includes only the fixed `failed_stage` values `configuration`,
-`full_discovery`, `page_preparation`, `embedding`, `db_persistence`,
-`incremental_index`, `qa`, or `write_audit`, plus a standard `failure_reason`.
-It never prints page ids, titles, paths, source text, credentials, or exception
-bodies.
-This is read/index/QA evidence only; the human-approved append canary is Step
-83.
+It requires a dedicated workspace and `NOTION_TOKEN`, blocks write-shaped
+requests, and uses ephemeral derived state.
 
-Recorded Step 82 evidence: `2` indexed pages, `11` blocks, `4` chunks, `1`
-incremental page, `1` citation, `9` read-only Notion requests, and `0` write
-attempts. This is bounded sandbox evidence, not a current workspace-wide test.
-
-## Human-approved Notion Append Canary (Step 83)
-
-`tests/evals/notion_append_canary.py` reuses the existing human accept
-orchestrator with a real Notion reader/writer and ephemeral SQLite derived
-state. It requires both live opt-in and explicit approval:
+Append canary:
 
 ```bash
 uv run --no-env-file --frozen python \
   tests/evals/notion_append_canary.py --live --approve --json
 ```
 
-The transport permits page/block reads and append-only
-`PATCH /v1/blocks/{id}/children`. Passing requires `pending -> accepted`, a
-visible `change-request-<id>` identity, target-page re-index, and a scoped QA
-citation. A human-confirmed dedicated sandbox run passed during Step 83. It is
-opt-in live dependency evidence only; it does not prove Telegram delivery,
-OpenAI behavior, arbitrary workspace permissions, or full live E2E.
+Both live opt-in and human approval are required. The canary must target a
+dedicated sandbox page and verify durable identity, accepted state, page
+re-index, and scoped citation. It must never be used as an implicit production
+write path.
 
-Step 88 was subsequently user-confirmed as a completed guarded Telegram live
-E2E. That evidence is recorded separately from the Step 83 canary and remains
-bounded to the guarded local live path.
+## Vector and recovery checks
 
-## Synthetic Data Hygiene Gate (Step 87)
-
-`tests/test_synthetic_data_hygiene.py` verifies the fixed allowlist, dry-run
-default, explicit apply confirmation, transactional cleanup, preservation of
-non-synthetic rows, PostgreSQL persistence blocking, and fail-closed release
-gate behavior. Run the operator checks with:
+The live vector smoke requires an isolated PostgreSQL/pgvector database and an
+OpenAI key:
 
 ```bash
-uv run --no-env-file --frozen python scripts/cleanup_synthetic_data.py --json
+LEARNLOOP_RUN_LIVE_VECTOR_SMOKE=1 \
+  uv run --no-env-file --frozen python tests/evals/live_vector_smoke.py
+```
+
+Recovery and release checks are guarded and redacted:
+
+```bash
+uv run --no-env-file --frozen python scripts/postgres_restore_drill.py --json
+uv run --no-env-file --frozen python scripts/notion_db_recovery_drill.py --json
 uv run --no-env-file --frozen python scripts/release_gate.py --json
 ```
 
-The default mock fixtures are test/demo inputs, not release evidence. A live
-release requires a successful gate against the intended PostgreSQL database;
-an unavailable database is a failed inspection and must not be interpreted as
-clean.
+The release gate must be run against the intended database. An unavailable
+dependency is an inconclusive or failed inspection, not a clean release.
 
-Recorded Step 87 evidence: the fixed-allowlist cleanup inspection and release
-gate passed against the configured live PostgreSQL target. This proves only
-the inspected database state at that run; it does not replace a new release
-gate execution for a later release candidate.
+## Quality and safety criteria
 
-## Current Release Verification Gaps
-
-- Step 88 now has user-confirmed guarded evidence for the complete Telegram
-  update -> HTTPS webhook -> API -> Redis/RQ worker -> PostgreSQL -> OpenAI ->
-  Notion -> Telegram reply path. This is bounded evidence, not production-wide
-  readiness.
-- The latest audit did not run independent live OpenAI vector smoke, YouTube
-  transcript, or unrelated adapter live checks; Step 88 provides separate
-  guarded Telegram live E2E evidence.
-- The current host passes the `eng`, `chi_tra`, and `chi_sim` OCR preflight and
-  real-adapter fixture. The prior guarded Telegram upload-path gap is closed by
-  Step 88 confirmation; no broader OCR corpus or recognition benchmark is
-  inferred.
-- Step 82/83 cover dedicated Notion canaries, not formal behavior across the
-  user's full workspace.
-- The PostgreSQL restore drill has deterministic coverage, but no recorded
-  live disposable restore drill.
-
-## Step 98 Context-aware Input Evaluation
-
-The preregistered experiment uses exactly 72 unique queries over 108 chunks
-from 18 public-safe pages. Its primary partition is nine mutually exclusive
-cells of eight queries; critical and secondary cohorts overlap only for veto
-and diagnostic analysis. All query identities, relevance labels, hard
-negatives, builders, model dimensions, ranking rules, integer thresholds, and
-cohort memberships are frozen by the Phase A manifest receipt before candidate
-vectors or rankings exist.
-
-Phase B plans one shared query-vector set and three document-vector sets in one
-capture session. It remains live and approval-gated. Until that capture exists,
-Phase C has no quality or adoption outcome; deterministic scoring, ambiguity
-vetoes, gate evaluation, result digests, and same-contract replay are covered
-without fabricated vectors.
-
-Citation projection is evaluated independently from retrieval relevance and
-requires zero invalid or derived-header citations. Deterministic production
-safety uses the real `ChunkRepository` and `ProductionChunkRetriever` seams to
-verify eligible candidates before top-k for pending, rejected, non-Notion,
-wrong-page, and wrong-section decoys. Disposable PostgreSQL/pgvector adapter
-integration remains an independent gate for any later adoption decision.
-
-`step98-exp-001` ended before capture because its frozen harness could not
-mechanically enforce the approved contract; it made zero external attempts and
-created no canonical capture artifact. `step98-exp-002` is a separate frozen
-experiment over the unchanged 72-query decision set. Its 15 logical requests
-share a persisted pre-call budget of 16 external attempts, and its Phase C CLI
-accepts only a complete immutable capture bundle.
+- Retrieval and citation tests use exact expected Notion paths.
+- Write-safety tests prove original blocks remain unchanged and rejected or
+  pending content is not retrievable.
+- Prompt-injection tests prove source/context text cannot change backend-owned
+  targets, tools, citations, or review state.
+- Test fixtures use public-safe or synthetic content and never contain secrets
+  or private Notion pages.
+- Live reports contain operation classes, statuses, bounded counts, and safe
+  failure reasons only.

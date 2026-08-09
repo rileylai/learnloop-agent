@@ -1,91 +1,69 @@
-# 04 Memory Design
+# Memory and Synchronization
 
-## Purpose
+## Memory layers
 
-This document defines persisted knowledge, working state, retention, and
-reconciliation for the local-first MVP.
+LearnLoop separates authoritative content, derived knowledge, and workflow
+coordination state.
 
-## Status
+| Layer | Stored state | Authority |
+| --- | --- | --- |
+| Notion | Pages, blocks, manual edits, and accepted supplement blocks | Source of truth |
+| PostgreSQL snapshot | Notion page/block rows, chunks, vectors, sources, proposals, and workflows | Rebuildable derived state |
+| Redis | Telegram queue, upload sessions, callback mappings, and short-lived operator sessions | Ephemeral coordination |
 
-Draft
+The application database is not a second authoring system. It records the
+current indexed snapshot and business decisions needed to make workflows
+recoverable.
 
-### Current Implementation Status
+## Proposal state
 
-The memory and synchronization paths below are implemented and deterministic
-test verified. Steps 82 and 83 provide bounded opt-in live Notion evidence.
-Step 88 was user-confirmed as a completed guarded Telegram live E2E. There is
-still no always-on Notion sync or cloud memory service, and the Step 88 result
-is bounded live evidence rather than production-wide readiness.
+Source documents are normalized snapshots with a content hash. Proposals are
+stored as change requests:
 
-## Memory Ownership
-
-| Store | Current role | Authority and retention |
-|---|---|---|
-| Notion | Existing notes and accepted `AI Supplement Zone` content | Source of truth for note content. Manual edits, merges, and deletes win during reconciliation. |
-| PostgreSQL | Page/block snapshots, chunks, vectors, sources, proposals, workflow state, and idempotency ledgers | Persistent local derived and workflow state. It must be rebuilt or reconciled from Notion after divergence or restore. |
-| pgvector | Nullable `vector(1536)` values on knowledge chunks | Derived retrieval data, written through repositories. It is not a separate source of truth. |
-| Redis | RQ jobs, Telegram upload sessions, callback tokens, and short-lived coordination | Ephemeral queue/session state behind `QueueClient` or the Telegram session-store interface. It is not production knowledge. |
-| Runtime prompts | Versioned prompt templates loaded explicitly by code | Runtime inputs, not user knowledge and not included in production RAG by default. |
-
-Private raw sources, credentials, callback payloads, and upload bytes must not
-be copied into logs or workflow metadata.
-
-## Production-RAG Eligibility
-
-Production QA retrieves persisted Notion chunks only. The repository applies
-the production-safe source filter before top-k retrieval and excludes known
-synthetic ids. A source document or a `pending` or `rejected` proposal is not
-production knowledge. An accepted proposal becomes eligible only after it is
-visible in Notion and the current target-page snapshot has been re-indexed.
-
-## Sync and Reconciliation
-
-```mermaid
-flowchart TD
-    Notion["Notion note content"] --> Reader["Notion reader tool"]
-    Reader --> Indexer["Page indexing orchestrator"]
-    Indexer --> Snapshot["PostgreSQL blocks + chunks + vectors"]
-    Manual["Manual Notion edit"] --> ManualSync["Manual incremental or full sync"]
-    ManualSync --> Reader
-    Accept["Human accepts change request"] --> Append["Append-only Notion writer"]
-    Append --> Verify["Read-after-write identity verification"]
-    Verify --> Indexer
+```text
+source document -> pending change request
+pending -> accepted | rejected
+pending -> pending (edit later)
 ```
 
-- Full indexing discovers accessible external page ids through the read-only
-  tool and reuses the same page-indexing orchestrator for every page.
-- Manual incremental sync accepts external Notion page ids and performs
-  page-level replacement. Stale blocks and chunks for the page are removed in
-  the same database transaction that stores the current snapshot.
-- The page indexer reads and prepares the current Notion snapshot before the
-  database mutation. A page-scoped PostgreSQL advisory transaction lock and
-  `last_edited_time` comparison prevent an older snapshot from replacing a
-  newer committed snapshot.
-- Accepted appends use the visible identity `change-request-<id>`, bounded
-  read-after-write verification, and synchronous target-page re-indexing.
-- The Notion append and PostgreSQL transaction are not one cross-system atomic
-  transaction. Recovery is read-first and identity-aware; an uncertain append
-  must not be repeated until the identity is resolved.
+Pending and rejected content is review state, not production knowledge. An
+accepted change request is considered production-ready only after its Notion
+append is verified and the target page has been re-indexed.
 
-## Workflow and Proposal State
+## Derived index state
 
-- `workflow_runs` persists status, deterministic failure reason, and redacted
-  metadata for indexing, ingestion, proposal, QA, review, and Telegram work.
-- `source_documents` stores normalized source text and its content hash.
-- `change_requests` stores validated proposal JSON and the deterministic
-  `pending`, `accepted`, or `rejected` state.
-- Accept/reject paths lock the change-request row and revalidate its state.
-- `telegram_update_ledger` provides durable `update_id` replay behavior.
-- `api_idempotency_records` protects supported ingestion and supplement POST
-  requests when an `Idempotency-Key` is supplied.
+For each page, the index stores a current page/block snapshot and ordered
+chunks with citation metadata. Re-indexing replaces all derived rows for that
+page after the new snapshot and complete embeddings have been prepared.
 
-## Retention and Recovery Boundaries
+This prevents partial page state when reading, parsing, embedding, or response
+validation fails. A full index may contain a partial workspace result because
+each successfully completed page is committed independently.
 
-The MVP has no automatic retention scheduler or garbage collector for source,
-proposal, workflow, or idempotency rows. Synthetic cleanup is an explicit,
-fixed-allowlist PostgreSQL operator action. Backup and restore are also
-operator-run. After a restore, current Notion content must be re-indexed before
-mutations resume.
+## Reconciliation
 
-There is no automatic incident remediation, background Notion polling,
-always-on cloud sync, or conflict-merging engine in MVP.
+Manual Notion changes are reconciled explicitly:
+
+```text
+User changes Notion
+  -> call full or page-scoped incremental sync
+  -> read current Notion page
+  -> replace affected derived page state
+  -> production retrieval sees only the current snapshot
+```
+
+There is no background Notion watcher in the MVP. If the affected page set is
+unknown, use a full index after reviewing the operational impact.
+
+Accepted agent appends use the same page indexer immediately after the writer
+verifies the durable change-request identity. This keeps the Notion write path
+and retrieval path aligned without allowing the database to outrank Notion.
+
+## Recovery boundaries
+
+If PostgreSQL is restored, rebuild derived state from current Notion before
+resuming accepted appends. If an append result is uncertain, inspect its
+`change-request-<id>` identity in Notion before retrying. If identity visibility
+is unavailable, stop rather than guessing.
+
+See [incident recovery](runbooks/incident-recovery.md) and [backup and restore](runbooks/backup-restore.md).

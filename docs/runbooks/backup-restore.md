@@ -1,73 +1,47 @@
 # Backup and Restore Runbook
 
-## Scope
+## Scope and safety
 
-This runbook covers local PostgreSQL/pgvector backups, disposable restore
-verification, and the handoff back to the application. PostgreSQL is derived
-application state; current Notion content remains the source of truth.
+PostgreSQL/pgvector contains rebuildable application state; current Notion
+content remains authoritative. Never restore over an active database as the
+first validation. Stop the API and worker before replacing a local target.
 
-The drill implementation and deterministic tests are verified. A live
-disposable restore drill has not been recorded in the current release evidence.
-
-Never restore over the active database as a first test. Use a newly created
-database name, verify it, and only switch the local `DATABASE_URL` after the
-operator has reviewed the evidence.
-
-## Safety rules
-
-- Stop the API and worker before replacing an active database.
-- Take a fresh backup before any restore or migration.
-- Keep backup files outside Git and protect them with filesystem permissions.
-- Do not put `DATABASE_URL`, `PGPASSWORD`, `NOTION_TOKEN`, or other secrets in
-  command output, shell tracing, tickets, or committed files.
+- Keep archives outside Git and protect them with filesystem permissions.
+- Take a fresh backup before restore or migration.
 - Do not use `pg_restore --clean` against an active or unknown database.
-- Do not manually edit or append Notion content during a database restore.
-- After a restore, rebuild derived page state from current Notion content before
-  resuming writes.
+- Do not edit Notion while database state is being restored.
+- Do not expose database URLs, passwords, tokens, private content, or raw
+  driver errors in logs or reports.
 
-## Prerequisites
+## Create a backup
 
-- `pg_dump`, `pg_restore`, and PostgreSQL client access.
-- An administrator connection that can create and drop two uniquely named
-  disposable databases.
-- The locked project environment and the current Alembic migrations.
-- A backup destination with sufficient space. Check the archive size and keep
-  the archive until the restore verification is complete.
-
-## Take a production-local backup
-
-Use a password manager, `.pgpass`, or process environment for credentials. Do
-not paste a credential-bearing URL into a shared terminal or log.
+Use a password manager, `.pgpass`, or a process environment for credentials:
 
 ```bash
 BACKUP_FILE="./data/backups/learnloop-YYYYMMDD-HHMMSS.dump"
 mkdir -p ./data/backups
-pg_dump \
-  --format=custom \
-  --no-owner \
+pg_dump --format=custom --no-owner \
   --file "$BACKUP_FILE" \
   --dbname "$POSTGRES_DATABASE_NAME"
 pg_restore --list "$BACKUP_FILE" >/dev/null
 ```
 
-The archive listing is a format check only; it is not evidence that the
-application can start from the archive.
+The archive listing validates the file format. Keep the archive until restore
+verification is complete.
 
-## Run the disposable restore drill
+## Disposable restore drill
 
-The project drill is dry-run by default. It creates two generated database
-names, applies the real Alembic migrations, seeds a fixed sentinel, runs
-`pg_dump`/`pg_restore`, verifies the sentinel and `alembic_version`, and drops
-only the generated databases.
+The project drill creates disposable database names, applies real Alembic
+migrations, restores a sentinel, verifies the migration table, and removes
+only the generated databases:
 
 ```bash
 uv run --no-env-file --frozen python \
   scripts/postgres_restore_drill.py --json
 ```
 
-For a live drill, provide an administrator URL that points to a disposable
-local PostgreSQL server (normally the `postgres` maintenance database), then
-explicitly confirm the target scope:
+For a live drill, provide an administrator URL for a disposable PostgreSQL
+server and an explicit disposable confirmation:
 
 ```bash
 uv run --no-env-file --frozen python \
@@ -78,51 +52,30 @@ uv run --no-env-file --frozen python \
   --json
 ```
 
-The report contains fixed status and check names only. A failed live drill
-does not expose driver errors or connection values. If cleanup fails, do not
-reuse either generated database; remove them only after confirming their exact
-names and that no application process is connected.
+If cleanup fails, do not reuse generated database names until their exact
+scope and connections are verified.
 
 ## Restore an application database
 
-1. Stop the API and worker. Record the last known workflow and migration
-   status through the protected operator endpoints.
-2. Take a fresh backup of the current database, even if the current state is
-   suspected to be damaged.
-3. Restore into a new empty database using the verified archive:
+1. Stop API and worker processes.
+2. Record safe workflow, migration, and readiness status.
+3. Take a fresh backup of the current database.
+4. Restore into a new database:
 
    ```bash
    createdb "$RESTORE_DATABASE_NAME"
-   pg_restore \
-     --exit-on-error \
-     --no-owner \
-     --dbname "$RESTORE_DATABASE_NAME" \
-     "$BACKUP_FILE"
+   pg_restore --exit-on-error --no-owner \
+     --dbname "$RESTORE_DATABASE_NAME" "$BACKUP_FILE"
    uv run --no-env-file --frozen alembic upgrade head
    ```
 
-   The migration command must use the restored database URL in the process
-   environment. Never run it against an unspecified default by accident.
-4. Verify `uv run --no-env-file --frozen alembic current`, database
-   connectivity, pgvector, and `/ready` before switching application traffic.
-5. Rebuild from Notion source of truth. A restored database may be incomplete,
-   so use `POST /api/notion/index/full`; use
-   `POST /api/notion/index/incremental` only when the affected page set is
-   known and the restore is otherwise complete.
-6. Verify a scoped QA citation, workflow status, and absence of pending or
-   rejected content in production retrieval. Keep the original archive and
-   restore evidence until the operator signs off.
+5. Verify `alembic current`, database connectivity, pgvector, and `/ready`
+   against the restored target.
+6. Rebuild derived state from current Notion with
+   `POST /api/notion/index/full`. Use incremental sync only when the affected
+   page set is known and the restore is otherwise complete.
+7. Verify a scoped QA citation and production-RAG exclusion before resuming
+   accepted appends.
 
-## Completion evidence
-
-Record only safe metadata:
-
-- archive format check passed;
-- disposable restore drill status and check names;
-- restored Alembic revision;
-- readiness status;
-- indexed page/chunk counts and scoped citation count;
-- operator and timestamp.
-
-Do not record database URLs, passwords, Notion tokens, page content, or raw
-backup contents.
+Record only archive format, drill checks, migration status, readiness, bounded
+counts, citation count, operator, and timestamp.

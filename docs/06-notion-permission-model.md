@@ -1,69 +1,34 @@
-# 06 Notion Permission Model
+# Notion Permission Model
 
-## Purpose
-This document defines Notion ownership, read-only rules, `AI Supplement Zone`, and manual edit behavior.
+## Source of truth
 
-## Status
-Draft
+Notion is authoritative for page content, block content, hierarchy, and the
+visible result of an accepted append. PostgreSQL stores a rebuildable indexed
+snapshot. Redis stores only short-lived coordination state.
 
-This document is development and maintenance context.
-It is not a production RAG source unless a future ADR and implementation explicitly make it one.
+## Ownership matrix
 
-## Source of Truth
-These rules are based on `AGENTS.md`, `docs/00-design-doc.md`, `docs/01-architecture.md`, `docs/03-guardrails.md`, `docs/11-coding-style.md`, and the current project roadmap.
-Notion is the source of truth for note content.
+| Notion content | Read by agent | Edited by agent |
+| --- | --- | --- |
+| Existing original page content | Yes | No |
+| Manually created notes and blocks | Yes | No |
+| Existing AI supplement blocks | Yes | No |
+| New accepted supplement | Yes | Append-only under `AI Supplement Zone` |
 
-## Current Verification Boundary
+The agent never overwrites, deletes, moves, or merges existing blocks. There is
+no per-page writable original-note mode in the MVP. A user may manually merge
+or delete content in Notion; the resulting state is reconciled by explicit
+sync.
 
-The permission model is deterministic test verified with controlled Notion
-clients and injected HTTP transports. Runtime dependency
-wiring defaults to mock clients and selects live clients only when
-`NOTION_BACKEND=live` has a configured `NOTION_TOKEN`; it fails closed instead
-of falling back when live configuration is incomplete. Step 83 additionally
-verified one human-approved append against a dedicated synthetic sandbox page
-through the live reader/writer path, including durable identity and re-index.
-That is bounded sandbox evidence, not arbitrary production-workspace or full
-Telegram `live_e2e` evidence. The live writer exposes append-only operations
-and must not add update, delete, move, or original-note write capabilities.
+## `AI Supplement Zone`
 
-Step 82 passed a separate guarded read/index/QA canary. Its recording transport
-allows only page discovery and page/block reads, blocks all write-shaped
-requests before dispatch, and uses ephemeral derived state. Step 83 passed a
-separate append canary that requires live opt-in plus explicit human approval,
-uses ephemeral derived state, and allows only append-only block-child PATCH
-requests. Neither canary exposes credentials, page ids, or source content in
-its report.
-
-## Ownership Types
-| Ownership type | Meaning |
-|---|---|
-| Original user notes | Existing Notion pages and blocks that the user created before or outside the agent. |
-| Manual user blocks | Any blocks the user creates or edits manually, including newly created notes. |
-| Old AI supplement blocks | AI content that was already accepted and appended in an earlier workflow. |
-| Current append target under `AI Supplement Zone` | The only Notion location where an accepted change request may create new blocks. |
-| Pending change requests | Proposed AI content waiting for human review. |
-| Rejected change requests | Proposed AI content rejected by the user. |
-| Accepted change requests | Proposed AI content approved by the user and eligible for append. |
-
-## Permission Matrix
-| Target | Agent read | Agent write | Agent delete | Production RAG eligibility | Notes |
-|---|---|---|---|---|---|
-| Original user notes | Yes | No | No | Yes, after indexing | Read-only knowledge source. |
-| Manual user blocks | Yes | No | No | Yes, after manual incremental sync | Manual user edits require `/api/notion/index/incremental`. |
-| Old AI supplement blocks | Yes | No | No | Yes, if present in current Notion index | Old AI blocks are immutable to the agent. |
-| Current append target under `AI Supplement Zone` | Yes | Append only after human accept | No | Yes, after append and synchronous page re-index | Only `Change Request -> Human Accept -> Append to AI Supplement Zone` is allowed. |
-| Pending change requests | Yes, in workflow state | No Notion write | No Notion delete | No | Excluded from production RAG. |
-| Rejected change requests | Yes, for audit and evaluation | No Notion write | No Notion delete | No | Excluded from production RAG. |
-| Accepted change requests | Yes, in workflow state | Append to `AI Supplement Zone` only | No Notion delete | Yes, only after append and re-index | Append success triggers immediate page re-index. |
-
-## `AI Supplement Zone` Layout
-Accepted supplements must be appended under `AI Supplement Zone` using this shape:
+Accepted supplements use the following structure:
 
 ```text
-Original page/toggle/section
-+-- AI Supplement Zone
-    +-- YYYY-MM-DD
-        +-- Topic title
+Target page
+└── AI Supplement Zone
+    └── YYYY-MM-DD
+        └── Topic title
             - Source: ...
             - Summary: ...
             - Key Concepts: ...
@@ -72,92 +37,38 @@ Original page/toggle/section
             - LearnLoop Change Request: change-request-<id>
 ```
 
-Rules:
-- Do not create excessive nested toggles.
-- Group supplements by date, then topic.
-- Keep the fixed labels `Source`, `Summary`, `Key Concepts`, and `Notes`.
-- Render each note as a separate bullet/block below the `Notes` label; do not
-  join notes with semicolons into one paragraph. This is presentation-only and
-  does not change the stored `notes: list[str]` contract, append permission,
-  durable identity, or retry idempotency.
-- Source display must follow the source type rule from `docs/00-design-doc.md`.
+The backend builds source and target data from persisted records. The provider
+generates only title, summary, concepts, and notes. Source display names are
+rendered by source type and are never parsed back into source identity.
 
-## Write Rules
-The agent may create Notion blocks only when all conditions are true:
-- A change request exists.
-- The change request is accepted by a human.
-- The target location is under `AI Supplement Zone`.
-- The operation is append-only.
-- The workflow can synchronously re-index the page after append.
-- The appended entry includes a visible deterministic change-request identity
-  so retries can be reconciled against Notion as source of truth.
+The visible change-request identity is durable across client instances. The
+writer reads the target page before appending and verifies the identity after
+the append. A retry with an existing identity is an idempotent replay.
 
-Proposal query endpoints are read-only. They may show pending proposal content,
-citations, and an external target page id, but they never create or modify
-Notion blocks. Only explicit accept enters the append workflow. Target
-selection is resolved against indexed Notion page ids before a change request
-is persisted.
+## Write contract
 
-The agent must not:
-- Edit original user notes.
-- Edit manual user blocks.
-- Edit old AI supplement blocks.
-- Delete Notion blocks.
-- Move Notion blocks.
-- Create per-page writable original-note mode in MVP.
+The only agent write is `append_ai_supplement_zone` through
+`NotionWriterTool`. It accepts a page identity, change-request identity, and
+validated generated content. It rejects targets outside the canonical
+`<page path>/AI Supplement Zone` path and has no arbitrary Notion mutation
+method.
 
-Violations must fail closed with `WRITE_POLICY_VIOLATION`.
+The accept workflow commits the PostgreSQL `accepted` state only after the
+append is visible and the target page has been re-indexed. Notion append and
+PostgreSQL commit are not a distributed transaction; recovery must inspect the
+durable identity before retrying.
 
-## Manual Edit Reconciliation
-Users may manually edit Notion at any time.
-Manual user actions are valid, including:
-- Editing original notes.
-- Creating new notes or blocks.
-- Moving or merging AI supplement content into original notes.
-- Deleting AI supplement blocks.
+## Manual reconciliation
 
-Because there is no always-on sync in MVP, manual changes require
-`/api/notion/index/incremental` or the Telegram `/sync` selected-page flow.
-The incremental sync must treat current Notion content as authoritative and reconcile derived PostgreSQL and vector state by page-level replacement.
+Manual Notion edits are not watched continuously. Use:
 
-Telegram `/sync` is still read-only with respect to Notion. It discovers live
-page summaries, requires explicit page selection confirmation, and delegates
-only to the existing derived-index reconciliation path.
+- `POST /api/notion/index/incremental` when the affected page ids are known;
+- `POST /api/notion/index/full` when the affected page set is unknown or a
+  complete rebuild is required.
 
-## RAG Eligibility
-Production RAG may include:
-- Current indexed Notion content.
-- Accepted AI supplement content after it exists in Notion and the page has been re-indexed.
+The indexer replaces the affected page's derived blocks, chunks, and vectors
+from current Notion content. Pending and rejected change requests remain out
+of production RAG.
 
-Production RAG must exclude:
-- `pending` change requests.
-- `rejected` change requests.
-- Accepted change requests that have not yet been appended and re-indexed.
-- Development docs unless a future ADR and implementation explicitly allow them.
-
-## Architecture Boundary
-Permission checks and Notion write safety stay in deterministic backend logic.
-They must not be delegated to an LLM, Provider Router, Provider Adapter, Tool Registry, Local Tool Adapter, future MCP Client, future MCP server, or external API.
-
-Allowed architecture flow:
-
-```text
-API Route
--> Orchestrator
--> Service / Tool
--> Repository / Adapter
--> External System
-```
-
-The Notion writer tool implements append-only block creation. Backend policy
-decides whether the append is allowed before the tool is invoked; the adapter
-does not expose update, delete, move, or original-note write operations.
-
-## MVP Non-Goals
-The MVP does not support:
-- Direct original note editing by the agent.
-- Per-page writable original-note mode.
-- Inline proposal edit UI.
-- Always-on cloud sync.
-- Standalone MCP servers.
-- LangChain or LangGraph.
+See [Guardrails](03-guardrails.md), [Workflows](02-workflows.md), and the
+[incident recovery runbook](runbooks/incident-recovery.md).

@@ -1,60 +1,28 @@
-# 12 GitHub Collaboration Rules
+# GitHub Collaboration Rules
 
-## Purpose
-This document defines safe and consistent GitHub workflow rules for this repository.
+## Branches and commits
 
-## Status
-Draft
+Use a short topic branch under the repository's configured branch namespace.
+Keep commits focused and describe the user-visible or maintenance outcome.
+Do not commit `.env`, credentials, private Notion content, generated database
+files, or temporary live reports.
 
-This document will be expanded in later steps.
+## Pull requests
 
-What belongs here:
-- Branch naming rules.
-- Commit message rules.
-- Push and PR safety checks.
+A pull request should explain:
 
-## Branch Naming
-- Use lowercase branch names.
-- Use clear prefixes by intent.
-- Recommended patterns:
-- `docs/<short-topic>`
-- `feat/<short-topic>`
-- `fix/<short-topic>`
-- `chore/<short-topic>`
+- the behavior or documentation change;
+- affected boundaries and safety implications;
+- tests or documentation checks run;
+- any explicitly unverified live dependency.
 
-Examples:
-- `docs/harness-foundation-v1`
-- `feat/notion-incremental-sync`
-- `fix/reindex-stale-chunks`
+Keep API, workflow, guardrail, deployment, and operational documentation in
+sync when behavior changes. Record a durable architectural choice as an ADR in
+[`decisions/`](decisions/).
 
-## Commit Message Convention
-- Format: `<type>: <short summary>`
-- Keep summaries short and specific.
-- Use English.
+## Review expectations
 
-Allowed commit types:
-- `feat`
-- `fix`
-- `docs`
-- `chore`
-- `refactor`
-- `test`
-- `ci`
-- `build`
-- `perf`
-
-Examples:
-- `docs: define notion ownership and sync model`
-- `chore: initialize repository scaffold`
-
-## Push Safety Rules
-- Always run `git status` before commit.
-- Review staged files with `git diff --staged`.
-- Never commit secrets, API keys, or private Notion content.
-- Do not use destructive commands like `git reset --hard` on shared work.
-- Prefer `git push -u origin <branch>` for first push of a branch.
-
-## PR Guidance
-- Keep each PR focused on one change set.
-- Link design decisions and updated docs in PR description.
-- Include verification notes for safety rules and acceptance checks.
+Reviewers should check current code alignment, authorization, append-only write
+safety, production-RAG exclusion, idempotency, redaction, and recovery behavior.
+Documentation reviews should also check internal links, commands, environment
+variable names, and whether claims are supported by current code or tests.

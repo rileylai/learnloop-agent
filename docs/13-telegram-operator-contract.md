@@ -1,266 +1,127 @@
 # Telegram Operator Contract
 
-## Purpose
+The Telegram webhook is a transport boundary. It validates the envelope and
+trust policy, claims update idempotency, and delegates a typed intent. It does
+not call Notion, PostgreSQL, Redis, an LLM, or provider/tool adapters directly.
 
-This document defines the Step 89-95 contract for operating synchronization,
-indexing, review, cost, workflow, readiness, and knowledge-base status from
-Telegram. Steps 90-93 implement selected-page `/sync`, guarded
-`/index-full`, read-only `/index-status`, `/cost`, `/workflow`, and `/pending`;
-Step 94 implements `/status` and `/stats`; Step 95 records deterministic
-regression and guarded-verification evidence.
+## Commands
 
-## Scope and non-goals
+| Command | Syntax | Class | Confirmation or side effect |
+| --- | --- | --- | --- |
+| `/sync` | `/sync` | Selected-page derived-index mutation | Live hierarchy selection and final `sync_confirm`; no Notion write |
+| `/index-full` | `/index-full` | Full derived-index mutation | Duration/cost warning and opaque `index_full_confirm`; no Notion write |
+| `/index-status` | `/index-status [workflow_id]` | Read-only | Reads persisted indexing status; never re-reads Notion |
+| `/cost` | `/cost [today\|7d\|month\|workflow <workflow_id>]` | Read-only | Shows known cost, unknown cost, and budget state |
+| `/pending` | `/pending` | Read-only review inbox | Lists bounded proposals; actions use explicit callbacks |
+| `/workflow` | `/workflow [workflow_id]` | Read-only | Shows at most five recent summaries or one redacted detail |
+| `/status` | `/status` | Read-only readiness | Shows liveness separately from dependency readiness |
+| `/stats` | `/stats` | Read-only aggregates | Shows page/block/chunk/vector/proposal counts and safe timestamps |
 
-The Telegram gateway is a transport boundary. It parses a bounded update,
-checks the caller boundary, claims update idempotency, and delegates a typed
-intent to an orchestrator. It does not call Notion, PostgreSQL, Redis, an LLM,
-or a provider/tool adapter directly.
+`/start` remains an alias for help. Existing `/pages`, `/ingest`, `/ask`,
+`/accept`, `/reject`, and `/retry-proposal` commands retain their ingestion,
+QA, and review behavior. `/ask` accepts repeated `--page <id>` and
+`--section <path>` scopes; the operator UI does not require users to type a
+Notion UUID for page selection.
 
-Steps 90-94 implement selected-page `/sync`, guarded full indexing, persisted
-index status, bounded cost scopes, redacted workflow queries, the pending
-review inbox, readiness status, and aggregate statistics. Existing ingestion,
-QA, and review behavior remains unchanged.
+## Authorization
 
-## Command registry
+Authorization is deterministic and happens before operator work:
 
-The command name is the first token after an optional `/`. Unknown commands,
-unknown options, missing required values, and extra positional values fail with
-bounded usage text. Telegram usernames and bot mentions are not used as page
-or operator identifiers.
+1. `X-Telegram-Bot-Api-Secret-Token` must match when
+   `TELEGRAM_WEBHOOK_SECRET` is configured.
+2. The chat id must be in `TELEGRAM_ALLOWED_CHAT_IDS` when that allowlist is
+   configured.
+3. Callback ownership must match the exact `(chat_id, user_id)` pair that
+   created the mapping.
 
-| Command | Syntax | Class | Confirmation | Data/work boundary | Queue |
-|---|---|---|---|---|---|
-| `/sync` | `/sync` | selected-page derived-index mutation | Final `sync_confirm` callback | Discover current accessible pages, then page-level replacement through the existing indexing flow | `telegram` queue when configured |
-| `/index-full` | `/index-full` | full derived-index mutation | Required opaque `index_full_confirm` callback | Reuse `NotionFullIndexOrchestrator`; no direct route-to-Notion call | `telegram` queue when configured |
-| `/index-status` | `/index-status [workflow_id]` | read-only | None | Read persisted indexing workflow state; never re-read Notion | Safe read may use the normal gateway path; queue compatibility remains unchanged |
-| `/cost` | `/cost [today\|7d\|month\|workflow <workflow_id>]` | read-only | None | Reuse cost aggregation and preserve unknown pricing as `unknown` | Safe read may use the normal gateway path |
-| `/pending` | `/pending` | read-only inbox | Per-action View/Accept/Reject/Change target callback | Read PostgreSQL pending rows only; only Accept enters the existing review workflow | List read is safe; callbacks use `telegram` queue when configured |
-| `/workflow` | `/workflow [workflow_id]` | read-only | None | Reuse redacted workflow status/detail; never rerun or reconcile | Safe read may use the normal gateway path |
-| `/status` | `/status` | read-only readiness | None | Reuse readiness service; distinguish liveness from readiness | Safe read may use the normal gateway path |
-| `/stats` | `/stats` | read-only aggregate | None | Repository-backed aggregate page/block/chunk/vector/proposal counts and safe timestamps | Safe read may use the normal gateway path |
+Rejected authorization does not create a workflow, enqueue a job, acknowledge a
+callback, or send a reply.
 
-The existing `/start` alias continues to render `/help`. Updated help must
-list the new commands and state that `/index-full` and `/sync` require button
-confirmation, while `/pending` Accept is always an explicit human action.
-Help must not suggest typing a Notion UUID, a callback token, or a raw workflow
-payload.
+## Callback contract
 
-### Command output contracts
+Telegram carries only `ll:<opaque_token>`. Redis or the in-memory compatibility
+store maps it to an allowlisted, TTL-bound server-side record.
 
-All operator responses are bounded Telegram messages and may be split into
-bounded pages without changing the underlying result. Safe fields may include:
+| Callback kind | Actions | Responsibility |
+| --- | --- | --- |
+| `picker` | `open_page`, `select_target`, `back`, `root` | Hierarchy navigation and target selection |
+| `review` | `accept`, `reject`, `change_target` | Existing proposal review workflow |
+| `operator` | `sync_toggle`, `sync_confirm`, `sync_cancel`, `index_full_confirm`, `index_full_cancel`, `pending_view` | Operator selection, confirmation, and read-only proposal view |
 
-- operation, status, workflow id, requested scope, aggregate counts, remaining
-  work, and deterministic `failure_reason`;
-- source display name, target display path, and full hierarchy display path
-  where the relevant selection flow requires them;
-- known estimated cost, budget state, or the literal `unknown` when pricing is
-  unavailable;
-- pending proposal title/summary preview, source display name, target path,
-  and the existing review action state.
+Mappings may contain page/workflow/proposal ids, selection state, owner, expiry,
+and claim state server-side. These values are not encoded in callback data or
+logs. One-shot confirmations and mutation callbacks are claimed atomically.
+Duplicate or expired callbacks fail safely without repeating work.
 
-Operator output must never include callback tokens, page UUIDs as a required
-input or UI payload, Redis keys, raw Notion blocks, OCR/source text, prompts,
-embeddings, SQL, provider/tool exception bodies, API keys, bot tokens, bearer
-values, webhook secrets, or private metadata. Numeric workflow ids may be
-shown only as bounded references for `/index-status` and `/workflow`; they are
-not executable rerun or reconciliation commands.
+Valid callbacks are acknowledged before long OCR, provider, indexing, or review
+work. `TELEGRAM_CALLBACK_ACK_FAILED` describes acknowledgement delivery only.
+Business status and preview delivery status are tracked independently.
 
-## Authorization and ownership
+## Command behavior
 
-Authorization is deterministic and occurs before an operator workflow starts:
+### `/sync`
 
-1. If `TELEGRAM_WEBHOOK_SECRET` is configured, the webhook secret must match.
-2. If `TELEGRAM_ALLOWED_CHAT_IDS` is configured, the update chat id must be in
-   that allowlist.
-3. The actor identity is `message.from.id`, or `callback_query.from.id` for a
-   callback. Every callback mapping is owned by the exact `(chat_id, user_id)`
-   pair that created it. A callback from the right chat but a different user
-   fails closed.
-4. A callback cannot broaden the authority of the original command. The
-   server-side mapping determines its action, scope, target selection, and
-   expiry; user text cannot replace those fields.
+The service discovers up to 100 accessible pages, renders hierarchy paths, and
+allows up to 10 selected pages in a session with a 10-minute TTL. The final
+confirmation calls page-scoped incremental indexing. Each page uses page-level
+replacement; earlier successful pages remain committed if another page fails.
 
-The current MVP has a global chat allowlist and chat/user-scoped callback
-ownership. A separate global user allowlist is not inferred from a username or
-display name. Adding one later must be an explicit settings/API contract
-change, not an LLM or Telegram UI decision.
+### `/index-full` and `/index-status`
 
-Rejected secret/chat authorization does not create a workflow run, enqueue a
-job, acknowledge a callback, or send a Telegram reply. Authorization failures
-use the existing redacted `TELEGRAM_WEBHOOK_FORBIDDEN` or
-`TELEGRAM_CHAT_NOT_ALLOWED` response contracts.
+`/index-full` requires an owner-bound, unexpired confirmation. With Redis it
+creates a durable indexing workflow and queues the dedicated full-index job;
+the response points to `/index-status <workflow_id>`. The dedicated job has a
+separate timeout and no automatic RQ retry. Without Redis, the synchronous
+compatibility path remains available.
 
-## Typed callback contract
+`/index-status` reads persisted workflow state, counts, remaining work, safe
+failure reason, stale state, and known cost. It never starts or re-runs an
+index.
 
-Telegram carries only `ll:<opaque_token>`. The token is a short-lived lookup
-key, not a serialized command. Redis/session storage resolves it to a typed
-server-side mapping after ownership and TTL checks.
+### `/cost` and `/workflow`
 
-The server-side `callback_kind` is one of:
+`/cost` supports today, rolling 7-day, calendar-month, and single-workflow
+scopes. It separates recorded LLM/proposal/QA and embedding/indexing costs
+where metadata supports them. Missing pricing remains `unknown`.
 
-| Kind | Actions | Allowed responsibility |
-|---|---|---|
-| `picker` | Existing `open_page`, `select_target`, `back`, `root`, and legacy compatibility actions | Upload or review target hierarchy only; navigation is side-effect free |
-| `review` | Existing `accept`, `reject`, `change_target` | Existing proposal review orchestrator; only explicit Accept can append and re-index |
-| `operator` | `sync_toggle`, `sync_confirm`, `sync_cancel`, `index_full_confirm`, `index_full_cancel`, `pending_view` | Steps 90-91 selection/confirmation; Step 92 adds read-only cost/workflow commands; Step 93 adds read-only pending View |
+`/workflow` returns bounded, redacted status. It is not a rerun, reconciliation,
+or SQL control surface.
 
-Operator mappings may retain server-side page ids, workflow ids, proposal ids,
-selection sets, chat/user ownership, creation time, expiry, and a one-shot
-claim state. None of those values may be encoded into callback data, displayed
-as a token, or written to logs. The mapping action and fields must be
-allowlisted; unknown kind/action combinations fail closed with
-`INVALID_CALLBACK`.
+### `/pending`
 
-Callback processing rules:
+The inbox reads at most eight pending proposals and shows bounded title,
+summary, source display name, and target path. View is read-only. Accept,
+Reject, and Change target are explicit callbacks. Only Accept can append to
+`AI Supplement Zone`, verify durable identity, and re-index. Pending and
+rejected proposals remain outside production RAG.
 
-- Validate the `ll:` envelope, mapping, kind/action pair, ownership, expiry,
-  and expected state before business work.
-- Atomically claim one-shot confirmation and mutation actions before starting
-  work. An already claimed or expired action returns a deterministic safe
-  replay/expiry result and does not repeat work.
-- A valid callback is acknowledged through `ToolRegistry` before long work.
-  `TELEGRAM_CALLBACK_ACK_FAILED` describes acknowledgement delivery only; it
-  does not authorize a second business execution.
-- Review callbacks dispatch through the existing review family. Operator
-  callbacks must never fall through to upload picker or review session logic.
-- Duplicate Telegram `update_id` delivery replays the ledger outcome and never
-  repeats sync, indexing, review, provider, or Notion work.
+### `/status` and `/stats`
 
-## Confirmation and mutation rules
+`/status` returns fixed check states for database, migration, pgvector,
+provider, Notion, Redis, and the RQ scheduler. A not-ready dependency does not
+make the read command itself unsafe.
 
-The following actions are explicit user intent and cannot be replaced by text
-commands with guessed ids or by an LLM response:
+`/stats` returns repository-backed aggregate counts and UTC timestamps for the
+latest successful full index and manual incremental sync. It does not return
+page ids, paths, titles, text, vectors, or proposal JSON.
 
-- `/sync` displays a bounded live hierarchy selection. Each selected page is
-  kept in server-side session state; the final `sync_confirm` callback is
-  required before any page re-index begins. Selection is bounded, and the
-  callback claim plus Telegram update ledger prevent duplicate work.
-- `/index-full` first displays a duration/embedding-cost warning. The full
-  index starts only after an unexpired, owner-bound `index_full_confirm`
-  callback. Cancel is side-effect free. Unknown embedding pricing remains
-  unknown; it never becomes a guessed estimate. `/index-status` reads the
-  persisted workflow and cannot trigger discovery or indexing.
-- `/pending` reads PostgreSQL pending rows only and renders bounded proposal
-  title/summary, source display name, and current target path. View is
-  read-only. Accept, Reject, and Change target callbacks remain explicit review
-  actions. Accept delegates to
-  `SupplementReviewOrchestrator` and preserves
-  `Change Request -> Human Accept -> Append to AI Supplement Zone -> durable
-  identity verification -> synchronous page re-index`. Pending and rejected
-  content remains outside production RAG.
+## Queue and idempotency
 
-`/index-status`, `/cost`, `/workflow`, `/status`, and `/stats` are read-only.
-They do not expose direct rerun, reconcile, append, target-change, or SQL
-mutation controls. `/workflow` is a status/detail surface, not a replacement
-for the protected stale-workflow reconciliation API.
+When `REDIS_URL` is configured, the webhook claims the durable update ledger
+and enqueues one serializable envelope on the `telegram` queue. The worker
+uses the canonical module-level job import path and an embedded scheduler.
+Ordinary jobs use `TELEGRAM_JOB_TIMEOUT_SECONDS`; full indexing uses
+`TELEGRAM_INDEXING_JOB_TIMEOUT_SECONDS`.
 
-## Queue and route boundary
+Duplicate non-null `update_id` deliveries replay the stored running or terminal
+result. A worker crash may be retried according to the queue policy, but a
+completed ledger or callback claim prevents duplicate business work. Without
+Redis, local/test operation uses the synchronous compatibility path.
 
-The route performs only request-schema validation, webhook trust validation,
-gateway construction, update-ledger claim/enqueue, and response mapping. The
-gateway parses the command/callback into a typed intent and delegates to an
-operator orchestrator. Orchestrators call services, repositories, tools, and
-`QueueClient` interfaces according to the existing architecture.
+## Safe output
 
-When `REDIS_URL` is configured, the route claims the update ledger and queues
-one serializable Telegram envelope on the `telegram` queue before operator
-business work. The bounded generic worker atomically claims an
-`index_full_confirm`, creates the durable indexing workflow, and queues the
-module-level `process_telegram_full_index_job` with that workflow id. The
-confirmation returns `running` plus `/index-status <workflow_id>` guidance;
-`/index-status` is the primary progress surface. Without Redis, the existing
-synchronous compatibility path remains available for local/test operation;
-this does not permit routes to call Notion, PostgreSQL, Redis, or provider
-clients directly.
-
-Operator work must use these boundaries:
-
-- `/sync` and `/index-full`: operator orchestrator -> indexing orchestrator ->
-  Notion reader/embedding client/repositories; no Notion write.
-- `/index-status` and `/workflow`: workflow service/repository; no Notion read,
-  provider call, or direct rerun.
-- `/cost`: workflow observability/cost service; unknown pricing is preserved.
-- `/pending`: proposal query/repository for reads; `pending_view` is an
-  owner-bound one-shot read callback, while Accept/Reject/Change target reuse
-  the existing review orchestrator.
-- `/status`: readiness service and its `QueueClient`/database probes.
-- `/stats`: aggregate repository/service only.
-
-Redis callback/session state is ephemeral coordination state. PostgreSQL
-workflow, update-ledger, proposal, and index state remains the durable source
-for operator status. No raw PostgreSQL or Redis client is an LLM-facing tool.
-
-## Steps 90-94 implementation invariants
-
-- Live page discovery goes through the read-only Notion tool and can discover
-  pages that are not yet in the local derived index.
-- Display paths contain titles only; page ids stay in server-side mappings and
-  the selected-page session.
-- Each confirmed page reuses page-level replacement/indexing. Earlier page
-  commits remain durable when a later page fails.
-- The Telegram outer workflow reports only bounded sync status/count fields;
-  original Notion notes and `AI Supplement Zone` are never written.
-- Full-index confirmation is represented by an expiring, owner-bound session;
-  only the one-shot confirm callback creates and queues the dedicated durable
-  full-index workflow when Redis is configured. Duplicate callbacks do not
-  create a second job. The dedicated job has no automatic RQ retry.
-- `/index-status` exposes bounded persisted workflow fields and never calls
-  the Notion reader or indexing orchestrator.
-- `/cost` accepts only `today`, rolling `7d`, calendar `month`, and
-  `workflow <workflow_id>` scopes. It separates recorded LLM/proposal/QA and
-  embedding/indexing costs where metadata supports them; unknown pricing stays
-  `unknown` and no token-based estimate is invented.
-- `/workflow` without an id returns at most five recent workflow summaries;
-  with an id it returns one fixed-field redacted detail. It never reruns or
-  reconciles work and never forwards prompts, OCR/source text, secrets, raw
-  exceptions, page ids, or private metadata.
-- `/pending` reads at most eight pending proposals through the proposal query
-  boundary and renders bounded title/summary, source display name, and current
-  target path fields. View returns bounded detail through `pending_view` and
-  remains read-only.
-- Pending inbox Accept/Reject/Change target callbacks use the existing review
-  family. Only Accept can append to `AI Supplement Zone` and synchronously
-  re-index; pending and rejected requests remain excluded from production RAG.
-- Pending callback mappings keep the change request id server-side, use opaque
-  TTL-bound owner-scoped tokens, and one-shot claim only the read-only View
-  action. Duplicate or cross-user View callbacks fail closed.
-- `/status` distinguishes process liveness from dependency readiness and
-  reports only fixed states for database, migration, pgvector, provider,
-  Notion configuration, Redis, and RQ scheduler. It never starts, reruns, or
-  reconciles work, and it never exposes raw probe exceptions or credentials.
-- `/stats` reads only repository-backed aggregate counts and safe UTC
-  timestamps for the latest successful full index and manual incremental sync.
-  It never returns page ids, paths, titles, note text, vectors, proposal JSON,
-  or private metadata.
-
-## Step 95 verification boundary
-
-The deterministic regression matrix covers command parsing, webhook/chat
-authorization, typed callback routing, exact `(chat_id, user_id)` ownership,
-TTL and expiry, duplicate update/callback claims, `/sync` and `/index-full`
-confirmation gates, partial incremental failure, unknown cost, workflow
-redaction, pending review safety, `/status` liveness/readiness, `/stats`
-aggregates, `/help`, ingestion, review, queue, worker, and update-ledger
-behavior. The matrix uses controlled SQLite, in-memory/fakeredis, and adapter
-fixtures; it does not claim external live evidence.
-
-Live verification remains a separately approved operation. It requires
-dedicated resources, explicit opt-in, redacted reporting, and must not default
-to full index, append, Accept, or Telegram send. A skipped live run is not a
-passing external-dependency result.
-
-## Operator contract acceptance invariants
-
-- Every new command has one documented syntax, read/mutation class, safe output
-  set, and queue boundary.
-- Every mutation has an explicit confirmation/acceptance rule and an
-  idempotency owner.
-- Callback data is opaque, typed server-side, TTL-bound, owner-bound, and
-  allowlisted.
-- Authorization, confirmation, write safety, RAG exclusion, and state
-  transitions remain deterministic backend policy.
-- Step 94 implements the bounded readiness and statistics surfaces; this
-  contract does not imply live dependency verification or full-index/append
-  execution. Step 95 verifies the deterministic matrix and preserves the
-  separate live-verification boundary.
+Operator messages may include operation, status, workflow reference, bounded
+counts, display paths, deterministic failure reasons, and known or `unknown`
+cost. They must not include callback tokens, Redis keys, raw Notion blocks,
+source/OCR text, prompts, embeddings, provider exceptions, secrets, or private
+metadata.
