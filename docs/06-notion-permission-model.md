@@ -3,8 +3,10 @@
 ## Source of truth
 
 Notion is authoritative for page content, block content, hierarchy, and the
-visible result of an accepted append. PostgreSQL stores a rebuildable indexed
-snapshot. Redis stores only short-lived coordination state.
+visible result of an accepted append. PostgreSQL stores both a rebuildable
+indexed snapshot and durable application records such as sources, proposals,
+workflows, and idempotency ledgers. Redis stores short-lived coordination
+state. See [State ownership and synchronization](04-memory-design.md).
 
 ## Ownership matrix
 

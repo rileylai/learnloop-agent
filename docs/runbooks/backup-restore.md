@@ -2,9 +2,11 @@
 
 ## Scope and safety
 
-PostgreSQL/pgvector contains rebuildable application state; current Notion
-content remains authoritative. Never restore over an active database as the
-first validation. Stop the API and worker before replacing a local target.
+PostgreSQL/pgvector contains a rebuildable Notion index and durable application
+records that Notion cannot reproduce, including sources, proposals, workflows,
+and idempotency ledgers. Current Notion content remains authoritative for page
+content. Never restore over an active database as the first validation. Stop
+the API and worker before replacing a local target.
 
 - Keep archives outside Git and protect them with filesystem permissions.
 - Take a fresh backup before restore or migration.

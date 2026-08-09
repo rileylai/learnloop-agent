@@ -66,10 +66,12 @@ assembly. Alembic is the only supported schema migration path.
 
 ### Redis and RQ
 
-Redis is optional for local compatibility but required for the queued Telegram
-runtime. The webhook claims a durable update record, serializes the update
-through `QueueClient`, and returns before long-running work. The worker
-consumes the `telegram` queue with the embedded scheduler enabled.
+Redis is optional for synchronous compatibility but required for the ready
+queued Telegram runtime. The webhook claims a durable update record, serializes
+the update through `QueueClient`, and returns before long-running work. The
+worker consumes the `telegram` queue with the embedded scheduler enabled. The
+scheduler promotes delayed media-group settle jobs and retry intervals; the
+initial full-index job is enqueued immediately rather than scheduled.
 
 Ordinary Telegram jobs use `TELEGRAM_JOB_TIMEOUT_SECONDS` (default `180`).
 Full indexing uses a dedicated job and
@@ -104,8 +106,49 @@ committed operation.
 
 Page replacement is atomic per page. Incremental sync commits each page
 independently so earlier successful pages remain durable when a later page
-fails. Concurrent review and replacement operations re-lock and revalidate
-state before committing.
+fails.
+
+### Same-page indexing concurrency
+
+Snapshot preparation, including embeddings, happens outside the database
+transaction. During persistence, `NotionPageRepository` acquires a PostgreSQL
+transaction-scoped advisory lock keyed by the external Notion page id:
+
+```sql
+pg_advisory_xact_lock(hashtextextended(:notion_page_id, 0))
+```
+
+After the lock is acquired, the repository reloads the persisted page. When
+both snapshots have `last_edited_time`, an incoming value older than the
+persisted value fails with `STALE_PAGE_SNAPSHOT` before any page-derived rows
+are deleted. The page row, blocks, chunks, and vectors are then replaced in
+one unit-of-work transaction, so readers do not observe a half-replaced page.
+SQLite test/demo stores do not execute the PostgreSQL advisory lock.
+
+### Review concurrency
+
+Review mutations do not all use the same locking mechanism:
+
+- Change Target opens a unit-of-work transaction, locks the Change Request with
+  `SELECT ... FOR UPDATE`, and revalidates that it is still `pending` before
+  changing the target row identity.
+- Accept performs the Notion append and prepares the new page snapshot first.
+  Its final unit-of-work transaction locks the Change Request, revalidates
+  `pending`, persists the prepared page snapshot, and marks the request
+  `accepted` together.
+- Reject and Edit Later re-read and validate the row inside their update
+  transaction but currently do not request a row lock. Transport idempotency
+  and one-shot Telegram callback claims reduce duplicate delivery, but they are
+  not a universal database serialization guarantee.
+
+A stale final state is rejected with `INVALID_STATE_TRANSITION`. The visible
+Notion identity remains the reconciliation boundary if an Accept append
+succeeded before a competing final database transition was rejected. Because
+the Accept row lock occurs after the external append, it is not a distributed
+mutex around Notion; callers should use transport idempotency, and an uncertain
+or competing outcome must be reconciled by identity. Concurrent Reject/Edit
+Later requests that both read `pending` are likewise not fully serialized by
+the current repository implementation.
 
 ## Extension points
 

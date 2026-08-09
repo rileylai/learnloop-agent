@@ -30,6 +30,13 @@ reconciles each from current Notion content. Each page uses the same page
 indexer, embedding service, and replacement transaction. Manual Notion changes
 are not detected automatically.
 
+Preparation occurs before persistence. PostgreSQL persistence serializes
+writers for the same external page id with
+`pg_advisory_xact_lock(hashtextextended(page_id, 0))`. Once the lock is held,
+an older prepared `last_edited_time` is rejected as `STALE_PAGE_SNAPSHOT`
+before the current blocks, chunks, or vectors are replaced. A complete newer
+snapshot is committed in one transaction.
+
 ## Source ingestion
 
 The supported source paths are:
@@ -64,22 +71,65 @@ URL ingestion accepts public HTTP(S) article URLs, validates redirect targets,
 blocks private/local addresses, limits response size, and accepts only text
 content. YouTube ingestion requires a supported video URL and an available
 transcript. Screenshot OCR requires Tesseract languages `eng`, `chi_tra`, and
-`chi_sim`.
+`chi_sim`. PDF ingestion uses `pypdf` to read the PDF text layer. A scanned or
+image-only PDF fails when it has no extractable text; it is not automatically
+routed through the screenshot OCR pipeline.
+
+### Screenshot and media-group ingestion
+
+Screenshot OCR is normalized into one persisted `SourceDocument`. Proposal
+validation builds a deterministic source snapshot from that OCR text and
+checks generated title, summary, concepts, and notes against source evidence.
+Only diagnosed grounding failures are repair-eligible. Title-only, summary,
+and bounded body repair paths each make at most one provider attempt, and a
+failed title repair may use a deterministic source-derived fallback where the
+validator permits it. Every repaired or fallback proposal passes through the
+same schema, canonical-target, and source-grounding validation before it can be
+persisted.
+
+Telegram groups photos by the owner-bound upload session and
+`media_group_id`, deduplicates attachments by Telegram file identity, and
+sorts the final batch by `message_id` with file identity as a stable tie-break.
+Each arrival advances a settle version. A delayed RQ settle job can promote the
+batch only when its expected version is still current, so an older job cannot
+close a batch that received another image. Atomic settle, target, proposal,
+retry, and preview claims prevent the same session phase from running twice.
+
+`/retry-proposal` is available only for a failed proposal with a persisted
+source and safe target. It atomically claims the retry and calls proposal
+generation with the existing `source_document_id`; it does not download the
+attachments again, rerun PDF extraction or screenshot OCR, or create another
+source document.
 
 ## Proposal generation and review
 
 ```text
 SourceDocument
-  -> duplicate check against eligible Notion chunks
-  -> provider generates title, summary, concepts, and notes
-  -> backend merges canonical source and target fields
-  -> strict validation
-  -> Change Request(status=pending)
+  -> duplicate check against production-eligible Notion chunks
+      -> duplicate found:
+           build a citation-first proposal without provider generation
+      -> sufficiently novel:
+           generate and validate proposal content through the provider
+           check the validated proposal content for an eligible duplicate
+           replace a late duplicate with the citation-first proposal
+  -> merge backend-owned source and canonical target identity
+  -> validate
+  -> persist Change Request(status=pending)
 ```
 
-The provider never owns source identity, target identity, citations, or
-attachment count. Invalid output fails with `LLM_OUTPUT_INVALID`. Proposal
-generation does not write to Notion.
+The duplicate checker reads repository candidates with `source_kind=notion`;
+source-document chunks are excluded, and known synthetic page ids are excluded
+from PostgreSQL production queries. It detects normalized exact hashes or a
+configured text-similarity threshold. The early duplicate branch reuses the
+matched Notion path as a grounded citation and avoids unnecessary provider
+cost. The late check prevents newly generated wording from duplicating indexed
+knowledge.
+
+The provider never owns source identity, target path, internal page identity,
+citations, permissions, or attachment count. The backend derives those fields
+from the persisted source and indexed target page and validates the merged
+proposal. Invalid output fails with `LLM_OUTPUT_INVALID`. Proposal generation
+does not write to Notion.
 
 Review transitions are:
 
@@ -89,19 +139,23 @@ pending -> rejected
 pending -> pending  (edit later)
 ```
 
-Reject and edit-later do not call Notion. The pending query surface is read-only
-and provides proposal content, source display information, citations, and the
-current target page.
+Reject and Edit Later do not call Notion. Edit Later retains `pending`. Both
+re-read and validate current state within their update transaction, but unlike
+Change Target and the final Accept commit, they do not currently acquire a
+Change Request row lock. The pending query surface is read-only and provides
+proposal content, source display information, citations, and the current target
+page.
 
 ## Accept, append, and re-index
 
 ```text
-Load and lock pending Change Request
+Load pending Change Request
   -> validate target and proposal
   -> append under AI Supplement Zone
   -> verify change-request-<id> is visible
   -> prepare complete target-page snapshot
-  -> lock and revalidate pending state
+  -> begin final database transaction
+  -> lock Change Request and revalidate pending state
   -> replace page blocks/chunks/vectors and mark accepted in one DB transaction
 ```
 
@@ -140,7 +194,8 @@ Webhook
 ```
 
 Without Redis, a synchronous compatibility path is retained for local/test
-operation. Duplicate Telegram `update_id` values replay a running or terminal
+operation, but the ready `local` profile reports the queue dependency as
+unavailable. Duplicate Telegram `update_id` values replay a running or terminal
 outcome and do not repeat OCR, LLM calls, appends, or replies. Callback data is
 opaque, TTL-bound, owner-bound, and atomically claimed.
 
@@ -158,8 +213,11 @@ operator commands and callback classes.
   timeout, rate-limit, and allowlisted upstream server failures.
 - Invalid requests, authentication failures, invalid provider responses, and
   dimension/count mismatches fail without retry.
-- Database row locks and state revalidation prevent concurrent review or page
-  replacement from committing conflicting state.
+- Same-page indexing uses a transaction-scoped advisory lock and stale-snapshot
+  comparison before atomic replacement.
+- Change Target and the final Accept database commit use a Change Request row
+  lock. Reject and Edit Later currently rely on transaction-local revalidation
+  rather than that lock.
 - API mutations support optional `Idempotency-Key` replay; Telegram uses its
   update ledger instead.
 - Workflow audit failure is reconciled separately and never reruns business

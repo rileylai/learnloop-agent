@@ -1,21 +1,77 @@
-# Evaluation Plan
+# Evaluation Contract
 
-The repository uses deterministic tests for policy and workflow correctness.
-External dependency checks are separate, explicitly enabled operations and
-must use synthetic or dedicated resources.
+Evaluation separates deterministic acceptance from opt-in dependency checks.
+The default suite must not contact a real Notion workspace, send Telegram
+messages, consume provider quota, or mutate a shared database.
 
-## Default checks
+## Verification levels
 
-Install the locked development environment and run the normal suite:
+| Level | Current mechanism | Acceptance meaning |
+| --- | --- | --- |
+| Deterministic unit and integration | `pytest`, in-memory adapters, fixtures, SQLite, and isolated repository tests | Required; failures block acceptance |
+| Deterministic evaluation harnesses | Retrieval, citation, vector retrieval, write safety, manual sync, and prompt-injection programs | Required for the affected capability |
+| Adapter fixture matrix | Real parser libraries or injected transports for PDF, URL, OCR, and other boundaries | Required where the adapter changes; no network by default |
+| Opt-in live dependency smoke | Explicit environment guards and dedicated Notion, PostgreSQL/pgvector, provider, or Telegram resources | Evidence for integration readiness; a skip is not a pass |
+| Guarded live end-to-end | Read-only Notion canary or explicitly approved append canary against a sandbox page | Manual release evidence; never an implicit test action |
+
+No automated test proves production process supervision, TLS termination,
+backup scheduling, long-running real-workspace capacity, or ongoing provider
+compatibility. Those remain deployment or release checks rather than claimed
+test coverage.
+
+## Golden question set
+
+`tests/evals/golden_questions.yaml` is a schema-validated synthetic fixture.
+Each case defines a query, bounded page/section scope, expected exact Notion
+paths, required terms, forbidden pending/rejected text, and whether retrieval,
+citation, and production-RAG exclusion checks apply. Cases cover manual notes
+and accepted content under `AI Supplement Zone`.
+
+The deterministic retrieval harness builds an isolated synthetic database. It
+does not read a private workspace. Source-document decoys containing pending
+and rejected text verify that the production repository admits only eligible
+Notion chunks before ranking.
+
+Live Notion verification uses a separately configured resource:
+
+- the read/index/QA canary requires `LEARNLOOP_RUN_NOTION_READ_CANARY=1`,
+  `NOTION_TOKEN`, and `LEARNLOOP_NOTION_CANARY_PAGE_ID`; its transport blocks
+  every Notion write;
+- the append canary requires the live CLI option, explicit approval option,
+  token, and dedicated canary page id; its transport permits only block reads
+  and append-shaped child writes and rejects other mutation shapes;
+- live adapter checks require `--live` or
+  `LEARNLOOP_RUN_ADAPTER_SMOKE_LIVE=1`; Telegram sending additionally requires
+  `LEARNLOOP_SMOKE_ALLOW_TELEGRAM_SEND=1` and a dedicated chat;
+- live vector smoke requires `LEARNLOOP_RUN_LIVE_VECTOR_SMOKE=1`, provider
+  credentials, and an isolated PostgreSQL/pgvector target.
+
+Never place a token, private page id, Telegram chat id, or complete database URL
+in this documentation or a committed fixture.
+
+## Metrics and acceptance criteria
+
+| Contract | Current calculation | Pass condition |
+| --- | --- | --- |
+| Retrieval hit rate | Fraction of enabled golden questions whose retrieved top-k contains at least one expected exact path | Reported as `hit_count / total`; the harness has no configured release threshold, so regressions require review |
+| Exact page/path match | Exact string membership after applying each case's page and section scope | Every case asserted by its deterministic test must match the expected path |
+| Citation accuracy | Fraction of enabled cases whose deduplicated citation paths contain an expected exact path | Default harness threshold is `1.0`; configurable CLI values must be declared in the verification record |
+| Insufficient information | QA returns `insufficient_info=true`, no fabricated answer, and no citations when the safe retrieval scope has no support | Deterministic scenario must pass; there is no aggregate score threshold |
+| Production eligibility | Repository filtering excludes source-document, pending, rejected, known synthetic PostgreSQL pages, and out-of-scope page/section candidates before ranking | All exclusion scenarios pass |
+| Duplicate append prevention | Two writer calls with the same change-request identity result in one append and an idempotent replay | All write-safety checks pass |
+| Page replacement atomicity | Failure before or during replacement leaves the prior complete page snapshot; successful replacement commits page, blocks, chunks, and vectors together | Transaction and failure-injection tests pass; no numeric score is defined |
+
+The write-safety harness also requires original blocks to remain unchanged,
+append targets to remain under `AI Supplement Zone`, and policy violations to
+perform no write. Prompt-injection checks require source and retrieval text to
+remain data rather than authority over targets, tools, citations, or review
+state.
+
+## Reproducible commands
 
 ```bash
 uv sync --dev
 uv run --no-env-file --frozen pytest -q
-```
-
-Useful focused commands are:
-
-```bash
 uv run --no-env-file --frozen python scripts/preflight.py --profile test --json
 uv run --no-env-file --frozen python tests/evals/retrieval_eval.py
 uv run --no-env-file --frozen python tests/evals/citation_accuracy_eval.py
@@ -23,73 +79,10 @@ uv run --no-env-file --frozen python tests/evals/vector_retrieval_eval.py
 uv run --no-env-file --frozen python tests/evals/write_safety_eval.py
 uv run --no-env-file --frozen python tests/evals/manual_sync_eval.py
 uv run --no-env-file --frozen python tests/evals/prompt_injection_eval.py
-```
-
-The default suite must remain independent of real Notion writes, Telegram
-sends, provider quota, and destructive database operations.
-
-## Evaluation areas
-
-| Area | What the checks protect |
-| --- | --- |
-| API and schemas | Request validation, error envelopes, auth, and idempotent replay |
-| Indexing | Chunk order, page replacement, complete embeddings, and partial full-index outcomes |
-| Retrieval | Production filters, cosine ranking, lexical fallback, and citation paths |
-| Write safety | Append-only target, human acceptance, durable identity, and no duplicate retry |
-| Source ingestion | PDF, URL, YouTube, OCR, chat limits, SSRF protections, and content hashes |
-| Telegram | Update ledger, queue boundaries, callbacks, ownership, TTL, reviews, and recovery |
-| Observability | Redaction, readiness/liveness, cost unknowns, workflow status, and safe metrics |
-| Recovery | Migration, backup/restore, stale workflows, and Notion/database reconciliation |
-
-## Adapter checks
-
-The adapter matrix exercises PDF, URL, OCR, and other library boundaries with
-fixtures or injected transports:
-
-```bash
 uv run --no-env-file --frozen python tests/evals/adapter_smoke_matrix.py --json
 ```
 
-Live adapter checks require explicit `--live` or the corresponding environment
-flag. Telegram sends require a dedicated chat and an additional explicit send
-flag. A skipped live check is not a pass.
-
-## Guarded Notion checks
-
-Read/index/QA canary:
-
-```bash
-LEARNLOOP_RUN_NOTION_READ_CANARY=1 \
-  uv run --no-env-file --frozen python \
-  tests/evals/notion_read_index_qa_canary.py --json
-```
-
-It requires a dedicated workspace and `NOTION_TOKEN`, blocks write-shaped
-requests, and uses ephemeral derived state.
-
-Append canary:
-
-```bash
-uv run --no-env-file --frozen python \
-  tests/evals/notion_append_canary.py --live --approve --json
-```
-
-Both live opt-in and human approval are required. The canary must target a
-dedicated sandbox page and verify durable identity, accepted state, page
-re-index, and scoped citation. It must never be used as an implicit production
-write path.
-
-## Vector and recovery checks
-
-The live vector smoke requires an isolated PostgreSQL/pgvector database and an
-OpenAI key:
-
-```bash
-LEARNLOOP_RUN_LIVE_VECTOR_SMOKE=1 \
-  uv run --no-env-file --frozen python tests/evals/live_vector_smoke.py
-```
-
-Recovery and release checks are guarded and redacted:
+Guarded release and recovery inspections are separate and redacted:
 
 ```bash
 uv run --no-env-file --frozen python scripts/postgres_restore_drill.py --json
@@ -97,17 +90,5 @@ uv run --no-env-file --frozen python scripts/notion_db_recovery_drill.py --json
 uv run --no-env-file --frozen python scripts/release_gate.py --json
 ```
 
-The release gate must be run against the intended database. An unavailable
-dependency is an inconclusive or failed inspection, not a clean release.
-
-## Quality and safety criteria
-
-- Retrieval and citation tests use exact expected Notion paths.
-- Write-safety tests prove original blocks remain unchanged and rejected or
-  pending content is not retrievable.
-- Prompt-injection tests prove source/context text cannot change backend-owned
-  targets, tools, citations, or review state.
-- Test fixtures use public-safe or synthetic content and never contain secrets
-  or private Notion pages.
-- Live reports contain operation classes, statuses, bounded counts, and safe
-  failure reasons only.
+An unavailable dependency, omitted opt-in guard, or skipped live operation is
+inconclusive, not successful evidence.

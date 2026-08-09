@@ -22,9 +22,12 @@ uv run --no-env-file --frozen python \
 ### PostgreSQL was restored
 
 1. Verify migrations, `/ready`, and pgvector against the restored target.
-2. Treat PostgreSQL as derived state, not authoritative note content.
-3. Run full Notion indexing; do not append during the rebuild.
-4. Verify scoped citations and exclusion of pending/rejected content.
+2. Preserve restored source documents, change requests, workflow runs, and
+   idempotency ledgers; they cannot be rebuilt from Notion.
+3. Treat only the Notion page/block/chunk/vector index as rebuildable state,
+   not authoritative note content.
+4. Run full Notion indexing; do not append during the rebuild.
+5. Verify scoped citations and exclusion of pending/rejected content.
 
 ### A user changed Notion
 

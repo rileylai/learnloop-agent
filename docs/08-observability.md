@@ -2,17 +2,32 @@
 
 ## Scope
 
-The current runtime provides structured request/workflow logging, persisted
-workflow status, redacted operator views, readiness checks, Prometheus-style
-metrics, and cost aggregation. It does not include a tracing backend,
-dashboard, log store, or persistent time-series service.
+The current runtime provides structured process logs, persisted workflow
+status and metadata, redacted operator views, readiness checks,
+Prometheus-style metrics, and cost aggregation. It does not include a tracing
+backend, dashboard, durable log store, or persistent time-series service.
+
+PostgreSQL `workflow_runs` is the durable operational record used by the
+runtime. It stores type, `running`/`succeeded`/`failed` status, safe failure
+reason, start/finish timestamps, and operation-specific JSON metadata such as
+bounded counts and known usage/cost. Telegram replay state is stored separately
+in `telegram_update_ledger`; HTTP mutation replay state is stored in
+`api_idempotency_records`.
+
+The schema contains an `audit_logs` table, but no current runtime repository or
+writer inserts into it. Its existence must not be interpreted as a complete or
+queryable audit trail.
 
 ## Safe request and workflow signals
 
-Request logs contain only workflow id, path, method, status code, duration, and
-a short event name. Workflow metadata may contain operation names, bounded
-counts, provider/model and prompt versions, retrieval mode, retry counts,
-complete provider usage, and known cost.
+Each HTTP request accepts or generates `X-Workflow-ID`, stores it as the request
+correlation id, includes it in request logs, and returns it in the response
+header. Business workflows also receive that value as `request_workflow_id`
+metadata while using their numeric `workflow_run_id` as the durable status
+identity. Request logs contain only correlation id, path, method, status code,
+duration, and a short event name. Workflow metadata may contain operation
+names, bounded counts, provider/model and prompt versions, retrieval mode,
+retry counts, complete provider usage, and known cost.
 
 The following are never logged, persisted as general metadata, or returned by
 operator surfaces:
@@ -42,6 +57,16 @@ Planner estimates are never presented as billing usage.
 `/ready` checks database connectivity, migration state, pgvector, mode-specific
 provider configuration, Notion configuration, Redis, and the RQ scheduler
 when required. Liveness and readiness are intentionally separate.
+
+Telegram exposes bounded views over the same persisted data:
+
+- `/workflow [workflow_id]` shows one redacted workflow or a bounded recent
+  list, including status, safe failure reason, age/stale state, and known cost;
+- `/cost` aggregates cost fields already recorded in workflow metadata and
+  keeps incomplete pricing or usage as `unknown`;
+- `/index-status [workflow_id]` reads the selected or latest indexing workflow,
+  including safe counts, remaining work, failure reason, stale state, and known
+  cost. It does not inspect RQ jobs or re-read Notion.
 
 ## Retrieval and indexing metadata
 

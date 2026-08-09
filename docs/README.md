@@ -30,13 +30,12 @@ public documentation set.
 
 | Document | Use it for |
 | --- | --- |
-| [Memory and sync](04-memory-design.md) | Durable state, source-of-truth reconciliation, and RAG lifecycle |
+| [State ownership and sync](04-memory-design.md) | Rebuildable index, durable application records, reconciliation, and recovery authority |
 | [Notion permissions](06-notion-permission-model.md) | Ownership rules and `AI Supplement Zone` append semantics |
 | [Evaluation plan](07-evaluation-plan.md) | Deterministic tests, evaluation commands, and opt-in live checks |
 | [Observability](08-observability.md) | Workflow metadata, metrics, redaction, and recovery signals |
 | [Telegram operator contract](13-telegram-operator-contract.md) | `/sync`, `/index-full`, review, cost, status, and statistics commands |
-| [Coding style](11-coding-style.md) | Contributor conventions |
-| [GitHub collaboration](12-github-collaboration-rules.md) | Branch, commit, and review expectations |
+| [Contributing](../CONTRIBUTING.md) | Architecture boundaries, tests, documentation, and review expectations |
 
 Operational procedures are in [`runbooks/`](runbooks/). Accepted architectural
 decisions are in [`decisions/`](decisions/). Runtime prompt templates are in

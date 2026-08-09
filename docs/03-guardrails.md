@@ -75,12 +75,20 @@ and vector shape mismatches are not retried.
   response for the same canonical payload.
 - Telegram updates use a unique durable `update_id` ledger.
 - One-shot callbacks are claimed atomically and expire from session storage.
-- Concurrent reviews lock and revalidate the change request before changing
-  status.
-- Page replacement validates the prepared page snapshot before deleting or
-  inserting derived rows.
+- Change Target and the final Accept database commit lock the Change Request
+  row and revalidate `pending`. Reject and Edit Later re-read and validate in
+  their transaction but do not currently acquire that row lock.
+- Same-page PostgreSQL replacement uses a transaction-scoped advisory lock.
+  It rejects an older prepared `last_edited_time` as `STALE_PAGE_SNAPSHOT`
+  before deleting or inserting derived rows.
 - A Notion append is identified by `change-request-<id>` and verified by a
-  read-after-write lookup before accepted state is committed.
+  lookup before append and bounded read-after-write verification before
+  accepted state is committed.
+
+Notion and PostgreSQL do not share a transaction. A transport claim or row
+lock cannot roll back a Notion append that already succeeded. Recovery must
+reconcile the visible change-request identity before deciding whether a retry
+may append.
 
 ## Failure handling
 

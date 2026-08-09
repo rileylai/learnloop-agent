@@ -39,15 +39,14 @@ It indexes existing Notion notes as read-only knowledge, generates AI supplement
 - `docs/01-architecture.md`: system architecture details.
 - `docs/02-workflows.md`: workflow definitions and state transitions.
 - `docs/03-guardrails.md`: safety and write policy.
-- `docs/04-memory-design.md`: memory model and sync model.
+- `docs/04-memory-design.md`: state ownership, persistence, and sync model.
 - `docs/05-rag-design.md`: indexing, chunking, retrieval, citation.
 - `docs/06-notion-permission-model.md`: Notion ownership and permissions.
 - `docs/07-evaluation-plan.md`: eval metrics and golden tests.
 - `docs/08-observability.md`: logs, metrics, tracing, cost.
 - `docs/09-api-contract.md`: API contract.
 - `docs/10-deployment.md`: local-first deployment and future V2 cloud.
-- `docs/11-coding-style.md`: coding and documentation style.
-- `docs/12-github-collaboration-rules.md`: GitHub workflow, branch, commit, and push rules.
+- `CONTRIBUTING.md`: coding, testing, documentation, and collaboration rules.
 - `docs/13-telegram-operator-contract.md`: Telegram operator commands,
   callbacks, authorization, safe output, and queue boundaries.
 - `docs/prompts/`: prompt templates.
@@ -65,7 +64,7 @@ Before making code changes, always read:
 
 Task-related examples:
 
-- DB or repository task: read `docs/01-architecture.md` and `docs/11-coding-style.md`.
+- DB or repository task: read `docs/01-architecture.md` and `CONTRIBUTING.md`.
 - Workflow or queue task: read `docs/02-workflows.md` and `docs/08-observability.md`.
 - Notion or write-policy task: read `docs/03-guardrails.md` and `docs/06-notion-permission-model.md`.
 - RAG task: read `docs/05-rag-design.md`.

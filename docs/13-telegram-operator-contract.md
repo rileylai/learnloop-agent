@@ -23,6 +23,11 @@ QA, and review behavior. `/ask` accepts repeated `--page <id>` and
 `--section <path>` scopes; the operator UI does not require users to type a
 Notion UUID for page selection.
 
+`/retry-proposal` applies only to an upload session whose proposal failed after
+its `SourceDocument` and safe target were persisted. It atomically claims the
+session and regenerates from that source id; it does not download media again,
+rerun OCR or PDF extraction, or create another source record.
+
 ## Authorization
 
 Authorization is deterministic and happens before operator work:
@@ -72,7 +77,8 @@ replacement; earlier successful pages remain committed if another page fails.
 creates a durable indexing workflow and queues the dedicated full-index job;
 the response points to `/index-status <workflow_id>`. The dedicated job has a
 separate timeout and no automatic RQ retry. Without Redis, the synchronous
-compatibility path remains available.
+compatibility path remains available, but the ready `local` profile reports its
+queue dependency as unavailable.
 
 `/index-status` reads persisted workflow state, counts, remaining work, safe
 failure reason, stale state, and known cost. It never starts or re-runs an
@@ -95,6 +101,27 @@ Reject, and Change target are explicit callbacks. Only Accept can append to
 `AI Supplement Zone`, verify durable identity, and re-index. Pending and
 rejected proposals remain outside production RAG.
 
+Accept and Change Target do not share one generic locking path. Change Target
+locks the Change Request in its transaction and revalidates `pending` before
+changing the target. Accept performs append verification and snapshot
+preparation first, then locks and revalidates the Change Request in the final
+transaction that stores the page replacement and `accepted` status. Reject
+re-reads and validates state in its update transaction but does not currently
+request that row lock. Duplicate Telegram mutation callbacks are additionally
+blocked by their one-shot server-side claim.
+
+### Screenshot batches and PDFs
+
+Telegram media groups are collected by owner and `media_group_id`, deduplicated
+by file identity, and sorted by `message_id`. A versioned delayed settle claim
+prevents an older scheduled job from finalizing a batch after another image
+arrives. OCR evidence is persisted as one screenshot source and proposal
+content must pass deterministic grounding validation; eligible title, summary,
+or body repair is bounded and revalidated.
+
+PDF uploads use text-layer extraction only. Scanned or image-only PDFs are not
+automatically passed to screenshot OCR.
+
 ### `/status` and `/stats`
 
 `/status` returns fixed check states for database, migration, pgvector,
@@ -112,6 +139,10 @@ and enqueues one serializable envelope on the `telegram` queue. The worker
 uses the canonical module-level job import path and an embedded scheduler.
 Ordinary jobs use `TELEGRAM_JOB_TIMEOUT_SECONDS`; full indexing uses
 `TELEGRAM_INDEXING_JOB_TIMEOUT_SECONDS`.
+
+The embedded RQ scheduler is required for delayed media-group settle jobs and
+retry intervals. The initial full-index job is enqueued immediately; the
+scheduler does not turn it into a scheduled job.
 
 Duplicate non-null `update_id` deliveries replay the stored running or terminal
 result. A worker crash may be retried according to the queue policy, but a

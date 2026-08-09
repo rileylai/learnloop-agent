@@ -302,6 +302,8 @@ continuous Notion synchronization are outside the current project scope.
 
 ## Documentation
 
+- [Documentation index](docs/README.md)
+- [Contributing](CONTRIBUTING.md)
 - [Architecture](docs/01-architecture.md) and [Workflows](docs/02-workflows.md)
 - [Guardrails](docs/03-guardrails.md) and [RAG Design](docs/05-rag-design.md)
 - [API Contract](docs/09-api-contract.md)

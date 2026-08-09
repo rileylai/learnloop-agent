@@ -30,10 +30,13 @@ webhook. Telegram supports ingestion, grounded `/ask`, review actions, page
 selection, indexing operations, cost/workflow inspection, readiness, and
 knowledge statistics.
 
-The MVP is local-only. PostgreSQL with pgvector stores durable application and
-derived knowledge state; Redis and RQ provide optional background Telegram
-processing. Notion remains the source of truth for page content. The service
-does not continuously synchronize Notion.
+The MVP is local-only. PostgreSQL with pgvector stores both durable application
+records and the derived knowledge index. In the ready `local` profile, Redis
+and RQ are required for queued Telegram processing and delayed media-group
+settling. A synchronous compatibility path remains available without Redis for
+test, demo, and constrained local use, but the `local` readiness check then
+fails its queue dependency. Notion remains the source of truth for page
+content. The service does not continuously synchronize Notion.
 
 ## Ownership model
 
@@ -51,9 +54,12 @@ Every AI write follows:
 Change Request -> Human Accept -> Append to AI Supplement Zone
 ```
 
-The append includes a visible `change-request-<id>` identity. The writer uses
-that identity for read-after-write verification and retry idempotency. Accepted
-content is re-indexed before it becomes eligible for production QA.
+The append includes a visible `change-request-<id>` identity. Notion and
+PostgreSQL do not share a transaction, so the writer searches for that identity
+before appending and verifies it again afterward. If Notion accepted an append
+but database workflow completion failed, a retry reconciles the visible
+identity before deciding whether another append is allowed. Accepted content
+is re-indexed before it becomes eligible for production QA.
 
 See [Notion permissions](06-notion-permission-model.md) and
 [Guardrails](03-guardrails.md) for the complete policy.
@@ -85,28 +91,33 @@ flowchart LR
     Provider --> LLM["LLM and embedding adapters"]
     Tools --> External["Notion, Telegram, parsers"]
     Repository --> Database["PostgreSQL / pgvector"]
-    Route --> Queue["QueueClient"]
+    Orchestrator --> Queue["QueueClient"]
     Queue --> Redis["Redis / RQ"]
     Redis --> Worker["Telegram worker"]
     Worker --> Orchestrator
 ```
 
 Routes validate transport contracts and map responses. Orchestrators
-coordinate workflows. Services enforce deterministic rules. Providers isolate
-LLM and embedding APIs. Tools isolate Notion, Telegram, OCR, and source
-parsers. Repositories own PostgreSQL access, and `QueueClient` owns queue
-access.
+coordinate workflows through repositories, tools, provider abstractions, and
+queue interfaces. Routes and orchestrators do not instantiate or operate
+provider SDKs, infrastructure clients, or database drivers directly. Services
+enforce deterministic rules; providers isolate LLM and embedding APIs; tools
+isolate Notion, Telegram, OCR, and source parsers; repositories own PostgreSQL
+access; and `QueueClient` owns queue access.
 
 ## Data lifecycle
 
-The durable model contains:
+PostgreSQL contains two distinct classes of state:
 
-- Notion page and block snapshots used to reconcile the source of truth.
-- `knowledge_chunks` with chunk text, citation metadata, and optional vectors.
-- Source documents with normalized text and a content hash.
-- Change requests with proposal content, target identity, and review status.
-- Workflow runs and Telegram update/idempotency records for safe replay and
-  operational inspection.
+- A rebuildable index: Notion page and block snapshots plus
+  `knowledge_chunks`, citation metadata, and optional vectors.
+- Durable application records: source documents, change requests, workflow
+  runs, Telegram update-ledger entries, and API idempotency records.
+
+Only the first class can be rebuilt by reading Notion again. The second class
+requires PostgreSQL backup and restore; Notion cannot reproduce extracted
+sources, proposal decisions, workflow outcomes, or replay records. See
+[State ownership and synchronization](04-memory-design.md).
 
 Production retrieval includes only eligible Notion-derived chunks. Pending and
 rejected proposals are never retrieved. A successful append followed by a

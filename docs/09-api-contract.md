@@ -1,7 +1,9 @@
 # API Contract
 
-This document covers the implemented HTTP API. All `/api` routes require the
-configured bearer boundary; the Telegram webhook has its own Telegram trust
+This document covers the implemented HTTP API. Non-Telegram application and
+operator routes use the configured bearer boundary; when
+`API_BEARER_TOKEN` is unset, that compatibility boundary permits requests.
+The Telegram webhook uses its own Telegram secret and chat-authorization
 boundary. `/health`, `/ready`, and `/metrics` are public operational endpoints.
 
 ## Authentication and error envelope
@@ -12,14 +14,16 @@ When `API_BEARER_TOKEN` is set, protected callers send:
 Authorization: Bearer <configured-token>
 ```
 
-Failures use a bounded detail object:
+Route and middleware failures generally use a bounded FastAPI `detail` object:
 
 ```json
 {
-  "error_code": "LLM_OUTPUT_INVALID",
-  "message": "Proposal validation failed",
-  "failure_reason": "LLM_OUTPUT_INVALID",
-  "workflow_run_id": 123
+  "detail": {
+    "error_code": "LLM_OUTPUT_INVALID",
+    "message": "Proposal validation failed",
+    "failure_reason": "LLM_OUTPUT_INVALID",
+    "workflow_run_id": 123
+  }
 }
 ```
 
@@ -52,9 +56,20 @@ failure metrics. It does not include workflow metadata or source content.
 | `POST /api/notion/index/full` | no body | Discover and index all accessible pages |
 | `GET /api/notion/index/status` | `?workflow_run_id=<id>` optional | Read the latest or selected persisted indexing workflow |
 
-Index responses include a workflow id, status, page counts, page title/path,
-and indexed block counts. Status does not re-read Notion or expose raw page
-metadata. Page replacement is atomic; incremental sync preserves earlier
+The synchronous indexing responses are endpoint-specific:
+
+- page index returns `workflow_run_id`, `status`, `page_id`, `page_title`,
+  `notion_path`, and `indexed_block_count`;
+- incremental index returns workflow/status/sync mode, processed count, and an
+  `indexed_pages` list containing page identity, title/path, and block count;
+- full index returns workflow/status, discovered and processed counts, and the
+  same per-page list;
+- status returns persisted workflow type/status, failure reason, timestamps,
+  and safe metadata. It does not re-read Notion.
+
+These HTTP indexing mutations run synchronously and return their completed
+response. The queued `202` behavior described below belongs to the Telegram
+webhook path. Page replacement is atomic; incremental sync preserves earlier
 successful page commits when a later page fails.
 
 ## Source ingestion
@@ -113,8 +128,21 @@ and citations. It is read-only.
 | `POST /api/supplement/reject` | `{change_request_id, reviewer?, reason}` | Change state only; no Notion write |
 | `POST /api/supplement/edit-later` | `{change_request_id, reviewer?, reason?}` | Keep the proposal pending; no Notion write |
 
-Concurrent reviews revalidate the pending state under a row lock. A failed or
-uncertain append keeps the request pending for recovery.
+The HTTP API does not currently expose a Change Target mutation; Telegram's
+owner-bound page picker invokes that application workflow.
+
+Accept locks and revalidates the Change Request only in its final database
+transaction, after append verification and page-snapshot preparation. That
+transaction persists the prepared page and marks `accepted` together. Change
+Target also uses `SELECT ... FOR UPDATE` while validating and replacing its
+target identity. Reject and Edit Later re-read and validate `pending` inside
+their transaction but do not currently request a row lock. A stale observed
+state returns `409 INVALID_STATE_TRANSITION`. A failed or uncertain append
+keeps the request pending for identity-based recovery. The final Accept lock
+does not cover the earlier external Notion append, and simultaneous unkeyed
+review requests are not a fully serialized contract; mutation callers should
+send a stable `Idempotency-Key` and operators must reconcile uncertain append
+outcomes by visible identity.
 
 ## Grounded QA
 
@@ -150,8 +178,11 @@ must include `X-Telegram-Bot-Api-Secret-Token`. When
 
 The response includes workflow/status fields and may include a bounded reply,
 source document id, change request id, review state, target selection, or
-citations. With Redis, long work returns `202` and the worker persists the
-terminal outcome. A repeated non-null `update_id` replays the existing outcome
+citations. With Redis, a newly claimed update is queued and returns `202` with
+a running/queued response; the worker later persists the terminal outcome in
+the Telegram update ledger and associated workflow runs. Without Redis, the
+compatibility path executes synchronously and returns the resulting status. A
+repeated non-null `update_id` returns the persisted running or terminal outcome
 without repeating business work.
 
 ## Mutation idempotency
