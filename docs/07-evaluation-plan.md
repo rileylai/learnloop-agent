@@ -92,3 +92,27 @@ uv run --no-env-file --frozen python scripts/release_gate.py --json
 
 An unavailable dependency, omitted opt-in guard, or skipped live operation is
 inconclusive, not successful evidence.
+
+## Step 99 hybrid retrieval decision
+
+Step 99 completed on 2026-08-12 with the formal decision
+`maintain_vector_primary`; see
+[ADR-0008](decisions/0008-retain-vector-primary-after-hybrid-evaluation.md).
+The selected weighted-RRF candidate improved reciprocal-rank sum by
+`2.666666666666`, below the preregistered `2.700` requirement. The threshold is
+evaluated at frozen precision and is not rounded into a pass.
+
+Keyword-only reported the highest aggregate metrics but was preregistered only
+as a comparison baseline, not a production replacement candidate. Its current
+ASCII token-set scorer has limited multilingual generalization, and this
+offline evaluation provides no production-scale latency, resource, or traffic
+evidence. The result supports retaining lexical fallback, not switching to
+keyword-primary retrieval.
+
+Step 99 citation tables use *invalid-to-qrel path* to mean a retrieved path not
+present in the annotated qrels for that query. The term does not mean a path is
+structurally invalid, unsafe, or fabricated. Independent and golden citation
+conformance each retained zero invalid citations. Production remains exact
+body-only, query-embedding-first, repository-owned exact filtered cosine, with
+lexical fallback only when the vector query fails or eligible vectors are
+unavailable. Step 100 remains deferred.
