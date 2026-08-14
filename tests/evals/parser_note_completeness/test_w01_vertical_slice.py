@@ -120,7 +120,7 @@ def test_w01_html_is_self_contained_and_static() -> None:
     )
 
 
-def test_w01_candidate_is_diagnostic_only_and_has_pending_evidence() -> None:
+def test_w01_candidate_is_non_authoritative_and_has_pending_evidence() -> None:
     candidate = json.loads(
         (GOVERNANCE_ROOT / "candidate.json").read_text(encoding="utf-8")
     )
