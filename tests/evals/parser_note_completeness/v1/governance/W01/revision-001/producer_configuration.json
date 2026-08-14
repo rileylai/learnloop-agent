@@ -1,0 +1,15 @@
+{
+  "code_language_hint_policy": {
+    "language_hint": "python",
+    "source_supplied": false,
+    "rule": "retain producer hint without claiming HTML provenance"
+  },
+  "locator_policy": {
+    "family": "web",
+    "identity": "snapshot_sha256_and_dom_path",
+    "fabrication": "reject"
+  },
+  "processing_method": "project_authored_static_html",
+  "processing_stage": "reference_authoring",
+  "segmentation_semantics": "html-block-elements-v1"
+}

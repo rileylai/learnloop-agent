@@ -1,0 +1,24 @@
+{
+  "case_id": "W01",
+  "revision": "revision-001",
+  "candidate_status": "draft_candidate",
+  "formal_manifest_present": false,
+  "authority": {
+    "canonical_dataset": false,
+    "approved": false,
+    "formal": false,
+    "baseline_gate_authority": false
+  },
+  "artifacts": {
+    "source": "../../../fixtures/W01/revision-001/source.html",
+    "source_digest": "../../../fixtures/W01/revision-001/source.sha256",
+    "reference_document": "../../../reference_documents/W01/revision-001/normalized_document.json",
+    "reference_digest": "../../../reference_documents/W01/revision-001/normalized_document.sha256",
+    "producer_configuration": "producer_configuration.json"
+  },
+  "pending_evidence": [
+    "Q22: fixture provenance, rights, privacy, and independent approval evidence",
+    "Q25: fixture governance, acquisition receipt, separation-of-duties, and approval evidence"
+  ],
+  "scope_note": "Project-authored synthetic-first candidate for development validation only; no comparison-result role, formal dataset, baseline, gate, or adoption authority is claimed."
+}
