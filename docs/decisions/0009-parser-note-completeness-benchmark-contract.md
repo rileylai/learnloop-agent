@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted at the approved contract and topology boundaries; fixture evidence, schema realization, metric-specific policy, calibration, and implementation remain pending.
+Accepted at the approved contract and topology boundaries; the benchmark-only `NormalizedDocument` v1 schema, validation, canonical serialization, and digest boundary are realized. Fixture evidence, other schemas, metric-specific policy, calibration, and later implementation remain pending.
 
 ## Context
 
@@ -56,16 +56,20 @@ baseline, comparison, and adoption.
 
 ### Benchmark artifact boundaries
 
-`NormalizedDocument` is the Parser lane boundary. Its minimum frozen shape is a document envelope, source metadata, capabilities, sections, ordered elements, typed locators, and parser provenance. Its closed element-kind set is `heading`,
-`paragraph`, `list_item`, `code_block`, `table`, `row`, `cell`, `figure`,
-`caption`, `formula`, `transcript_segment`, `message`, `ui_text`, `page_break`,
-and `unknown`. Locator families include PDF page/geometry, Web snapshot/DOM
-path, YouTube cue/timestamp, Chat message/thread, and Screenshot image/region.
+`NormalizedDocument` is the Parser lane boundary. Its top level is exactly `schema_version`, `artifact_role`, `document_id`, `source`, `capabilities`, `sections`, `elements`, and `producer_provenance`. `artifact_role` is `parser_output` or `reference_document`; source records type (`pdf`, `web`, `youtube`, `chat`, or `screenshots`), identity, display name, snapshot SHA-256, and ordered, deduplicated languages. Source and element languages reject `mixed` and use `und` when unknown.
+The required capabilities are hierarchy, language identification, geometry, table structure, code metadata, source modality, and typed locators. Each is a typed `available`, `partial`, `unavailable`, or `not_applicable` declaration; `partial` and `unavailable` require a machine-readable reason.
+The closed element kinds are `heading`, `paragraph`, `list_item`, `quote`,
+`code_block`, `table`, `table_row`, `table_cell`, `figure`, `caption`,
+`formula`, `transcript_segment`, `message`, `ui_text`, `page_break`, and
+`unknown`. Sections bind unique IDs, optional parents and headings, and inclusive element-order ranges. Elements bind unique IDs, kind, section, optional parent, source-faithful content, languages, locators, applicable typed metadata, and globally unique, zero-based, gap-free `order`; the array itself follows that order.
+
+Locator availability is separate from platform-identity provenance: a YouTube locator may be `available` with cue/timestamps while `video_identity` and `caption_track_identity` are independently `available` or typed `unavailable`; an unavailable locator carries no cue, timestamp, or identity. Available PDF, Web, Chat, and Screenshot locators require their family identities. Geometry uses top-left-origin integers in the named normalized space `0..1_000_000` and cannot exceed it. Producer provenance records producer identity/version, configuration digest, segmentation semantics, processing method/stage, and optional parser/OCR/ASR model identity.
+
 `document_id` is benchmark-manifest assigned. Element IDs are stable only
 within the same artifact and segmentation semantics; they do not claim
 cross-parser identity. The artifact excludes chunks, embeddings, retrieval
-scores, `top_k`, and evidence importance. Exact schema field names and
-serialization realization remain pending; this ADR does not create a schema.
+scores, `top_k`, evidence importance, gold, expected claims, volatile execution
+facts, and its own digest.
 
 The generation reference is frozen and byte-identical per benchmark revision.
 Gold/evidence/expected claims are separate human-governed artifacts. The
@@ -179,11 +183,11 @@ The exact numeric gate constants remain owned by Q11 calibration. This ADR
 sets no threshold, weight, epsilon, partial-credit value, time ceiling,
 resource ceiling, or cost ceiling.
 
-Canonical JSON uses UTF-8, sorted keys, compact encoding, and LF, with no
-NaN or Infinity. Array order is semantic; the canonical payload excludes its
-own digest. Whole-document reading order is unique, continuous, and starts at
-zero. Missing locators use typed `unavailable`; IDs do not claim cross-parser
-identity. Alignment that cannot be proved must abstain rather than fuzzy-match.
+Canonical JSON uses UTF-8, sorted keys, compact encoding, and LF, with no NaN
+or Infinity. Array order is semantic; the canonical payload excludes its own
+digest. Whole-document `order` is unique, continuous, starts at zero, and is
+the `elements` array order. Missing locators use typed `unavailable`; IDs do not
+claim cross-parser identity. Unproved alignment must abstain, not fuzzy-match.
 
 ### Runner, offline execution, and reproducibility
 
@@ -305,8 +309,7 @@ The following work remains explicitly pending:
 
 - Q22 fixture bytes, digests, provenance, rights and privacy evidence, and
   independent approvals;
-- exact schemas, enums, validators, canonical serializers, manifests,
-  receipts, and result-store realization;
+- remaining schemas, enums, manifests, receipts, and result-store realization;
 - parser-specific unit inventories and metric definitions, including
   normalization, alignment, locator, table, formula, OCR, and caption policies;
 - evidence-supported aggregation selections for each applicable metric;
@@ -326,12 +329,10 @@ numeric values in formal artifacts.
 
 When implementation is separately authorized, proceed in this order:
 
-1. Realize the `NormalizedDocument` schema, canonical serializer, validator,
-   and tests.
-2. Build one minimal project-owned synthetic vertical slice.
-3. Add scorer and runner skeletons around immutable artifacts and replay.
-4. Wire the five-case smoke profile with one case per source family.
-5. Complete all 13 cases, capture a baseline, and perform calibration before
+1. Build one minimal project-owned synthetic vertical slice.
+2. Add scorer and runner skeletons around immutable artifacts and replay.
+3. Wire the five-case smoke profile with one case per source family.
+4. Complete all 13 cases, capture a baseline, and perform calibration before
    any formal candidate decision.
 
 This sequence is an implementation plan only. It does not approve fixtures,
