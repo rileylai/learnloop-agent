@@ -4,6 +4,10 @@ Evaluation separates deterministic acceptance from opt-in dependency checks.
 The default suite must not contact a real Notion workspace, send Telegram
 messages, consume provider quota, or mutate a shared database.
 
+The future parser and note completeness benchmark is governed by
+[ADR-0009](decisions/0009-parser-note-completeness-benchmark-contract.md); its
+fixture evidence, metric policy, calibration, schemas, and implementation remain pending.
+
 ## Verification levels
 
 | Level | Current mechanism | Acceptance meaning |

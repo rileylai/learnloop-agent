@@ -10,3 +10,4 @@ history belongs outside the public documentation.
 - [Typed Telegram review callbacks](0005-telegram-review-callback-routing.md)
 - [Bounded embedding execution](0006-bounded-embedding-execution-contract.md)
 - [Dedicated Telegram full-index queue](0007-telegram-full-index-queue-reliability.md)
+- [Parser and note completeness benchmark contract](0009-parser-note-completeness-benchmark-contract.md)
