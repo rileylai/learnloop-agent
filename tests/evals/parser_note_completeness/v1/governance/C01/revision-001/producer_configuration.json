@@ -1,0 +1,14 @@
+{
+  "language_policy": {
+    "source_declared": "en",
+    "unknown": "und"
+  },
+  "locator_policy": {
+    "family": "chat",
+    "identity": "message_id_and_source_sequence",
+    "fabrication": "reject"
+  },
+  "processing_method": "project_authored_synthetic_chat",
+  "processing_stage": "reference_authoring",
+  "segmentation_semantics": "message-records-v1"
+}

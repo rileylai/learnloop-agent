@@ -1,0 +1,15 @@
+{
+  "geometry_policy": "normalized_top_left_0_1000000_integer_bounds",
+  "language_policy": {
+    "source_declared": "en",
+    "unknown": "und"
+  },
+  "locator_policy": {
+    "family": "screenshots",
+    "identity": "image_index_and_sha256_with_normalized_region",
+    "fabrication": "reject"
+  },
+  "processing_method": "project_authored_synthetic_raster",
+  "processing_stage": "reference_authoring",
+  "segmentation_semantics": "png-text-bounds-v1"
+}
