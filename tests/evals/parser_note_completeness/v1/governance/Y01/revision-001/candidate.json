@@ -1,0 +1,28 @@
+{
+  "artifacts": {
+    "captions": "../../../fixtures/Y01/revision-001/captions.vtt",
+    "captions_digest": "../../../fixtures/Y01/revision-001/captions.sha256",
+    "chapters": "../../../fixtures/Y01/revision-001/chapters.json",
+    "chapters_digest": "../../../fixtures/Y01/revision-001/chapters.sha256",
+    "producer_configuration": "producer_configuration.json",
+    "reference_digest": "../../../reference_documents/Y01/revision-001/normalized_document.sha256",
+    "reference_document": "../../../reference_documents/Y01/revision-001/normalized_document.json",
+    "source_snapshot": "../../../fixtures/Y01/revision-001/source_snapshot.json",
+    "source_snapshot_digest": "../../../fixtures/Y01/revision-001/source_snapshot.sha256"
+  },
+  "authority": {
+    "approved": false,
+    "baseline_gate_authority": false,
+    "canonical_dataset": false,
+    "formal": false
+  },
+  "candidate_status": "draft_candidate",
+  "case_id": "Y01",
+  "formal_manifest_present": false,
+  "pending_evidence": [
+    "Q22: fixture provenance, rights, privacy, and independent approval evidence",
+    "Q25: fixture governance, acquisition receipt, separation-of-duties, and independent approval"
+  ],
+  "revision": "revision-001",
+  "scope_note": "Project-authored synthetic-first YouTube-caption candidate for development validation only; no upload, external media, ASR evaluation, formal dataset, baseline, gate, or adoption authority is claimed."
+}

@@ -1,0 +1,13 @@
+{
+  "asr_policy": "not_used",
+  "caption_authoring": "manual_project_authored_webvtt",
+  "chapter_authoring": "manual_project_authored_metadata",
+  "code_language_hint_policy": "not_applicable",
+  "geometry_policy": "not_captured",
+  "locator_policy": "available_cues_with_typed_unavailable_platform_identity_and_unavailable_chapter_titles",
+  "platform_identity_policy": "never_invent",
+  "processing_method": "project_authored_manual_captions",
+  "processing_stage": "fixture_build_and_reference_authoring",
+  "segmentation_semantics": "webvtt-cues-and-manual-chapters-v1",
+  "source_snapshot_policy": "relative_posix_paths_and_external_digests"
+}

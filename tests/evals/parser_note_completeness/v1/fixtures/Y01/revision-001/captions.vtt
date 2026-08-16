@@ -1,0 +1,28 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:03.000
+A reliable worker starts with a clear queue contract.
+
+00:00:03.000 --> 00:00:06.000
+Name the owner, the lease, and the acknowledgement boundary.
+
+00:00:06.000 --> 00:00:09.000
+Write those facts down before code begins.
+
+00:00:09.000 --> 00:00:12.000
+An idempotency key makes a replay safe to inspect.
+
+00:00:12.000 --> 00:00:15.000
+Persist the key with the durable effect.
+
+00:00:15.000 --> 00:00:18.000
+A second attempt should observe the first result.
+
+00:00:18.000 --> 00:00:21.000
+Heartbeats make ownership visible while work is open.
+
+00:00:21.000 --> 00:00:24.000
+Shutdown should stop claims and preserve open attempts.
+
+00:00:24.000 --> 00:00:27.000
+Recovery can then reconcile what the worker actually finished.
