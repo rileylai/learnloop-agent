@@ -1,0 +1,330 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R 6 0 R 7 0 R 8 0 R 9 0 R 10 0 R] /Count 8 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 11 0 R /F2 12 0 R >> >> /Contents 13 0 R >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 11 0 R /F2 12 0 R >> >> /Contents 14 0 R >>
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 11 0 R /F2 12 0 R >> >> /Contents 15 0 R >>
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 11 0 R /F2 12 0 R >> >> /Contents 16 0 R >>
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 11 0 R /F2 12 0 R >> >> /Contents 17 0 R >>
+endobj
+8 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 11 0 R /F2 12 0 R >> >> /Contents 18 0 R >>
+endobj
+9 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 11 0 R /F2 12 0 R >> >> /Contents 19 0 R >>
+endobj
+10 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 11 0 R /F2 12 0 R >> >> /Contents 20 0 R >>
+endobj
+11 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+12 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>
+endobj
+13 0 obj
+<< /Length 525 >>
+stream
+BT
+72 720 Td
+/F1 20 Tf
+0 -28 Td
+(Reliable Queue Workers) Tj
+/F1 11 Tf
+0 -20 Td
+(A project-authored field guide to dependable background work.) Tj
+/F1 11 Tf
+0 -20 Td
+(The examples use a small queue, explicit ownership, and observable state.) Tj
+/F1 11 Tf
+12 -20 Td
+(- ) Tj
+(Use a stable job identifier for every unit of work.) Tj
+-12 0 Td
+/F1 11 Tf
+12 -20 Td
+(- ) Tj
+(Make handlers safe to run again after a process loss.) Tj
+-12 0 Td
+/F1 11 Tf
+12 -20 Td
+(- ) Tj
+(Record the reason for every terminal outcome.) Tj
+-12 0 Td
+ET
+endstream
+endobj
+14 0 obj
+<< /Length 540 >>
+stream
+BT
+72 720 Td
+/F1 20 Tf
+0 -28 Td
+(1. Queue Contracts) Tj
+/F1 11 Tf
+0 -20 Td
+(A queue contract names the work, its owner, and the acknowledgement boundary.) Tj
+/F1 11 Tf
+0 -20 Td
+(The worker may claim a job, but it must not claim success before durable completion.) Tj
+/F1 11 Tf
+12 -20 Td
+(- ) Tj
+(Payloads are versioned before they enter the queue.) Tj
+-12 0 Td
+/F1 11 Tf
+12 -20 Td
+(- ) Tj
+(A lease has a visible expiry and a renewal rule.) Tj
+-12 0 Td
+/F1 11 Tf
+12 -20 Td
+(- ) Tj
+(Acknowledgement follows the durable write.) Tj
+-12 0 Td
+ET
+endstream
+endobj
+15 0 obj
+<< /Length 515 >>
+stream
+BT
+72 720 Td
+/F1 20 Tf
+0 -28 Td
+(2. Idempotent Jobs) Tj
+/F1 11 Tf
+0 -20 Td
+(Idempotency turns a replay from a duplicate side effect into a safe observation.) Tj
+/F1 11 Tf
+0 -20 Td
+(Persist the job key with the effect so the check and write share one transaction.) Tj
+/F2 9 Tf
+0 -24 Td
+(def handle\(job, store\):) Tj
+0 -13 Td
+(    if store.was_applied\(job.key\):) Tj
+0 -13 Td
+(        return "already-applied") Tj
+0 -13 Td
+(    store.apply\(job.key, job.payload\)) Tj
+0 -13 Td
+(    return "applied") Tj
+0 -13 Td
+ET
+endstream
+endobj
+16 0 obj
+<< /Length 624 >>
+stream
+BT
+72 720 Td
+/F1 20 Tf
+0 -28 Td
+(3. Retries and Backoff) Tj
+/F1 11 Tf
+0 -20 Td
+(Retries are bounded observations of a failure, not a promise that work will eventually succeed.) Tj
+/F1 11 Tf
+12 -20 Td
+(- ) Tj
+(Classify failures before deciding whether a retry is safe.) Tj
+-12 0 Td
+/F1 11 Tf
+12 -20 Td
+(- ) Tj
+(Increase the delay between attempts without hiding the attempt count.) Tj
+-12 0 Td
+/F1 11 Tf
+12 -20 Td
+(- ) Tj
+(Send exhausted work to an explicit review path.) Tj
+-12 0 Td
+/F2 9 Tf
+0 -24 Td
+(attempt=2) Tj
+0 -13 Td
+(delay=$\(\(attempt * 5\)\)) Tj
+0 -13 Td
+(printf 'retry in %s seconds\\n' "$delay") Tj
+0 -13 Td
+ET
+endstream
+endobj
+17 0 obj
+<< /Length 549 >>
+stream
+BT
+72 720 Td
+/F1 20 Tf
+0 -28 Td
+(4. Visibility and Heartbeats) Tj
+/F1 11 Tf
+0 -20 Td
+(A worker should make ownership and progress visible without logging private payloads.) Tj
+/F1 11 Tf
+0 -20 Td
+(Heartbeat records describe the lease, not the contents of the job.) Tj
+/F1 11 Tf
+12 -20 Td
+(- ) Tj
+(Measure time since the last accepted heartbeat.) Tj
+-12 0 Td
+/F1 11 Tf
+12 -20 Td
+(- ) Tj
+(Expose queue depth and age as raw operational facts.) Tj
+-12 0 Td
+/F1 11 Tf
+12 -20 Td
+(- ) Tj
+(Keep provider and host details in bounded receipts.) Tj
+-12 0 Td
+ET
+endstream
+endobj
+18 0 obj
+<< /Length 582 >>
+stream
+BT
+72 720 Td
+/F1 20 Tf
+0 -28 Td
+(5. Shutdown and Recovery) Tj
+/F1 11 Tf
+0 -20 Td
+(Graceful shutdown stops new claims, finishes safe work, and leaves open leases visible.) Tj
+/F1 11 Tf
+0 -20 Td
+(Recovery must distinguish a closed result from a process that disappeared mid-attempt.) Tj
+/F2 9 Tf
+0 -24 Td
+(def stop\(worker\):) Tj
+0 -13 Td
+(    worker.stop_claiming\(\)) Tj
+0 -13 Td
+(    worker.drain_safe_work\(\)) Tj
+0 -13 Td
+(    worker.record_open_leases\(\)) Tj
+0 -13 Td
+/F1 11 Tf
+12 -20 Td
+(- ) Tj
+(Never convert an interrupted attempt into a fabricated success.) Tj
+-12 0 Td
+ET
+endstream
+endobj
+19 0 obj
+<< /Length 569 >>
+stream
+BT
+72 720 Td
+/F1 20 Tf
+0 -28 Td
+(6. Testing Worker Behavior) Tj
+/F1 11 Tf
+0 -20 Td
+(Tests should exercise the boundary between queue state and application state.) Tj
+/F1 11 Tf
+12 -20 Td
+(- ) Tj
+(Replay the same job key and verify one durable effect.) Tj
+-12 0 Td
+/F1 11 Tf
+12 -20 Td
+(- ) Tj
+(Interrupt after claim and collect the open attempt.) Tj
+-12 0 Td
+/F1 11 Tf
+12 -20 Td
+(- ) Tj
+(Reject malformed payloads before a handler runs.) Tj
+-12 0 Td
+/F2 9 Tf
+0 -24 Td
+(python -m pytest tests/test_worker.py -q) Tj
+0 -13 Td
+(python -m compileall worker.py) Tj
+0 -13 Td
+ET
+endstream
+endobj
+20 0 obj
+<< /Length 569 >>
+stream
+BT
+72 720 Td
+/F1 20 Tf
+0 -28 Td
+(7. Operational Checklist) Tj
+/F1 11 Tf
+0 -20 Td
+(Use this short checklist before enabling a new worker in a local environment.) Tj
+/F1 11 Tf
+12 -20 Td
+(- ) Tj
+(Confirm the queue contract and idempotency key are documented.) Tj
+-12 0 Td
+/F1 11 Tf
+12 -20 Td
+(- ) Tj
+(Confirm terminal receipts cannot be overwritten.) Tj
+-12 0 Td
+/F1 11 Tf
+12 -20 Td
+(- ) Tj
+(Confirm failures remain distinguishable from incomplete work.) Tj
+-12 0 Td
+/F2 9 Tf
+0 -24 Td
+(./worker --check-contract) Tj
+0 -13 Td
+(./worker --print-lease-policy) Tj
+0 -13 Td
+ET
+endstream
+endobj
+xref
+0 21
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000164 00000 n 
+0000000303 00000 n 
+0000000442 00000 n 
+0000000581 00000 n 
+0000000720 00000 n 
+0000000859 00000 n 
+0000000998 00000 n 
+0000001137 00000 n 
+0000001277 00000 n 
+0000001375 00000 n 
+0000001471 00000 n 
+0000002047 00000 n 
+0000002638 00000 n 
+0000003204 00000 n 
+0000003879 00000 n 
+0000004479 00000 n 
+0000005112 00000 n 
+0000005732 00000 n 
+trailer
+<< /Size 21 /Root 1 0 R >>
+startxref
+6352
+%%EOF

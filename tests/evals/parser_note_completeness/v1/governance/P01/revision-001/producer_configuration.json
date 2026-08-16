@@ -1,0 +1,9 @@
+{
+  "build_method": "stdlib_deterministic_pdf_writer",
+  "build_source": "../../../fixtures/P01/revision-001/build_source.py",
+  "code_language_hint_policy": "source_authored_code_blocks_only",
+  "locator_policy": "pdf_page_only_no_geometry",
+  "processing_method": "project_authored_native_pdf",
+  "processing_stage": "fixture_build_and_reference_authoring",
+  "segmentation_semantics": "pdf-text-blocks-v1"
+}
