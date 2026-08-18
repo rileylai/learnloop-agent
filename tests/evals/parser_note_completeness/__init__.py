@@ -21,6 +21,17 @@ from .normalized_document import (
     normalized_document_sha256,
     validate_normalized_document,
 )
+from .parser_lane import (
+    PARSER_LANE_ATTEMPT_SCHEMA_VERSION,
+    PARSER_LANE_RESULT_SCHEMA_VERSION,
+    ParserLaneAttemptArtifact,
+    ParserLaneOutcome,
+    ParserLaneResultArtifact,
+    build_parser_candidate,
+    canonical_parser_lane_artifact_bytes,
+    execute_parser_case,
+    parser_lane_artifact_sha256,
+)
 from .runner import (
     RUNNER_VERSION,
     RunnerAttemptArtifact,
@@ -76,6 +87,15 @@ __all__ = [
     "materialize_diagnostic_run_plan",
     "materialize_profile_run_plan",
     "write_diagnostic_run_plan",
+    "PARSER_LANE_ATTEMPT_SCHEMA_VERSION",
+    "PARSER_LANE_RESULT_SCHEMA_VERSION",
+    "ParserLaneAttemptArtifact",
+    "ParserLaneOutcome",
+    "ParserLaneResultArtifact",
+    "build_parser_candidate",
+    "canonical_parser_lane_artifact_bytes",
+    "execute_parser_case",
+    "parser_lane_artifact_sha256",
     "CAPABILITY_NAMES",
     "ELEMENT_KINDS",
     "SCHEMA_VERSION",

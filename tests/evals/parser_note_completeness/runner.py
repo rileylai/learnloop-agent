@@ -13,7 +13,11 @@ from typing import Annotated, Any, Literal, Mapping, NoReturn, Optional, Sequenc
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError
 
-from .diagnostic import write_diagnostic_run_plan
+from .diagnostic import (
+    load_diagnostic_profile,
+    materialize_diagnostic_run_plan,
+    write_diagnostic_run_plan,
+)
 from .normalized_document import (
     NormalizedDocument,
     canonical_normalized_document_bytes,
@@ -37,6 +41,7 @@ from .run_plan import (
     invocation_sha256,
 )
 from .scorer import QualityFailure, Scorer
+from .parser_lane import execute_parser_case
 
 RUNNER_VERSION = "parser-note-completeness-runner/1.0.0"
 RESULT_SCHEMA_VERSION = "runner-result/1.0.0"
@@ -105,6 +110,7 @@ class RunnerOutcome:
     exit_code: int
     status: str
     plan_digest: Optional[str] = None
+    candidate_digest: Optional[str] = None
     result_digest: Optional[str] = None
     attempt_digest: Optional[str] = None
     collection_digest: Optional[str] = None
@@ -118,6 +124,8 @@ class RunnerOutcome:
         }
         if self.plan_digest is not None:
             payload["plan_digest"] = self.plan_digest
+        if self.candidate_digest is not None:
+            payload["candidate_digest"] = self.candidate_digest
         if self.result_digest is not None:
             payload["result_digest"] = self.result_digest
         if self.attempt_digest is not None:
@@ -397,17 +405,19 @@ def _invocation_digest(
     resume: bool,
     formal: bool,
     attestation_supplied: bool,
+    lane: Literal["reference", "parser"] = "reference",
 ) -> str:
-    return invocation_sha256(
-        {
-            "command": "execute-plan",
-            "plan_sha256": plan_digest,
-            "invocation_id": invocation_id,
-            "resume": resume,
-            "formal": formal,
-            "attestation_supplied": attestation_supplied,
-        }
-    )
+    payload: dict[str, Any] = {
+        "command": "execute-plan",
+        "plan_sha256": plan_digest,
+        "invocation_id": invocation_id,
+        "resume": resume,
+        "formal": formal,
+        "attestation_supplied": attestation_supplied,
+    }
+    if lane == "parser":
+        payload["lane"] = lane
+    return invocation_sha256(payload)
 
 
 def _preflight_execute(
@@ -520,7 +530,14 @@ def _slot_history(
             except OSError as exc:
                 raise _OperationalFailure("attempt history unavailable") from exc
             if not execution_entries.issubset(
-                {"result.json", "result.sha256", "attempt.json", "attempt.sha256"}
+                {
+                    "candidate.json",
+                    "candidate.sha256",
+                    "result.json",
+                    "result.sha256",
+                    "attempt.json",
+                    "attempt.sha256",
+                }
             ):
                 raise _InvalidInput("attempt execution contains unknown artifact")
         if not start_path.exists() or not start_digest.exists():
@@ -798,6 +815,9 @@ def execute_plan(
     formal: bool = False,
     interrupt_after_start_slot: Optional[str] = None,
     benchmark_root: Optional[Path] = None,
+    lane: Literal["reference", "parser"] = "reference",
+    profile_path: Optional[Path] = None,
+    profile_digest_path: Optional[Path] = None,
 ) -> RunnerOutcome:
     """Execute only diagnostic development slots and append immutable history."""
 
@@ -811,6 +831,29 @@ def execute_plan(
         plan, plan_digest = _read_run_plan(plan_path, plan_digest_path)
         if formal or plan.execution_mode != "development":
             raise _InvalidInput("formal execution is unsupported")
+        if lane not in {"reference", "parser"}:
+            raise _InvalidInput("unsupported execution lane")
+        parser_cases: dict[str, Any] = {}
+        if lane == "parser":
+            if profile_path is None or profile_digest_path is None or benchmark_root is None:
+                raise _InvalidInput(
+                    "parser lane requires profile, profile digest, and benchmark root"
+                )
+            try:
+                profile, profile_digest = load_diagnostic_profile(
+                    profile_path,
+                    profile_digest_path,
+                    benchmark_root,
+                )
+                expected_plan, expected_plan_digest = materialize_diagnostic_run_plan(
+                    profile,
+                    profile_digest,
+                )
+            except ValueError as exc:
+                raise _InvalidInput(str(exc)) from exc
+            if expected_plan_digest != plan_digest or expected_plan != plan:
+                raise _InvalidInput("parser profile and run plan binding mismatch")
+            parser_cases = {case.case_id: case for case in profile.cases}
         artifact_root = Path(benchmark_root) if benchmark_root is not None else plan_path.parent
         planned_paths = {
             slot.slot_id: (
@@ -833,6 +876,7 @@ def execute_plan(
             resume=resume,
             formal=formal,
             attestation_supplied=attestation_path is not None,
+            lane=lane,
         )
         offline_attestation = _read_attestation(
             attestation_path,
@@ -867,19 +911,35 @@ def execute_plan(
                 raise _ExternalInterruption
             reference_path, digest_path = planned_paths[slot.slot_id]
             attempt_id = f"{slot.slot_id}-attempt-{ordinal:04d}"
-            try:
-                planned_bytes = reference_path.read_bytes()
-            except OSError:
-                planned_bytes = None
-            if planned_bytes is not None and artifact_sha256(planned_bytes) != slot.reference_sha256:
-                outcome = RunnerOutcome(2, "invalid_input", error="planned reference digest mismatch")
-            else:
-                outcome = validate_reference(
-                    reference_path,
-                    digest_path,
+            if lane == "parser":
+                parser_outcome = execute_parser_case(
+                    parser_cases[slot.case_id],
+                    artifact_root,
                     attempt_dir / "execution",
                     attempt_id=attempt_id,
                 )
+                outcome = RunnerOutcome(
+                    parser_outcome.exit_code,
+                    parser_outcome.status,
+                    candidate_digest=parser_outcome.candidate_digest,
+                    result_digest=parser_outcome.result_digest,
+                    attempt_digest=parser_outcome.attempt_digest,
+                    error=parser_outcome.error,
+                )
+            else:
+                try:
+                    planned_bytes = reference_path.read_bytes()
+                except OSError:
+                    planned_bytes = None
+                if planned_bytes is not None and artifact_sha256(planned_bytes) != slot.reference_sha256:
+                    outcome = RunnerOutcome(2, "invalid_input", error="planned reference digest mismatch")
+                else:
+                    outcome = validate_reference(
+                        reference_path,
+                        digest_path,
+                        attempt_dir / "execution",
+                        attempt_id=attempt_id,
+                    )
             _write_terminal_receipt(
                 attempt_dir,
                 plan_digest=plan_digest,
@@ -929,6 +989,7 @@ def execute_plan(
                 resume=resume,
                 formal=formal,
                 attestation_supplied=attestation_path is not None,
+                lane=lane,
             )
             offline_attestation = "attested" if attestation_path is not None else "missing"
             _, collection_digest = collect_collection(
@@ -982,6 +1043,9 @@ def _build_parser() -> argparse.ArgumentParser:
     execute.add_argument("--plan-digest", required=True, type=Path)
     execute.add_argument("--store", required=True, type=Path)
     execute.add_argument("--benchmark-root", type=Path)
+    execute.add_argument("--lane", choices=("reference", "parser"), default="reference")
+    execute.add_argument("--profile", type=Path)
+    execute.add_argument("--profile-digest", type=Path)
     execute.add_argument("--resume", action="store_true")
     execute.add_argument("--attestation", type=Path)
     execute.add_argument("--attestation-digest", type=Path)
@@ -1049,6 +1113,9 @@ def main(
                 args.store,
                 invocation_id=args.invocation_id,
                 benchmark_root=args.benchmark_root,
+                lane=args.lane,
+                profile_path=args.profile,
+                profile_digest_path=args.profile_digest,
                 resume=args.resume,
                 attestation_path=args.attestation,
                 attestation_digest_path=args.attestation_digest,
