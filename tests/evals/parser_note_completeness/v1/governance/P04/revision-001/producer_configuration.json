@@ -1,0 +1,26 @@
+{
+  "build_method": "mixed_type0_native_and_pillow_raster_pdf_writer",
+  "build_reference": "../../../fixtures/P04/revision-001/build_reference.py",
+  "build_source": "../../../fixtures/P04/revision-001/build_source.py",
+  "font_path": "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+  "language_policy": {
+    "declared_order": ["zh-Hant", "en"],
+    "native_and_scanned_pages": "explicit_page_modality"
+  },
+  "locator_policy": "native_pdf_page_and_scanned_normalized_region",
+  "modality_policy": "native_pages_1_3_scanned_pages_2_4",
+  "noise_recipe": {
+    "modulus": 991,
+    "pixel_rule": "coordinate_hash_salt_pepper",
+    "seed_formula": "x19_y29_page97"
+  },
+  "processing_method": "project_authored_mixed_native_and_raster_pdf",
+  "processing_stage": "fixture_build_and_reference_authoring",
+  "segmentation_semantics": "pdf-mixed-native-raster-v1",
+  "skew_recipe": {
+    "affine_factor": 0.014,
+    "resampling": "bicubic"
+  },
+  "table_policy": "explicit_table_row_cell_elements",
+  "formula_policy": "native_text_formula_element"
+}

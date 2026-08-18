@@ -1,0 +1,15 @@
+{
+  "build_method": "stdlib_deterministic_pdf_writer_with_type0_tounicode",
+  "build_reference": "../../../fixtures/P02/revision-001/build_reference.py",
+  "build_source": "../../../fixtures/P02/revision-001/build_source.py",
+  "figure_policy": "project_authored_vector_figures_with_captions",
+  "language_policy": {
+    "declared_order": ["zh-Hant", "en"],
+    "element_languages": "explicit_bilingual_tags"
+  },
+  "locator_policy": "pdf_page_only_no_geometry",
+  "processing_method": "project_authored_native_pdf",
+  "processing_stage": "fixture_build_and_reference_authoring",
+  "segmentation_semantics": "pdf-bilingual-tables-figures-v1",
+  "table_policy": "explicit_table_row_cell_elements"
+}

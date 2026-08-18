@@ -1,0 +1,20 @@
+{
+  "build_method": "pillow_raster_to_stdlib_pdf_image_writer",
+  "build_reference": "../../../fixtures/P03/revision-001/build_reference.py",
+  "build_source": "../../../fixtures/P03/revision-001/build_source.py",
+  "font_path": "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+  "language_policy": "traditional_chinese_scan_text",
+  "locator_policy": "pdf_page_and_normalized_region",
+  "noise_recipe": {
+    "modulus": 997,
+    "pixel_rule": "coordinate_hash_salt_pepper",
+    "seed_formula": "x17_y31_page101"
+  },
+  "processing_method": "project_authored_deterministic_raster_scan",
+  "processing_stage": "fixture_build_and_reference_authoring",
+  "segmentation_semantics": "pdf-scanned-page-regions-v1",
+  "skew_recipe": {
+    "affine_factor": 0.018,
+    "resampling": "bicubic"
+  }
+}
