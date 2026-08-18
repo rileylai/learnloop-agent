@@ -41,6 +41,7 @@ from .run_plan import (
     invocation_sha256,
 )
 from .scorer import QualityFailure, Scorer
+from .generation_lane import execute_generation_case
 from .parser_lane import execute_parser_case
 
 RUNNER_VERSION = "parser-note-completeness-runner/1.0.0"
@@ -111,6 +112,7 @@ class RunnerOutcome:
     status: str
     plan_digest: Optional[str] = None
     candidate_digest: Optional[str] = None
+    generation_input_digest: Optional[str] = None
     result_digest: Optional[str] = None
     attempt_digest: Optional[str] = None
     collection_digest: Optional[str] = None
@@ -126,6 +128,8 @@ class RunnerOutcome:
             payload["plan_digest"] = self.plan_digest
         if self.candidate_digest is not None:
             payload["candidate_digest"] = self.candidate_digest
+        if self.generation_input_digest is not None:
+            payload["generation_input_digest"] = self.generation_input_digest
         if self.result_digest is not None:
             payload["result_digest"] = self.result_digest
         if self.attempt_digest is not None:
@@ -405,7 +409,7 @@ def _invocation_digest(
     resume: bool,
     formal: bool,
     attestation_supplied: bool,
-    lane: Literal["reference", "parser"] = "reference",
+    lane: Literal["reference", "parser", "generation"] = "reference",
 ) -> str:
     payload: dict[str, Any] = {
         "command": "execute-plan",
@@ -415,7 +419,7 @@ def _invocation_digest(
         "formal": formal,
         "attestation_supplied": attestation_supplied,
     }
-    if lane == "parser":
+    if lane != "reference":
         payload["lane"] = lane
     return invocation_sha256(payload)
 
@@ -533,6 +537,8 @@ def _slot_history(
                 {
                     "candidate.json",
                     "candidate.sha256",
+                    "generation_input.json",
+                    "generation_input.sha256",
                     "result.json",
                     "result.sha256",
                     "attempt.json",
@@ -815,7 +821,7 @@ def execute_plan(
     formal: bool = False,
     interrupt_after_start_slot: Optional[str] = None,
     benchmark_root: Optional[Path] = None,
-    lane: Literal["reference", "parser"] = "reference",
+    lane: Literal["reference", "parser", "generation"] = "reference",
     profile_path: Optional[Path] = None,
     profile_digest_path: Optional[Path] = None,
 ) -> RunnerOutcome:
@@ -831,13 +837,14 @@ def execute_plan(
         plan, plan_digest = _read_run_plan(plan_path, plan_digest_path)
         if formal or plan.execution_mode != "development":
             raise _InvalidInput("formal execution is unsupported")
-        if lane not in {"reference", "parser"}:
+        if lane not in {"reference", "parser", "generation"}:
             raise _InvalidInput("unsupported execution lane")
         parser_cases: dict[str, Any] = {}
-        if lane == "parser":
+        generation_cases: dict[str, Any] = {}
+        if lane in {"parser", "generation"}:
             if profile_path is None or profile_digest_path is None or benchmark_root is None:
                 raise _InvalidInput(
-                    "parser lane requires profile, profile digest, and benchmark root"
+                    f"{lane} lane requires profile, profile digest, and benchmark root"
                 )
             try:
                 profile, profile_digest = load_diagnostic_profile(
@@ -852,8 +859,11 @@ def execute_plan(
             except ValueError as exc:
                 raise _InvalidInput(str(exc)) from exc
             if expected_plan_digest != plan_digest or expected_plan != plan:
-                raise _InvalidInput("parser profile and run plan binding mismatch")
-            parser_cases = {case.case_id: case for case in profile.cases}
+                raise _InvalidInput(f"{lane} profile and run plan binding mismatch")
+            if lane == "parser":
+                parser_cases = {case.case_id: case for case in profile.cases}
+            else:
+                generation_cases = {case.case_id: case for case in profile.cases}
         artifact_root = Path(benchmark_root) if benchmark_root is not None else plan_path.parent
         planned_paths = {
             slot.slot_id: (
@@ -925,6 +935,21 @@ def execute_plan(
                     result_digest=parser_outcome.result_digest,
                     attempt_digest=parser_outcome.attempt_digest,
                     error=parser_outcome.error,
+                )
+            elif lane == "generation":
+                generation_outcome = execute_generation_case(
+                    generation_cases[slot.case_id],
+                    artifact_root,
+                    attempt_dir / "execution",
+                    attempt_id=attempt_id,
+                )
+                outcome = RunnerOutcome(
+                    generation_outcome.exit_code,
+                    generation_outcome.status,
+                    generation_input_digest=generation_outcome.generation_input_digest,
+                    result_digest=generation_outcome.result_digest,
+                    attempt_digest=generation_outcome.attempt_digest,
+                    error=generation_outcome.error,
                 )
             else:
                 try:
@@ -1043,7 +1068,11 @@ def _build_parser() -> argparse.ArgumentParser:
     execute.add_argument("--plan-digest", required=True, type=Path)
     execute.add_argument("--store", required=True, type=Path)
     execute.add_argument("--benchmark-root", type=Path)
-    execute.add_argument("--lane", choices=("reference", "parser"), default="reference")
+    execute.add_argument(
+        "--lane",
+        choices=("reference", "parser", "generation"),
+        default="reference",
+    )
     execute.add_argument("--profile", type=Path)
     execute.add_argument("--profile-digest", type=Path)
     execute.add_argument("--resume", action="store_true")
