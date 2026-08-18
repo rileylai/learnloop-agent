@@ -1,0 +1,17 @@
+{
+  "boilerplate_policy": "bounded_header_navigation_aside_footer",
+  "code_language_hint_policy": {
+    "language_hint": "python",
+    "source_supplied": true,
+    "rule": "retain explicit code class as producer evidence"
+  },
+  "locator_policy": {
+    "family": "web",
+    "identity": "snapshot_sha256_and_dom_path",
+    "fabrication": "reject"
+  },
+  "processing_method": "project_authored_static_html",
+  "processing_stage": "fixture_build_and_reference_authoring",
+  "segmentation_semantics": "html-static-structure-v1",
+  "source_policy": "self_contained_utf8_no_external_assets"
+}

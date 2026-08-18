@@ -1,0 +1,25 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:04.000
+先固定契約，再開始實作。 Freeze the contract before implementation.
+
+00:00:04.000 --> 00:00:08.500
+中英字幕共享同一個 cue。 Chinese and English captions share one cue.
+
+00:00:08.500 --> 00:00:13.000
+每個段落都保留可追蹤的時間邊界。 Each segment keeps traceable time boundaries.
+
+00:00:13.000 --> 00:00:17.500
+章節只是導覽，不會創造平台身份。 Chapters guide reading without inventing platform identity.
+
+00:00:17.500 --> 00:00:22.000
+離線 snapshot 可以重現相同 bytes。 An offline snapshot reproduces the same bytes.
+
+00:00:22.000 --> 00:00:27.500
+字幕來源是專案自有內容。 The caption source is project-owned content.
+
+00:00:27.500 --> 00:00:32.000
+我們保留 cue 順序與毫秒範圍。 We preserve cue order and millisecond ranges.
+
+00:00:32.000 --> 00:00:36.000
+這份草稿只用於 development validation。 This draft is for development validation only.

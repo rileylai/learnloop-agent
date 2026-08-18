@@ -1,0 +1,19 @@
+{
+  "capture_policy": "deterministic_offline_rendered_dom_snapshot",
+  "dom_snapshot_policy": {
+    "mode": "project_authored_fixed_bytes",
+    "nested_sections": "preserve_source_nesting",
+    "render_state": "already_rendered_snapshot"
+  },
+  "locator_policy": {
+    "family": "web",
+    "identity": "snapshot_sha256_and_dom_path",
+    "fabrication": "reject"
+  },
+  "network_policy": "offline_no_network_access",
+  "processing_method": "project_authored_rendered_dom_snapshot",
+  "processing_stage": "fixture_build_and_reference_authoring",
+  "runtime_policy": "no_browser_runtime",
+  "segmentation_semantics": "html-rendered-dom-sections-v1",
+  "source_policy": "self_contained_utf8_no_external_assets"
+}

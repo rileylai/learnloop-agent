@@ -1,0 +1,15 @@
+{
+  "language_policy": {
+    "source_declared": ["zh-Hant", "en"],
+    "unknown": "und"
+  },
+  "locator_policy": {
+    "family": "chat",
+    "identity": "message_id_and_source_sequence_with_thread_reply",
+    "fabrication": "reject"
+  },
+  "processing_method": "project_authored_structured_chat",
+  "processing_stage": "fixture_build_and_reference_authoring",
+  "segmentation_semantics": "message-records-with-embedded-quote-code-v1",
+  "source_policy": "self_contained_utf8_no_external_service"
+}
