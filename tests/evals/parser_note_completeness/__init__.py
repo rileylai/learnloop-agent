@@ -1,5 +1,12 @@
 """Parser and note completeness benchmark contracts."""
 
+from .diagnostic import (
+    DiagnosticProfile,
+    load_diagnostic_profile,
+    materialize_diagnostic_run_plan,
+    materialize_profile_run_plan,
+    write_diagnostic_run_plan,
+)
 from .normalized_document import (
     CAPABILITY_NAMES,
     ELEMENT_KINDS,
@@ -64,6 +71,11 @@ from .smoke_profile import (
 )
 
 __all__ = [
+    "DiagnosticProfile",
+    "load_diagnostic_profile",
+    "materialize_diagnostic_run_plan",
+    "materialize_profile_run_plan",
+    "write_diagnostic_run_plan",
     "CAPABILITY_NAMES",
     "ELEMENT_KINDS",
     "SCHEMA_VERSION",

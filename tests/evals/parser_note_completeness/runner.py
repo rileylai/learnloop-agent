@@ -9,10 +9,11 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any, Literal, Mapping, Optional, Sequence, Tuple, Union
+from typing import Annotated, Any, Literal, Mapping, NoReturn, Optional, Sequence, Tuple, Union
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError
 
+from .diagnostic import write_diagnostic_run_plan
 from .normalized_document import (
     NormalizedDocument,
     canonical_normalized_document_bytes,
@@ -54,8 +55,8 @@ class RunnerResultArtifact(BaseModel):
         allow_inf_nan=False,
     )
 
-    schema_version: Literal[RESULT_SCHEMA_VERSION]
-    runner_version: Literal[RUNNER_VERSION]
+    schema_version: Literal["runner-result/1.0.0"]
+    runner_version: Literal["parser-note-completeness-runner/1.0.0"]
     artifact_type: Literal["parser_note_completeness_runner_result"]
     operation: Literal["validate_reference"]
     reference_sha256: _Digest
@@ -73,8 +74,8 @@ class RunnerAttemptArtifact(BaseModel):
         allow_inf_nan=False,
     )
 
-    schema_version: Literal[ATTEMPT_SCHEMA_VERSION]
-    runner_version: Literal[RUNNER_VERSION]
+    schema_version: Literal["runner-attempt/1.0.0"]
+    runner_version: Literal["parser-note-completeness-runner/1.0.0"]
     artifact_type: Literal["parser_note_completeness_runner_attempt"]
     operation: Literal["validate_reference"]
     reference_sha256: _Digest
@@ -103,6 +104,7 @@ class _ArgumentFailure(Exception):
 class RunnerOutcome:
     exit_code: int
     status: str
+    plan_digest: Optional[str] = None
     result_digest: Optional[str] = None
     attempt_digest: Optional[str] = None
     collection_digest: Optional[str] = None
@@ -114,6 +116,8 @@ class RunnerOutcome:
             "exit_code": self.exit_code,
             "status": self.status,
         }
+        if self.plan_digest is not None:
+            payload["plan_digest"] = self.plan_digest
         if self.result_digest is not None:
             payload["result_digest"] = self.result_digest
         if self.attempt_digest is not None:
@@ -424,7 +428,7 @@ def _read_attestation(
     plan_digest: str,
     invocation_id: str,
     invocation_digest: str,
-) -> str:
+) -> Literal["attested", "missing"]:
     if path is None and digest_path is None:
         return "missing"
     if path is None or digest_path is None:
@@ -764,6 +768,22 @@ def _write_terminal_receipt(
     return receipt
 
 
+def _resolve_bounded_execution_path(
+    benchmark_root: Path,
+    relative_path: str,
+    label: str,
+) -> Path:
+    """Resolve a plan artifact without allowing symlink escape from its root."""
+
+    try:
+        root = benchmark_root.resolve(strict=True)
+        target = (root / relative_path).resolve(strict=False)
+        target.relative_to(root)
+    except (OSError, ValueError) as exc:
+        raise _InvalidInput(f"{label} is outside the benchmark root") from exc
+    return target
+
+
 def execute_plan(
     plan_path: Path,
     plan_digest_path: Path,
@@ -777,6 +797,7 @@ def execute_plan(
     provider: Optional[str] = None,
     formal: bool = False,
     interrupt_after_start_slot: Optional[str] = None,
+    benchmark_root: Optional[Path] = None,
 ) -> RunnerOutcome:
     """Execute only diagnostic development slots and append immutable history."""
 
@@ -790,6 +811,22 @@ def execute_plan(
         plan, plan_digest = _read_run_plan(plan_path, plan_digest_path)
         if formal or plan.execution_mode != "development":
             raise _InvalidInput("formal execution is unsupported")
+        artifact_root = Path(benchmark_root) if benchmark_root is not None else plan_path.parent
+        planned_paths = {
+            slot.slot_id: (
+                _resolve_bounded_execution_path(
+                    artifact_root,
+                    slot.reference_path,
+                    "reference artifact",
+                ),
+                _resolve_bounded_execution_path(
+                    artifact_root,
+                    slot.digest_path,
+                    "reference digest",
+                ),
+            )
+            for slot in plan.slots
+        }
         invocation_digest = _invocation_digest(
             plan_digest,
             invocation_id,
@@ -828,12 +865,7 @@ def execute_plan(
             )
             if interrupt_after_start_slot == slot.slot_id:
                 raise _ExternalInterruption
-            reference_path = Path(slot.reference_path)
-            digest_path = Path(slot.digest_path)
-            if not reference_path.is_absolute():
-                reference_path = plan_path.parent / reference_path
-            if not digest_path.is_absolute():
-                digest_path = plan_path.parent / digest_path
+            reference_path, digest_path = planned_paths[slot.slot_id]
             attempt_id = f"{slot.slot_id}-attempt-{ordinal:04d}"
             try:
                 planned_bytes = reference_path.read_bytes()
@@ -923,7 +955,7 @@ def execute_plan(
 
 
 class _ArgumentParser(argparse.ArgumentParser):
-    def error(self, message: str) -> None:
+    def error(self, message: str) -> NoReturn:
         raise _ArgumentFailure from None
 
 
@@ -940,10 +972,16 @@ def _build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--digest", required=True, type=Path)
     validate.add_argument("--output-dir", required=True, type=Path)
     validate.add_argument("--attempt-id", default="attempt-001")
+    materialize = subparsers.add_parser("materialize-plan")
+    materialize.add_argument("--profile", required=True, type=Path)
+    materialize.add_argument("--profile-digest", required=True, type=Path)
+    materialize.add_argument("--benchmark-root", required=True, type=Path)
+    materialize.add_argument("--output-dir", required=True, type=Path)
     execute = subparsers.add_parser("execute-plan")
     execute.add_argument("--plan", required=True, type=Path)
     execute.add_argument("--plan-digest", required=True, type=Path)
     execute.add_argument("--store", required=True, type=Path)
+    execute.add_argument("--benchmark-root", type=Path)
     execute.add_argument("--resume", action="store_true")
     execute.add_argument("--attestation", type=Path)
     execute.add_argument("--attestation-digest", type=Path)
@@ -983,12 +1021,34 @@ def main(
                 attempt_id=args.attempt_id,
                 scorer=scorer,
             )
+        elif args.command == "materialize-plan":
+            plan_path = args.output_dir / "run_plan.json"
+            plan_digest_path = args.output_dir / "run_plan.sha256"
+            try:
+                _, plan_digest = write_diagnostic_run_plan(
+                    args.profile,
+                    args.profile_digest,
+                    args.benchmark_root,
+                    plan_path,
+                    plan_digest_path,
+                )
+            except ValueError as exc:
+                outcome = RunnerOutcome(2, "invalid_input", error=str(exc))
+            except OSError:
+                outcome = RunnerOutcome(1, "operational_failure", error="run plan output failed")
+            else:
+                outcome = RunnerOutcome(
+                    0,
+                    "plan_materialized",
+                    plan_digest=plan_digest,
+                )
         elif args.command == "execute-plan":
             outcome = execute_plan(
                 args.plan,
                 args.plan_digest,
                 args.store,
                 invocation_id=args.invocation_id,
+                benchmark_root=args.benchmark_root,
                 resume=args.resume,
                 attestation_path=args.attestation,
                 attestation_digest_path=args.attestation_digest,
