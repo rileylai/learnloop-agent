@@ -46,6 +46,22 @@ from .run_plan import (
     run_plan_sha256,
 )
 from .scorer import QualityFailure, Scorer
+from .smoke_profile import (
+    BENCHMARK_CONTRACT,
+    SMOKE_CASE_IDS,
+    SMOKE_PROFILE_ARTIFACT_TYPE,
+    SMOKE_PROFILE_ID,
+    SMOKE_PROFILE_REVISION,
+    SMOKE_PROFILE_SCHEMA_VERSION,
+    SmokeCase,
+    SmokeProfile,
+    canonical_smoke_profile_bytes,
+    load_smoke_profile,
+    read_external_sha256_record,
+    smoke_profile_sha256,
+    validate_smoke_profile,
+    validate_smoke_profile_artifacts,
+)
 
 __all__ = [
     "CAPABILITY_NAMES",
@@ -89,4 +105,18 @@ __all__ = [
     "run_plan_sha256",
     "QualityFailure",
     "Scorer",
+    "BENCHMARK_CONTRACT",
+    "SMOKE_CASE_IDS",
+    "SMOKE_PROFILE_ARTIFACT_TYPE",
+    "SMOKE_PROFILE_ID",
+    "SMOKE_PROFILE_REVISION",
+    "SMOKE_PROFILE_SCHEMA_VERSION",
+    "SmokeCase",
+    "SmokeProfile",
+    "canonical_smoke_profile_bytes",
+    "load_smoke_profile",
+    "read_external_sha256_record",
+    "smoke_profile_sha256",
+    "validate_smoke_profile",
+    "validate_smoke_profile_artifacts",
 ]
