@@ -946,6 +946,7 @@ def execute_plan(
                 outcome = RunnerOutcome(
                     generation_outcome.exit_code,
                     generation_outcome.status,
+                    candidate_digest=generation_outcome.candidate_digest,
                     generation_input_digest=generation_outcome.generation_input_digest,
                     result_digest=generation_outcome.result_digest,
                     attempt_digest=generation_outcome.attempt_digest,

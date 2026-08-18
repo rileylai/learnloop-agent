@@ -15,8 +15,15 @@ from tests.evals.parser_note_completeness.generation_lane import (
     GenerationLaneOutcome,
     GenerationResultArtifact,
     build_generation_input,
+    build_pre_render_note,
     canonical_generation_lane_artifact_bytes,
 )
+from tests.evals.parser_note_completeness.benchmark_note import (
+    BenchmarkNoteDocument,
+    canonical_benchmark_note_bytes,
+    validate_benchmark_note_artifact,
+)
+from tests.evals.parser_note_completeness.normalized_document import NormalizedDocument
 from tests.evals.parser_note_completeness.runner import main
 from tests.evals.parser_note_completeness.smoke_profile import SMOKE_CASE_IDS
 
@@ -134,7 +141,7 @@ def test_repeated_generation_execution_keeps_artifact_digests_stable(
 
 
 @pytest.mark.parametrize("kind", ["smoke", "full"])
-def test_generation_execution_materializes_input_lineage_without_note_candidate(
+def test_generation_execution_materializes_pre_render_note_candidate(
     kind: str,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -168,28 +175,42 @@ def test_generation_execution_materializes_input_lineage_without_note_candidate(
         assert {path.name for path in execution_path.iterdir()} == {
             "generation_input.json",
             "generation_input.sha256",
+            "candidate.json",
+            "candidate.sha256",
             "result.json",
             "result.sha256",
             "attempt.json",
             "attempt.sha256",
         }
         input_path = execution_path / "generation_input.json"
+        candidate_path = execution_path / "candidate.json"
         result_path = execution_path / "result.json"
         attempt_path = execution_path / "attempt.json"
         input_bytes = input_path.read_bytes()
+        candidate_bytes = candidate_path.read_bytes()
         result_bytes = result_path.read_bytes()
         attempt_bytes = attempt_path.read_bytes()
         input_model = GenerationInputArtifact.model_validate(json.loads(input_bytes))
+        candidate_model = BenchmarkNoteDocument.model_validate(json.loads(candidate_bytes))
         result_model = GenerationResultArtifact.model_validate(json.loads(result_bytes))
         attempt_model = GenerationAttemptArtifact.model_validate(json.loads(attempt_bytes))
         case = cases[input_model.case_id]
+        reference = NormalizedDocument.model_validate(
+            json.loads((ROOT / case.reference_path).read_bytes())
+        )
 
         assert input_bytes == canonical_generation_lane_artifact_bytes(input_model)
+        assert candidate_bytes == canonical_benchmark_note_bytes(candidate_model)
+        assert validate_benchmark_note_artifact(candidate_model, reference) == candidate_model
         assert result_bytes == canonical_generation_lane_artifact_bytes(result_model)
         assert attempt_bytes == canonical_generation_lane_artifact_bytes(attempt_model)
         assert input_path.with_suffix(".sha256").read_text(encoding="ascii").split() == [
             hashlib.sha256(input_bytes).hexdigest(),
             "generation_input.json",
+        ]
+        assert candidate_path.with_suffix(".sha256").read_text(encoding="ascii").split() == [
+            hashlib.sha256(candidate_bytes).hexdigest(),
+            "candidate.json",
         ]
         assert result_path.with_suffix(".sha256").read_text(encoding="ascii").split() == [
             hashlib.sha256(result_bytes).hexdigest(),
@@ -200,18 +221,59 @@ def test_generation_execution_materializes_input_lineage_without_note_candidate(
             "attempt.json",
         ]
         assert input_model.reference_sha256 == case.reference_sha256
+        assert candidate_model.document_id == input_model.document_id == case.case_id
+        assert candidate_model.reference_document_sha256 == input_model.reference_sha256
+        assert candidate_model.producer_provenance.configuration_sha256 == case.producer_configuration_sha256
+        assert candidate_model.lineage.parent_artifact_sha256 == input_model.reference_sha256
+        assert candidate_model.producer_provenance.processing_stage == "pre_render_generation"
+        assert result_model.candidate_sha256 == hashlib.sha256(candidate_bytes).hexdigest()
+        assert result_model.candidate_bytes == len(candidate_bytes)
+        assert result_model.producer_configuration_sha256 == input_model.producer_configuration_sha256
         assert result_model.generation_input_sha256 == hashlib.sha256(input_bytes).hexdigest()
         assert result_model.reference_sha256 == input_model.reference_sha256
         assert attempt_model.result_sha256 == hashlib.sha256(result_bytes).hexdigest()
+        assert attempt_model.candidate_sha256 == result_model.candidate_sha256
         assert attempt_model.generation_input_sha256 == result_model.generation_input_sha256
-        assert result_model.status == attempt_model.status == "input_materialized"
+        assert result_model.status == attempt_model.status == "contract_valid"
         assert "quality_decision" not in result_model.model_dump()
         assert "result_role" not in result_model.model_dump()
-        assert not any(path.name.startswith("candidate") for path in execution_path.iterdir())
-        assert not any(path.name.startswith("note") for path in execution_path.iterdir())
         terminal_bytes = (execution_path.parent / "terminal.json").read_bytes()
         assert terminal_bytes.find(hashlib.sha256(result_bytes).hexdigest().encode("ascii")) >= 0
         assert str(ROOT).encode() not in result_bytes + attempt_bytes + terminal_bytes
+
+
+def test_pre_render_note_builder_is_reference_only_and_deterministic() -> None:
+    profile, _ = load_diagnostic_profile(*_profile_paths("full"), ROOT)
+
+    for case in profile.cases:
+        first = build_pre_render_note(case, ROOT)
+        second = build_pre_render_note(case, ROOT)
+        first_bytes = canonical_benchmark_note_bytes(first)
+        assert first_bytes == canonical_benchmark_note_bytes(second)
+        assert first.artifact_role == "pre_render_note"
+        assert first.producer_provenance.producer_role.value == "generator"
+        assert first.producer_provenance.processing_stage == "pre_render_generation"
+        assert first.lineage.parent_artifact_role.value == "reference_document"
+        assert first.lineage.parent_artifact_sha256 == case.reference_sha256
+        assert first.reference_document_sha256 == case.reference_sha256
+        assert validate_benchmark_note_artifact(
+            first,
+            NormalizedDocument.model_validate(
+                json.loads((ROOT / case.reference_path).read_bytes())
+            ),
+        ) == first
+        assert "quality_decision" not in first.model_dump()
+        assert "result_role" not in first.model_dump()
+        assert "gold" not in first.model_dump()
+
+    smoke_profile, _ = load_diagnostic_profile(*_profile_paths("smoke"), ROOT)
+    screenshot_notes = [
+        build_pre_render_note(case, ROOT)
+        for case in smoke_profile.cases
+        if case.case_id == "S01"
+    ]
+    assert len(screenshot_notes) == 1
+    assert screenshot_notes[0].nodes == ()
 
 
 def test_generation_lane_rejects_profile_plan_binding_mismatch(
