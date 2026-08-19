@@ -41,6 +41,7 @@ from .run_plan import (
     invocation_sha256,
 )
 from .scorer import QualityFailure, Scorer
+from .end_to_end import execute_end_to_end_case
 from .generation_lane import execute_generation_case
 from .parser_lane import execute_parser_case
 
@@ -122,6 +123,11 @@ class RunnerOutcome:
     work_unit_output_digest: Optional[str] = None
     work_unit_attempt_receipt_digest: Optional[str] = None
     coverage_closure_digest: Optional[str] = None
+    parser_result_digest: Optional[str] = None
+    generation_result_digest: Optional[str] = None
+    renderer_output_digest: Optional[str] = None
+    renderer_capture_digest: Optional[str] = None
+    rendered_projection_digest: Optional[str] = None
     collection_digest: Optional[str] = None
     invocation_id: Optional[str] = None
     error: Optional[str] = None
@@ -155,6 +161,16 @@ class RunnerOutcome:
             payload["work_unit_attempt_receipt_digest"] = self.work_unit_attempt_receipt_digest
         if self.coverage_closure_digest is not None:
             payload["coverage_closure_digest"] = self.coverage_closure_digest
+        if self.parser_result_digest is not None:
+            payload["parser_result_digest"] = self.parser_result_digest
+        if self.generation_result_digest is not None:
+            payload["generation_result_digest"] = self.generation_result_digest
+        if self.renderer_output_digest is not None:
+            payload["renderer_output_digest"] = self.renderer_output_digest
+        if self.renderer_capture_digest is not None:
+            payload["renderer_capture_digest"] = self.renderer_capture_digest
+        if self.rendered_projection_digest is not None:
+            payload["rendered_projection_digest"] = self.rendered_projection_digest
         if self.collection_digest is not None:
             payload["collection_digest"] = self.collection_digest
         if self.invocation_id is not None:
@@ -430,7 +446,7 @@ def _invocation_digest(
     resume: bool,
     formal: bool,
     attestation_supplied: bool,
-    lane: Literal["reference", "parser", "generation"] = "reference",
+    lane: Literal["reference", "parser", "generation", "end-to-end"] = "reference",
 ) -> str:
     payload: dict[str, Any] = {
         "command": "execute-plan",
@@ -556,6 +572,14 @@ def _slot_history(
                 raise _OperationalFailure("attempt history unavailable") from exc
             if not execution_entries.issubset(
                 {
+                    "parser",
+                    "generation",
+                    "renderer-output.html",
+                    "renderer-output.sha256",
+                    "renderer-capture.json",
+                    "renderer-capture.sha256",
+                    "rendered-note-projection.json",
+                    "rendered-note-projection.sha256",
                     "candidate.json",
                     "candidate.sha256",
                     "generation_input.json",
@@ -882,7 +906,7 @@ def execute_plan(
     formal: bool = False,
     interrupt_after_start_slot: Optional[str] = None,
     benchmark_root: Optional[Path] = None,
-    lane: Literal["reference", "parser", "generation"] = "reference",
+    lane: Literal["reference", "parser", "generation", "end-to-end"] = "reference",
     profile_path: Optional[Path] = None,
     profile_digest_path: Optional[Path] = None,
 ) -> RunnerOutcome:
@@ -898,11 +922,11 @@ def execute_plan(
         plan, plan_digest = _read_run_plan(plan_path, plan_digest_path)
         if formal or plan.execution_mode != "development":
             raise _InvalidInput("formal execution is unsupported")
-        if lane not in {"reference", "parser", "generation"}:
+        if lane not in {"reference", "parser", "generation", "end-to-end"}:
             raise _InvalidInput("unsupported execution lane")
         parser_cases: dict[str, Any] = {}
         generation_cases: dict[str, Any] = {}
-        if lane in {"parser", "generation"}:
+        if lane in {"parser", "generation", "end-to-end"}:
             if profile_path is None or profile_digest_path is None or benchmark_root is None:
                 raise _InvalidInput(
                     f"{lane} lane requires profile, profile digest, and benchmark root"
@@ -1031,6 +1055,35 @@ def execute_plan(
                     coverage_closure_digest=generation_outcome.coverage_closure_digest,
                     error=generation_outcome.error,
                 )
+            elif lane == "end-to-end":
+                end_to_end_outcome = execute_end_to_end_case(
+                    generation_cases[slot.case_id],
+                    artifact_root,
+                    attempt_dir / "execution",
+                    attempt_id=attempt_id,
+                    # The current frozen single-pass materializer has one
+                    # planned work unit.  Generation resolves the Q15 owner
+                    # ordinal from durable history; this outer ordinal is
+                    # carried separately in runner_binding.
+                    attempt_ordinal=ordinal,
+                    runner_plan_sha256=plan_digest,
+                    runner_slot_id=slot.slot_id,
+                    runner_attempt_ordinal=ordinal,
+                    runner_invocation_id=invocation_id,
+                    logical_run_id=slot.slot_id,
+                )
+                outcome = RunnerOutcome(
+                    end_to_end_outcome.exit_code,
+                    end_to_end_outcome.status,
+                    result_digest=end_to_end_outcome.result_digest,
+                    attempt_digest=end_to_end_outcome.attempt_digest,
+                    parser_result_digest=end_to_end_outcome.parser_result_digest,
+                    generation_result_digest=end_to_end_outcome.generation_result_digest,
+                    renderer_output_digest=end_to_end_outcome.renderer_output_digest,
+                    renderer_capture_digest=end_to_end_outcome.renderer_capture_digest,
+                    rendered_projection_digest=end_to_end_outcome.rendered_projection_digest,
+                    error=end_to_end_outcome.error,
+                )
             else:
                 try:
                     planned_bytes = reference_path.read_bytes()
@@ -1045,7 +1098,7 @@ def execute_plan(
                         attempt_dir / "execution",
                         attempt_id=attempt_id,
                     )
-            if lane == "generation" and outcome.exit_code == 2 and outcome.error:
+            if lane in {"generation", "end-to-end"} and outcome.exit_code == 2 and outcome.error:
                 contract_rejection_error = outcome.error
             _write_terminal_receipt(
                 attempt_dir,
@@ -1153,7 +1206,7 @@ def _build_parser() -> argparse.ArgumentParser:
     execute.add_argument("--benchmark-root", type=Path)
     execute.add_argument(
         "--lane",
-        choices=("reference", "parser", "generation"),
+        choices=("reference", "parser", "generation", "end-to-end"),
         default="reference",
     )
     execute.add_argument("--profile", type=Path)

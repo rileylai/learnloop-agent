@@ -718,12 +718,13 @@ def _generation_attempt_artifacts(
     coverage_plan: CoveragePlan,
     *,
     reference_document: NormalizedDocument,
+    attempt_root: Optional[Path] = None,
 ) -> tuple[
     tuple[AttemptBinding, ...],
     dict[str, WorkUnitOutput],
     WorkUnitAttemptReceiptStore,
 ]:
-    attempt_root = output_dir.parent.parent
+    attempt_root = attempt_root or output_dir.parent.parent
     receipt_store = WorkUnitAttemptReceiptStore.from_execution_root(attempt_root)
     current_unit_id = coverage_plan.work_units[0].work_unit_id
     bindings: list[AttemptBinding] = []
@@ -737,10 +738,15 @@ def _generation_attempt_artifacts(
         raise _InvalidInput("work-unit attempt history is unavailable") from exc
     for attempt_dir in attempt_dirs:
         execution_dir = attempt_dir / "execution"
-        output_path = execution_dir / "work_unit_output.json"
-        output_digest_path = execution_dir / "work_unit_output.sha256"
-        receipt_path = execution_dir / "work_unit_attempt_receipt.json"
-        receipt_digest_path = execution_dir / "work_unit_attempt_receipt.sha256"
+        owner_execution_dir = execution_dir
+        if not (owner_execution_dir / "work_unit_output.json").exists():
+            nested_generation_dir = execution_dir / "generation"
+            if nested_generation_dir.is_dir():
+                owner_execution_dir = nested_generation_dir
+        output_path = owner_execution_dir / "work_unit_output.json"
+        output_digest_path = owner_execution_dir / "work_unit_output.sha256"
+        receipt_path = owner_execution_dir / "work_unit_attempt_receipt.json"
+        receipt_digest_path = owner_execution_dir / "work_unit_attempt_receipt.sha256"
         present = any(
             path.exists()
             for path in (
@@ -806,11 +812,13 @@ def _write_generation_coverage_closure(
     reference_document: NormalizedDocument,
     final_note: BenchmarkNoteDocument,
     final_note_digest: str,
+    attempt_root: Optional[Path] = None,
 ) -> str:
     bindings, outputs, receipt_store = _generation_attempt_artifacts(
         output_dir,
         coverage_plan,
         reference_document=reference_document,
+        attempt_root=attempt_root,
     )
     terminal = bindings[-1]
     current_output = outputs[terminal.output_sha256]
@@ -919,12 +927,14 @@ def execute_generation_case(
     runner_attempt_ordinal: int,
     runner_invocation_id: str,
     logical_run_id: str,
+    attempt_root: Optional[Path] = None,
 ) -> GenerationLaneOutcome:
     """Generate one deterministic pre-render note and owner lineage offline.
 
-    ``attempt_ordinal`` is the Q15 per-work-unit ordinal.  The outer runner
-    ordinal is carried separately in ``runner_binding`` even though the
-    current one-unit diagnostic caller explicitly maps the two values.
+    The caller supplies the outer attempt context, while the effective Q15
+    per-work-unit ordinal is resolved from durable owner history.  The outer
+    runner ordinal is carried separately in ``runner_binding`` and is never
+    used as an inferred owner ordinal.
     """
 
     if re.fullmatch(_ATTEMPT_ID_PATTERN, attempt_id) is None:
@@ -950,6 +960,7 @@ def execute_generation_case(
     work_unit_output_digest: Optional[str] = None
     terminal_receipt_record: Optional[DurableWorkUnitAttemptReceipt] = None
     route_decision = None
+    receipt_attempt_root = attempt_root or output_dir.parent.parent
 
     def retain_failed_owner_history() -> None:
         if (
@@ -1032,15 +1043,18 @@ def execute_generation_case(
             route_decision=route_decision,
             execution_contract=execution_contract,
         )
+        history_id = derive_history_id(
+            coverage_plan_sha256=plan_digest,
+            work_unit_id=coverage_plan.work_units[0].work_unit_id,
+            logical_run_id=logical_run_id,
+        )
+        prior_store = WorkUnitAttemptReceiptStore.from_execution_root(receipt_attempt_root)
+        # The Q15 work-unit ordinal is derived from durable owner history.  It
+        # is intentionally independent from the outer runner ordinal: a
+        # runner attempt interrupted before Generation starts creates no Q15
+        # attempt and therefore does not consume this ordinal.
+        attempt_ordinal = prior_store.next_attempt_ordinal(history_id=history_id)
         try:
-            prior_store = WorkUnitAttemptReceiptStore.from_execution_root(
-                output_dir.parent.parent
-            )
-            history_id = derive_history_id(
-                coverage_plan_sha256=plan_digest,
-                work_unit_id=coverage_plan.work_units[0].work_unit_id,
-                logical_run_id=logical_run_id,
-            )
             previous_receipt_sha256 = prior_store.latest_terminal_digest(
                 history_id=history_id
             )
@@ -1143,6 +1157,7 @@ def execute_generation_case(
             reference_document=document,
             final_note=candidate_model,
             final_note_digest=candidate_digest,
+            attempt_root=receipt_attempt_root,
         )
         assert (
             candidate_digest is not None

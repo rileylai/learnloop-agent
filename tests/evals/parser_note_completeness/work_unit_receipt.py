@@ -381,10 +381,21 @@ class WorkUnitAttemptReceiptStore:
         if not root.exists():
             return cls(())
         try:
-            execution_dirs = sorted(
-                (path / "execution" for path in root.glob("attempt-*") if path.is_dir()),
-                key=lambda path: path.parent.name,
-            )
+            execution_dirs: list[Path] = []
+            for attempt_dir in sorted(
+                (path for path in root.glob("attempt-*") if path.is_dir()),
+                key=lambda path: path.name,
+            ):
+                execution_dir = attempt_dir / "execution"
+                if execution_dir.is_dir():
+                    execution_dirs.append(execution_dir)
+                    # D12 keeps Parser artifacts separate from the existing
+                    # Generation artifact names.  The owner receipt remains
+                    # the same immutable record; this is only its bounded
+                    # diagnostic subdirectory discovery rule.
+                    generation_dir = execution_dir / "generation"
+                    if generation_dir.is_dir():
+                        execution_dirs.append(generation_dir)
         except OSError as exc:
             raise WorkUnitReceiptContractError("receipt history unavailable") from exc
         for execution_dir in execution_dirs:
@@ -419,6 +430,16 @@ class WorkUnitAttemptReceiptStore:
         if not candidates:
             return None
         return max(candidates, key=lambda record: record.receipt.attempt_ordinal).sha256
+
+    def next_attempt_ordinal(self, *, history_id: str) -> int:
+        """Return the next Q15 ordinal for one immutable receipt history."""
+
+        ordinals = [
+            record.receipt.attempt_ordinal
+            for record in self._records.values()
+            if record.receipt.history_id == history_id
+        ]
+        return max(ordinals, default=0) + 1
 
     def validate_chain(self, receipt: WorkUnitAttemptReceipt) -> None:
         visited: set[str] = set()
