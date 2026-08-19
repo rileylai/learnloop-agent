@@ -49,6 +49,10 @@ RESULT_SCHEMA_VERSION = "runner-result/1.0.0"
 ATTEMPT_SCHEMA_VERSION = "runner-attempt/1.0.0"
 _DIGEST_PATTERN = r"^[0-9a-f]{64}$"
 _ATTEMPT_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+_Q28_RECEIPT_DEPENDENCY_GAP = (
+    "Q28 closure dependency gap: no frozen per-work-unit owner receipt "
+    "binds coverage_plan_sha256, work_unit_id, and attempt_ordinal"
+)
 _Digest = Annotated[StrictStr, Field(pattern=_DIGEST_PATTERN)]
 _AttemptId = Annotated[StrictStr, Field(pattern=_ATTEMPT_ID_PATTERN)]
 
@@ -115,6 +119,11 @@ class RunnerOutcome:
     generation_input_digest: Optional[str] = None
     result_digest: Optional[str] = None
     attempt_digest: Optional[str] = None
+    routing_policy_digest: Optional[str] = None
+    route_decision_digest: Optional[str] = None
+    execution_contract_digest: Optional[str] = None
+    coverage_plan_digest: Optional[str] = None
+    work_unit_output_digest: Optional[str] = None
     collection_digest: Optional[str] = None
     invocation_id: Optional[str] = None
     error: Optional[str] = None
@@ -134,6 +143,16 @@ class RunnerOutcome:
             payload["result_digest"] = self.result_digest
         if self.attempt_digest is not None:
             payload["attempt_digest"] = self.attempt_digest
+        if self.routing_policy_digest is not None:
+            payload["routing_policy_digest"] = self.routing_policy_digest
+        if self.route_decision_digest is not None:
+            payload["route_decision_digest"] = self.route_decision_digest
+        if self.execution_contract_digest is not None:
+            payload["execution_contract_digest"] = self.execution_contract_digest
+        if self.coverage_plan_digest is not None:
+            payload["coverage_plan_digest"] = self.coverage_plan_digest
+        if self.work_unit_output_digest is not None:
+            payload["work_unit_output_digest"] = self.work_unit_output_digest
         if self.collection_digest is not None:
             payload["collection_digest"] = self.collection_digest
         if self.invocation_id is not None:
@@ -539,6 +558,16 @@ def _slot_history(
                     "candidate.sha256",
                     "generation_input.json",
                     "generation_input.sha256",
+                    "routing_policy.json",
+                    "routing_policy.sha256",
+                    "routing_input_facts.json",
+                    "routing_input_facts.sha256",
+                    "route_decision.json",
+                    "route_decision.sha256",
+                    "coverage_plan.json",
+                    "coverage_plan.sha256",
+                    "work_unit_output.json",
+                    "work_unit_output.sha256",
                     "result.json",
                     "result.sha256",
                     "attempt.json",
@@ -746,7 +775,7 @@ def _write_start_receipt(
     return receipt
 
 
-def _write_terminal_receipt(
+def _build_terminal_receipt(
     attempt_dir: Path,
     *,
     plan_digest: str,
@@ -780,6 +809,30 @@ def _write_terminal_receipt(
         exit_code=outcome.exit_code,
         terminal_status=terminal_status,
         result_sha256=outcome.result_digest,
+    )
+    return receipt
+
+
+def _write_terminal_receipt(
+    attempt_dir: Path,
+    *,
+    plan_digest: str,
+    invocation_id: str,
+    invocation_digest: str,
+    slot: RunSlot,
+    ordinal: int,
+    offline_attestation: Literal["attested", "missing"],
+    outcome: RunnerOutcome,
+) -> TerminalReceipt:
+    receipt = _build_terminal_receipt(
+        attempt_dir,
+        plan_digest=plan_digest,
+        invocation_id=invocation_id,
+        invocation_digest=invocation_digest,
+        slot=slot,
+        ordinal=ordinal,
+        offline_attestation=offline_attestation,
+        outcome=outcome,
     )
     data = canonical_receipt_bytes(receipt)
     _write_external_artifact(
@@ -898,6 +951,7 @@ def execute_plan(
         if _invocation_exists(store, invocation_id, invocation_digest):
             raise _InvalidInput("invocation already exists")
         _validate_attempt_roots(store, plan)
+        contract_rejection_error: Optional[str] = None
 
         for slot in plan.slots:
             histories = _slot_history(store, slot, plan_digest)
@@ -942,6 +996,7 @@ def execute_plan(
                     artifact_root,
                     attempt_dir / "execution",
                     attempt_id=attempt_id,
+                    attempt_ordinal=ordinal,
                 )
                 outcome = RunnerOutcome(
                     generation_outcome.exit_code,
@@ -950,6 +1005,11 @@ def execute_plan(
                     generation_input_digest=generation_outcome.generation_input_digest,
                     result_digest=generation_outcome.result_digest,
                     attempt_digest=generation_outcome.attempt_digest,
+                    routing_policy_digest=generation_outcome.routing_policy_digest,
+                    route_decision_digest=generation_outcome.route_decision_digest,
+                    execution_contract_digest=generation_outcome.execution_contract_digest,
+                    coverage_plan_digest=generation_outcome.coverage_plan_digest,
+                    work_unit_output_digest=generation_outcome.work_unit_output_digest,
                     error=generation_outcome.error,
                 )
             else:
@@ -966,6 +1026,23 @@ def execute_plan(
                         attempt_dir / "execution",
                         attempt_id=attempt_id,
                     )
+            if lane == "generation" and outcome.exit_code == 0:
+                outcome = RunnerOutcome(
+                    2,
+                    "invalid_input",
+                    candidate_digest=outcome.candidate_digest,
+                    generation_input_digest=outcome.generation_input_digest,
+                    result_digest=None,
+                    attempt_digest=outcome.attempt_digest,
+                    routing_policy_digest=outcome.routing_policy_digest,
+                    route_decision_digest=outcome.route_decision_digest,
+                    execution_contract_digest=outcome.execution_contract_digest,
+                    coverage_plan_digest=outcome.coverage_plan_digest,
+                    work_unit_output_digest=outcome.work_unit_output_digest,
+                    error=_Q28_RECEIPT_DEPENDENCY_GAP,
+                )
+            if lane == "generation" and outcome.exit_code == 2 and outcome.error:
+                contract_rejection_error = outcome.error
             _write_terminal_receipt(
                 attempt_dir,
                 plan_digest=plan_digest,
@@ -992,6 +1069,7 @@ def execute_plan(
                 "invalid_input",
                 collection_digest=collection_digest,
                 invocation_id=invocation_id,
+                error=contract_rejection_error,
             )
         if states.intersection({"missing", "operational", "unclosed"}):
             return RunnerOutcome(

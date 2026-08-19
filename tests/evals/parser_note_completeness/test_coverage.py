@@ -204,7 +204,7 @@ def _closure(
                 "schema_version": receipt_ref.schema_version,
                 "record_type": receipt_ref.record_type,
                 "record_id": receipt_ref.record_id,
-                "plan_sha256": coverage_plan_sha256(plan),
+                "coverage_plan_sha256": coverage_plan_sha256(plan),
                 "work_unit_id": unit.work_unit_id,
                 "attempt_ordinal": ordinal,
             }
@@ -380,6 +380,35 @@ def test_prior_failed_attempt_remains_in_later_terminal_history() -> None:
     )
     assert all(len(outcome.attempts) == 2 for outcome in validated.unit_outcomes)
     assert all(outcome.terminal_attempt_ordinal == 2 for outcome in validated.unit_outcomes)
+
+
+def test_closed_closure_rejects_owner_receipt_without_q28_attempt_bindings() -> None:
+    plan, reference = _plan()
+    closure, outputs, owner_records = _closure(plan, reference)
+    incomplete_records = {
+        digest: {
+            key: value
+            for key, value in record.items()
+            if key not in {"coverage_plan_sha256", "work_unit_id", "attempt_ordinal"}
+        }
+        for digest, record in owner_records.items()
+    }
+
+    with pytest.raises(CoverageContractError, match="coverage-plan binding"):
+        validate_coverage_closure(
+            closure,
+            plan,
+            output_artifacts=outputs,
+            owner_records=incomplete_records,
+        )
+
+
+def test_closed_closure_requires_durable_owner_receipt_context() -> None:
+    plan, reference = _plan()
+    closure, _, _ = _closure(plan, reference)
+
+    with pytest.raises(CoverageContractError, match="durable per-work-unit"):
+        validate_coverage_closure(closure, plan)
 
 
 def test_observed_merge_order_must_respect_merge_dependency() -> None:

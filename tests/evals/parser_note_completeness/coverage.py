@@ -49,10 +49,14 @@ from .normalized_document import (
 )
 from .routing import (
     ContractReference,
+    DecisionStatus,
     RouteDecision,
+    RouteMode,
+    RoutingContractError,
     RoutingPolicy,
     route_decision_sha256,
     routing_policy_sha256,
+    validate_route_decision_bindings,
 )
 
 COVERAGE_PLAN_SCHEMA_VERSION = "benchmark-generation-coverage-plan/1.0.0"
@@ -67,6 +71,10 @@ _WORK_UNIT_ID_PATTERN = r"^work-unit-[0-9a-f]{64}$"
 
 class CoverageContractError(ValueError):
     """Raised when a Q28 schema or cross-artifact binding is invalid."""
+
+
+class CoveragePlanningGapError(CoverageContractError):
+    """Raised when Q29 selected a mode without a frozen Q28 planner."""
 
 
 class CoverageCondition(str, Enum):
@@ -498,6 +506,153 @@ def derive_work_unit_id(
     )
 
 
+def materialize_coverage_plan(
+    reference_document: NormalizedDocumentInput,
+    routing_policy: Union[RoutingPolicy, Mapping[str, Any]],
+    route_decision: Union[RouteDecision, Mapping[str, Any]],
+    execution_contract: Union[ContractReference, Mapping[str, Any]],
+    *,
+    plan_id: Optional[str] = None,
+    plan_revision: str = "revision-001",
+) -> CoveragePlan:
+    """Materialize the only production-safe frozen Q28 plan.
+
+    Q28 can derive a partition for ``single-pass`` without a sizing or
+    section-selection policy.  The other Q29 modes deliberately stop at a
+    planning-policy gap until an owner-approved Q28 planner exists.
+    """
+
+    document = validate_normalized_document(reference_document)
+    policy = (
+        routing_policy
+        if isinstance(routing_policy, RoutingPolicy)
+        else RoutingPolicy.model_validate(routing_policy)
+    )
+    decision = (
+        route_decision
+        if isinstance(route_decision, RouteDecision)
+        else RouteDecision.model_validate(route_decision)
+    )
+    contract = (
+        execution_contract
+        if isinstance(execution_contract, ContractReference)
+        else ContractReference.model_validate(execution_contract)
+    )
+    if document.artifact_role != ArtifactRole.REFERENCE_DOCUMENT:
+        raise CoverageContractError("coverage plan must bind a reference_document")
+    try:
+        validate_route_decision_bindings(decision, policy, document)
+    except (RoutingContractError, ValueError) as exc:
+        raise CoverageContractError("route decision binding is invalid") from exc
+    if decision.execution_contract != contract:
+        raise CoverageContractError("execution contract binding mismatch")
+    if policy.execution_contract != contract:
+        raise CoverageContractError("routing policy execution contract mismatch")
+    if decision.decision_status != DecisionStatus.SELECTED or decision.selected_mode is None:
+        raise CoverageContractError("coverage planning requires a selected route decision")
+    if decision.selected_mode != RouteMode.SINGLE_PASS:
+        raise CoveragePlanningGapError(
+            "Q28 planning-policy gap: no frozen planner for "
+            f"route mode {decision.selected_mode.value}"
+        )
+
+    reference_sha256 = normalized_document_sha256(document)
+    source_sections = tuple(
+        SourceSectionRef(
+            section_id=section.section_id,
+            parent_section_id=section.parent_section_id,
+            heading_element_id=section.heading_element_id,
+            start_order=section.start_order,
+            end_order=section.end_order,
+        )
+        for section in document.sections
+    )
+    source_units = tuple(
+        SourceUnitRef(
+            reference_document_id=document.document_id,
+            section_id=element.section_id,
+            element_id=element.element_id,
+            order=element.order,
+        )
+        for element in document.elements
+    )
+    primary_source_unit_ids = tuple(unit.element_id for unit in source_units)
+    work_unit = WorkUnitSpec(
+        work_unit_id=derive_work_unit_id(
+            reference_document_sha256=reference_sha256,
+            primary_source_unit_ids=primary_source_unit_ids,
+            context_only_source_unit_ids=(),
+            route_decision_sha256=route_decision_sha256(decision),
+            execution_contract_sha256=contract.sha256,
+        ),
+        primary_source_unit_ids=primary_source_unit_ids,
+        context_only_source_unit_ids=(),
+    )
+    work_unit_id = work_unit.work_unit_id
+    plan = CoveragePlan(
+        schema_version=COVERAGE_PLAN_SCHEMA_VERSION,
+        artifact_role="coverage_plan",
+        plan_id=plan_id or f"{document.document_id}-coverage",
+        plan_revision=plan_revision,
+        reference_document=ReferenceDocumentRef(
+            schema_version="normalized-document/1.0.0",
+            artifact_role="reference_document",
+            document_id=document.document_id,
+            sha256=reference_sha256,
+        ),
+        routing_policy=RoutingPolicyRef(
+            schema_version=policy.schema_version,
+            policy_id=policy.policy_id,
+            policy_revision=policy.policy_revision,
+            sha256=routing_policy_sha256(policy),
+            configuration_sha256=policy.configuration_sha256,
+        ),
+        route_decision=RouteDecisionRef(
+            schema_version=decision.schema_version,
+            artifact_role=decision.artifact_role,
+            sha256=route_decision_sha256(decision),
+        ),
+        execution_contract=ExecutionContractRef(
+            contract_id=contract.contract_id,
+            sha256=contract.sha256,
+        ),
+        source_sections=source_sections,
+        source_units=source_units,
+        work_units=(work_unit,),
+        dependency_edges=(),
+        planned_execution_order=(work_unit_id,),
+        planned_merge_order=(work_unit_id,),
+    )
+    return validate_coverage_plan(
+        plan,
+        document,
+        routing_policy=policy,
+        route_decision=decision,
+        execution_contract=contract,
+    )
+
+
+def materialize_single_pass_coverage_plan(
+    reference_document: NormalizedDocumentInput,
+    routing_policy: Union[RoutingPolicy, Mapping[str, Any]],
+    route_decision: Union[RouteDecision, Mapping[str, Any]],
+    execution_contract: Union[ContractReference, Mapping[str, Any]],
+    *,
+    plan_id: Optional[str] = None,
+    plan_revision: str = "revision-001",
+) -> CoveragePlan:
+    """Named single-pass entry point for generation-lane integration."""
+
+    return materialize_coverage_plan(
+        reference_document,
+        routing_policy,
+        route_decision,
+        execution_contract,
+        plan_id=plan_id,
+        plan_revision=plan_revision,
+    )
+
+
 def validate_coverage_artifact(payload: CoverageArtifactInput) -> CoverageArtifact:
     data = _model_payload(payload)
     schema_version = data.get("schema_version")
@@ -886,6 +1041,7 @@ def _validate_owner_record(
     plan_sha256: Optional[str] = None,
     work_unit_id: Optional[str] = None,
     attempt_ordinal: Optional[int] = None,
+    require_attempt_binding: bool = False,
 ) -> None:
     if record is None:
         raise CoverageContractError("owner receipt reference cannot be resolved")
@@ -900,19 +1056,24 @@ def _validate_owner_record(
         raise CoverageContractError("owner receipt record_id mismatch")
     if data.get("sha256") is not None and data["sha256"] != reference.sha256:
         raise CoverageContractError("owner receipt digest mismatch")
-    for field_name in ("coverage_plan_sha256", "plan_sha256"):
-        if (
-            plan_sha256 is not None
-            and data.get(field_name) is not None
-            and data[field_name] != plan_sha256
-        ):
-            raise CoverageContractError("owner receipt plan binding mismatch")
+    if require_attempt_binding and data.get("coverage_plan_sha256") is None:
+        raise CoverageContractError("owner receipt lacks coverage-plan binding")
+    if (
+        plan_sha256 is not None
+        and data.get("coverage_plan_sha256") is not None
+        and data["coverage_plan_sha256"] != plan_sha256
+    ):
+        raise CoverageContractError("owner receipt plan binding mismatch")
+    if require_attempt_binding and data.get("work_unit_id") is None:
+        raise CoverageContractError("owner receipt lacks work-unit binding")
     if (
         work_unit_id is not None
         and data.get("work_unit_id") is not None
         and data["work_unit_id"] != work_unit_id
     ):
         raise CoverageContractError("owner receipt work-unit binding mismatch")
+    if require_attempt_binding and data.get("attempt_ordinal") is None:
+        raise CoverageContractError("owner receipt lacks attempt binding")
     if (
         attempt_ordinal is not None
         and data.get("attempt_ordinal") is not None
@@ -1118,7 +1279,16 @@ def validate_coverage_closure(
                         plan_sha256=closure.coverage_plan_sha256,
                         work_unit_id=outcome.work_unit_id,
                         attempt_ordinal=attempt.attempt_ordinal,
+                        require_attempt_binding=True,
                     )
+        if (
+            closure.coverage_closure_state == CoverageClosureState.CLOSED
+            and owner_records is None
+            and receipts is None
+        ):
+            raise CoverageContractError(
+                "closed closure requires durable per-work-unit owner receipts"
+            )
         if closure.coverage_closure_state == CoverageClosureState.CLOSED:
             for outcome in closure.unit_outcomes:
                 if outcome.terminal_attempt_ordinal is None:
@@ -1146,6 +1316,7 @@ __all__ = [
     "CoverageClosureState",
     "CoverageCondition",
     "CoverageContractError",
+    "CoveragePlanningGapError",
     "CoveragePlan",
     "CoveragePlanArtifact",
     "CoverageClosureArtifact",
@@ -1182,6 +1353,8 @@ __all__ = [
     "coverage_closure_sha256",
     "coverage_plan_sha256",
     "derive_work_unit_id",
+    "materialize_coverage_plan",
+    "materialize_single_pass_coverage_plan",
     "q28_artifact_sha256",
     "validate_coverage_artifact",
     "validate_coverage_closure",

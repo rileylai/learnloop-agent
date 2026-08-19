@@ -17,6 +17,19 @@ from typing import Annotated, Any, Literal, Mapping, Optional, Tuple, Union
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError
 
+from .coverage import (
+    Q26PreRenderNoteRef,
+    CoveragePlan,
+    WORK_UNIT_OUTPUT_SCHEMA_VERSION,
+    WorkUnitOutput,
+    canonical_coverage_plan_bytes,
+    canonical_work_unit_output_bytes,
+    coverage_plan_sha256,
+    materialize_single_pass_coverage_plan,
+    validate_coverage_plan,
+    validate_work_unit_output,
+    work_unit_output_sha256,
+)
 from .normalized_document import (
     ElementKind,
     NormalizedDocument,
@@ -44,6 +57,19 @@ from .benchmark_note import (
     benchmark_note_node_id,
     canonical_benchmark_note_bytes,
     validate_benchmark_note_artifact,
+)
+from .routing import (
+    ContractReference,
+    RouteMode,
+    RunMembership,
+    RoutingPolicy,
+    canonical_routing_bytes,
+    materialize_route_decision,
+    materialize_routing_input_facts,
+    route_decision_sha256,
+    routing_input_facts_sha256,
+    routing_policy_sha256,
+    validate_route_decision_bindings,
 )
 
 GENERATION_INPUT_SCHEMA_VERSION = "generation-input/1.0.0"
@@ -96,6 +122,11 @@ class GenerationResultArtifact(_StrictFrozenModel):
     generation_input_bytes: Annotated[StrictInt, Field(ge=0)]
     candidate_sha256: _Digest
     candidate_bytes: Annotated[StrictInt, Field(ge=0)]
+    routing_policy_sha256: Optional[_Digest] = None
+    route_decision_sha256: Optional[_Digest] = None
+    execution_contract_sha256: Optional[_Digest] = None
+    coverage_plan_sha256: Optional[_Digest] = None
+    work_unit_output_sha256: Optional[_Digest] = None
     attempt_id: _AttemptId
     status: Literal["contract_valid"]
 
@@ -113,6 +144,11 @@ class GenerationAttemptArtifact(_StrictFrozenModel):
     generation_input_sha256: _Digest
     candidate_sha256: _Digest
     result_sha256: _Digest
+    routing_policy_sha256: Optional[_Digest] = None
+    route_decision_sha256: Optional[_Digest] = None
+    execution_contract_sha256: Optional[_Digest] = None
+    coverage_plan_sha256: Optional[_Digest] = None
+    work_unit_output_sha256: Optional[_Digest] = None
     attempt_id: _AttemptId
     status: Literal["contract_valid"]
 
@@ -134,6 +170,11 @@ class GenerationLaneOutcome:
         "generation_input_digest",
         "result_digest",
         "attempt_digest",
+        "routing_policy_digest",
+        "route_decision_digest",
+        "execution_contract_digest",
+        "coverage_plan_digest",
+        "work_unit_output_digest",
         "error",
     )
 
@@ -146,6 +187,11 @@ class GenerationLaneOutcome:
         generation_input_digest: Optional[str] = None,
         result_digest: Optional[str] = None,
         attempt_digest: Optional[str] = None,
+        routing_policy_digest: Optional[str] = None,
+        route_decision_digest: Optional[str] = None,
+        execution_contract_digest: Optional[str] = None,
+        coverage_plan_digest: Optional[str] = None,
+        work_unit_output_digest: Optional[str] = None,
         error: Optional[str] = None,
     ) -> None:
         self.exit_code = exit_code
@@ -154,6 +200,11 @@ class GenerationLaneOutcome:
         self.generation_input_digest = generation_input_digest
         self.result_digest = result_digest
         self.attempt_digest = attempt_digest
+        self.routing_policy_digest = routing_policy_digest
+        self.route_decision_digest = route_decision_digest
+        self.execution_contract_digest = execution_contract_digest
+        self.coverage_plan_digest = coverage_plan_digest
+        self.work_unit_output_digest = work_unit_output_digest
         self.error = error
 
 
@@ -271,6 +322,111 @@ def _read_reference(
     if document.producer_provenance.configuration_sha256 != case.producer_configuration_sha256:
         raise _InvalidInput("reference configuration binding mismatch")
     return document, actual_digest, len(reference_bytes)
+
+
+_DIAGNOSTIC_ROUTING_POLICY_ID = "diagnostic-routing-policy"
+_DIAGNOSTIC_ROUTING_POLICY_REVISION = "revision-001"
+_DIAGNOSTIC_ROUTING_CONFIGURATION_SHA256 = hashlib.sha256(
+    b"diagnostic-fixed-single-pass-selector/1.0.0"
+).hexdigest()
+_DIAGNOSTIC_EXECUTION_CONTRACT_ID = "generation-diagnostic-v1"
+
+
+def _diagnostic_execution_contract(case: Any) -> ContractReference:
+    contract_seed = (
+        "generation-diagnostic-execution-contract/1.0.0\n"
+        + case.producer_configuration_sha256
+    ).encode("ascii")
+    return ContractReference(
+        contract_id=_DIAGNOSTIC_EXECUTION_CONTRACT_ID,
+        sha256=hashlib.sha256(contract_seed).hexdigest(),
+    )
+
+
+def _read_source_for_routing(case: Any, benchmark_root: Path) -> bytes:
+    _, source_bytes = _read_bounded_file(
+        benchmark_root,
+        case.source_artifact_path,
+        "source snapshot",
+    )
+    _, digest_bytes = _read_bounded_file(
+        benchmark_root,
+        case.source_digest_path,
+        "source checksum record",
+    )
+    expected_digest = _read_checksum_record(
+        digest_bytes,
+        PurePosixPath(case.source_artifact_path).name,
+    )
+    actual_digest = hashlib.sha256(source_bytes).hexdigest()
+    if expected_digest != case.source_sha256 or actual_digest != case.source_sha256:
+        raise _InvalidInput("routing source digest binding mismatch")
+    return source_bytes
+
+
+def _select_diagnostic_single_pass(policy: RoutingPolicy, facts: Any) -> RouteMode:
+    """Use the preregistered diagnostic route only; this is not production routing."""
+
+    del policy, facts
+    return RouteMode.SINGLE_PASS
+
+
+def _materialize_generation_coverage(
+    case: Any,
+    benchmark_root: Path,
+    document: NormalizedDocument,
+) -> tuple[Any, Any, Any, ContractReference, Any]:
+    source_bytes = _read_source_for_routing(case, benchmark_root)
+    execution_contract = _diagnostic_execution_contract(case)
+    routing_policy = RoutingPolicy(
+        schema_version="benchmark-generation-routing-policy/1.0.0",
+        policy_id=_DIAGNOSTIC_ROUTING_POLICY_ID,
+        policy_revision=_DIAGNOSTIC_ROUTING_POLICY_REVISION,
+        implementation_id="diagnostic-fixed-single-pass-selector",
+        implementation_version="1.0.0",
+        configuration_sha256=_DIAGNOSTIC_ROUTING_CONFIGURATION_SHA256,
+        input_facts_schema_version="benchmark-generation-routing-input-facts/1.0.0",
+        mode_order=(
+            RouteMode.SINGLE_PASS,
+            RouteMode.SECTION_AWARE,
+            RouteMode.HIERARCHICAL,
+        ),
+        boundary_references=(),
+        execution_contract=execution_contract,
+    )
+    input_facts = materialize_routing_input_facts(
+        document,
+        source_bytes,
+        execution_contract,
+    )
+    route_decision = materialize_route_decision(
+        routing_policy,
+        input_facts,
+        policy_sha256=routing_policy_sha256(routing_policy),
+        run_membership=RunMembership.DIAGNOSTIC,
+        selector=_select_diagnostic_single_pass,
+    )
+    validate_route_decision_bindings(
+        route_decision,
+        routing_policy,
+        document,
+        source_bytes=source_bytes,
+    )
+    coverage_plan = materialize_single_pass_coverage_plan(
+        document,
+        routing_policy,
+        route_decision,
+        execution_contract,
+        plan_id=f"{case.case_id}-coverage",
+        plan_revision=case.fixture_revision,
+    )
+    return (
+        routing_policy,
+        input_facts,
+        route_decision,
+        execution_contract,
+        coverage_plan,
+    )
 
 
 def build_generation_input(case: Any, benchmark_root: Path) -> GenerationInputArtifact:
@@ -506,11 +662,14 @@ def execute_generation_case(
     output_dir: Path,
     *,
     attempt_id: str,
+    attempt_ordinal: int,
 ) -> GenerationLaneOutcome:
     """Generate one deterministic pre-render note and lineage artifacts offline."""
 
     if re.fullmatch(_ATTEMPT_ID_PATTERN, attempt_id) is None:
         return GenerationLaneOutcome(2, "invalid_input", error="invalid attempt id")
+    if attempt_ordinal < 1:
+        return GenerationLaneOutcome(2, "invalid_input", error="invalid attempt ordinal")
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
         input_model = build_generation_input(case, benchmark_root)
@@ -519,6 +678,44 @@ def execute_generation_case(
         document, reference_digest, _ = _read_reference(case, Path(benchmark_root))
         if reference_digest != input_model.reference_sha256:
             raise _InvalidInput("Generation input and note reference binding mismatch")
+        (
+            routing_policy,
+            input_facts,
+            route_decision,
+            execution_contract,
+            coverage_plan,
+        ) = _materialize_generation_coverage(case, Path(benchmark_root), document)
+        policy_digest = _write_artifact(
+            output_dir / "routing_policy.json",
+            canonical_routing_bytes(routing_policy),
+        )
+        facts_digest = _write_artifact(
+            output_dir / "routing_input_facts.json",
+            canonical_routing_bytes(input_facts),
+        )
+        route_digest = _write_artifact(
+            output_dir / "route_decision.json",
+            canonical_routing_bytes(route_decision),
+        )
+        if facts_digest != routing_input_facts_sha256(input_facts):
+            raise _InvalidInput("routing facts digest binding mismatch")
+        if route_digest != route_decision_sha256(route_decision):
+            raise _InvalidInput("route decision digest binding mismatch")
+        if policy_digest != routing_policy_sha256(routing_policy):
+            raise _InvalidInput("routing policy digest binding mismatch")
+        plan_digest = _write_artifact(
+            output_dir / "coverage_plan.json",
+            canonical_coverage_plan_bytes(coverage_plan),
+        )
+        if plan_digest != coverage_plan_sha256(coverage_plan):
+            raise _InvalidInput("coverage plan digest binding mismatch")
+        validate_coverage_plan(
+            coverage_plan,
+            document,
+            routing_policy=routing_policy,
+            route_decision=route_decision,
+            execution_contract=execution_contract,
+        )
         candidate_model = _build_pre_render_note(
             document,
             reference_digest=reference_digest,
@@ -529,6 +726,35 @@ def execute_generation_case(
             output_dir / "candidate.json",
             candidate_bytes,
         )
+        work_unit = coverage_plan.work_units[0]
+        work_unit_output = WorkUnitOutput(
+            schema_version=WORK_UNIT_OUTPUT_SCHEMA_VERSION,
+            artifact_role="work_unit_output",
+            coverage_plan_sha256=plan_digest,
+            work_unit_id=work_unit.work_unit_id,
+            attempt_ordinal=attempt_ordinal,
+            output_condition="complete",
+            pre_render_note=Q26PreRenderNoteRef(
+                schema_version=candidate_model.schema_version,
+                artifact_role=candidate_model.artifact_role,
+                document_id=candidate_model.document_id,
+                reference_document_sha256=candidate_model.reference_document_sha256,
+                sha256=candidate_digest,
+            ),
+        )
+        validate_work_unit_output(
+            work_unit_output,
+            coverage_plan,
+            reference_document=document,
+            pre_render_note_artifact=candidate_model,
+        )
+        work_unit_output_bytes = canonical_work_unit_output_bytes(work_unit_output)
+        work_unit_output_digest = _write_artifact(
+            output_dir / "work_unit_output.json",
+            work_unit_output_bytes,
+        )
+        if work_unit_output_digest != work_unit_output_sha256(work_unit_output):
+            raise _InvalidInput("work-unit output digest binding mismatch")
         result_model = GenerationResultArtifact(
             schema_version="generation-lane-result/1.0.0",
             runner_version="parser-note-completeness-runner/1.0.0",
@@ -541,6 +767,11 @@ def execute_generation_case(
             generation_input_bytes=len(input_bytes),
             candidate_sha256=candidate_digest,
             candidate_bytes=len(candidate_bytes),
+            routing_policy_sha256=policy_digest,
+            route_decision_sha256=route_digest,
+            execution_contract_sha256=execution_contract.sha256,
+            coverage_plan_sha256=plan_digest,
+            work_unit_output_sha256=work_unit_output_digest,
             attempt_id=attempt_id,
             status="contract_valid",
         )
@@ -557,6 +788,11 @@ def execute_generation_case(
             generation_input_sha256=input_digest,
             candidate_sha256=candidate_digest,
             result_sha256=result_digest,
+            routing_policy_sha256=policy_digest,
+            route_decision_sha256=route_digest,
+            execution_contract_sha256=execution_contract.sha256,
+            coverage_plan_sha256=plan_digest,
+            work_unit_output_sha256=work_unit_output_digest,
             attempt_id=attempt_id,
             status="contract_valid",
         )
@@ -571,6 +807,11 @@ def execute_generation_case(
             generation_input_digest=input_digest,
             result_digest=result_digest,
             attempt_digest=attempt_digest,
+            routing_policy_digest=policy_digest,
+            route_decision_digest=route_digest,
+            execution_contract_digest=execution_contract.sha256,
+            coverage_plan_digest=plan_digest,
+            work_unit_output_digest=work_unit_output_digest,
         )
     except _InvalidInput as exc:
         return GenerationLaneOutcome(2, "invalid_input", error=str(exc))

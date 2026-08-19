@@ -124,9 +124,9 @@ def test_repeated_generation_execution_keeps_artifact_digests_stable(
     first_store = tmp_path / "first-store"
     second_store = tmp_path / "second-store"
 
-    assert main(_execute_args("smoke", output_dir, first_store, invocation_id="generation-repeat-001")) == 0
+    assert main(_execute_args("smoke", output_dir, first_store, invocation_id="generation-repeat-001")) == 2
     capsys.readouterr()
-    assert main(_execute_args("smoke", output_dir, second_store, invocation_id="generation-repeat-002")) == 0
+    assert main(_execute_args("smoke", output_dir, second_store, invocation_id="generation-repeat-002")) == 2
     capsys.readouterr()
 
     first_artifacts = {
@@ -138,6 +138,7 @@ def test_repeated_generation_execution_keeps_artifact_digests_stable(
         for path in second_store.glob("attempts/*/attempt-*/execution/*")
     }
     assert first_artifacts == second_artifacts
+    assert all("coverage_closure" not in path.name for path in first_artifacts)
 
 
 @pytest.mark.parametrize("kind", ["smoke", "full"])
@@ -157,9 +158,10 @@ def test_generation_execution_materializes_pre_render_note_candidate(
         raise AssertionError("Generation lane must not consume parser candidates")
 
     monkeypatch.setattr(runner_module, "execute_parser_case", parser_must_not_run)
-    assert main(_execute_args(kind, output_dir, store, invocation_id=f"generation-{kind}-001")) == 0
+    assert main(_execute_args(kind, output_dir, store, invocation_id=f"generation-{kind}-001")) == 2
     status = json.loads(capsys.readouterr().out)
-    assert status["status"] == "collection_complete"
+    assert status["status"] == "invalid_input"
+    assert "Q28 closure dependency gap" in status["error"]
 
     profile, _ = load_diagnostic_profile(*_profile_paths(kind), ROOT)
     cases: dict[str, Any] = {case.case_id: case for case in profile.cases}
@@ -167,7 +169,7 @@ def test_generation_execution_materializes_pre_render_note_candidate(
     collection_path = next((store / "collections").glob("revision-*.json"))
     collection = json.loads(collection_path.read_bytes())
     assert [slot["case_id"] for slot in collection["slots"]] == list(expected_ids)
-    assert all(slot["state"] == "closed" for slot in collection["slots"])
+    assert all(slot["state"] == "invalid" for slot in collection["slots"])
 
     execution_paths = sorted(store.glob("attempts/*/attempt-*/execution"))
     assert len(execution_paths) == len(expected_ids)
@@ -177,6 +179,16 @@ def test_generation_execution_materializes_pre_render_note_candidate(
             "generation_input.sha256",
             "candidate.json",
             "candidate.sha256",
+            "routing_policy.json",
+            "routing_policy.sha256",
+            "routing_input_facts.json",
+            "routing_input_facts.sha256",
+            "route_decision.json",
+            "route_decision.sha256",
+            "coverage_plan.json",
+            "coverage_plan.sha256",
+            "work_unit_output.json",
+            "work_unit_output.sha256",
             "result.json",
             "result.sha256",
             "attempt.json",
@@ -235,10 +247,28 @@ def test_generation_execution_materializes_pre_render_note_candidate(
         assert attempt_model.candidate_sha256 == result_model.candidate_sha256
         assert attempt_model.generation_input_sha256 == result_model.generation_input_sha256
         assert result_model.status == attempt_model.status == "contract_valid"
+        plan_model = json.loads((execution_path / "coverage_plan.json").read_bytes())
+        work_unit_output_model = json.loads(
+            (execution_path / "work_unit_output.json").read_bytes()
+        )
+        plan_digest = hashlib.sha256(
+            (execution_path / "coverage_plan.json").read_bytes()
+        ).hexdigest()
+        work_unit_output_digest = hashlib.sha256(
+            (execution_path / "work_unit_output.json").read_bytes()
+        ).hexdigest()
+        assert result_model.coverage_plan_sha256 == plan_digest
+        assert result_model.work_unit_output_sha256 == work_unit_output_digest
+        assert attempt_model.coverage_plan_sha256 == plan_digest
+        assert attempt_model.work_unit_output_sha256 == work_unit_output_digest
+        assert work_unit_output_model["attempt_ordinal"] == 1
+        assert work_unit_output_model["work_unit_id"] == plan_model["work_units"][0]["work_unit_id"]
+        assert not (execution_path / "coverage_closure.json").exists()
+        assert not (execution_path / "coverage_closure.sha256").exists()
         assert "quality_decision" not in result_model.model_dump()
         assert "result_role" not in result_model.model_dump()
         terminal_bytes = (execution_path.parent / "terminal.json").read_bytes()
-        assert terminal_bytes.find(hashlib.sha256(result_bytes).hexdigest().encode("ascii")) >= 0
+        assert terminal_bytes.find(hashlib.sha256(result_bytes).hexdigest().encode("ascii")) == -1
         assert str(ROOT).encode() not in result_bytes + attempt_bytes + terminal_bytes
 
 
@@ -313,8 +343,9 @@ def test_generation_lane_resume_does_not_repeat_closed_slots(
         return original_execute(*args, **kwargs)
 
     monkeypatch.setattr(runner_module, "execute_generation_case", fail_once)
-    assert main(_execute_args("smoke", output_dir, store, invocation_id="generation-resume-001")) == 1
-    assert json.loads(capsys.readouterr().out)["status"] == "collection_incomplete"
+    assert main(_execute_args("smoke", output_dir, store, invocation_id="generation-resume-001")) == 2
+    first_status = json.loads(capsys.readouterr().out)
+    assert first_status["status"] == "invalid_input"
     failed_terminal = json.loads(
         (store / "attempts" / "smoke-P01" / "attempt-0001" / "terminal.json").read_bytes()
     )
@@ -331,11 +362,17 @@ def test_generation_lane_resume_does_not_repeat_closed_slots(
                 resume=True,
             )
         )
-        == 0
+        == 2
     )
-    assert json.loads(capsys.readouterr().out)["status"] == "collection_complete"
+    second_status = json.loads(capsys.readouterr().out)
+    assert second_status["status"] == "invalid_input"
+    assert "Q28 closure dependency gap" in second_status["error"]
     assert len(tuple((store / "attempts" / "smoke-P01").glob("attempt-*/terminal.json"))) == 2
     assert len(tuple((store / "attempts" / "smoke-W01").glob("attempt-*/terminal.json"))) == 1
+    second_execution = store / "attempts" / "smoke-P01" / "attempt-0002" / "execution"
+    assert json.loads((second_execution / "work_unit_output.json").read_bytes())["attempt_ordinal"] == 2
+    assert not (second_execution / "coverage_closure.json").exists()
+    assert not (store / "attempts" / "smoke-P01" / "attempt-0001" / "execution" / "coverage_closure.json").exists()
 
 
 def test_generation_lane_rejects_provider_execution_without_network_or_provider_use(
