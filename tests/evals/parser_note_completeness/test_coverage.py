@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import hashlib
 import json
+import tempfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -35,7 +36,18 @@ from .coverage import (
     validate_coverage_plan,
     work_unit_output_sha256,
 )
+from .benchmark_note import benchmark_note_sha256
+from .full_profile import load_full_profile
+from .generation_lane import build_pre_render_note
 from .normalized_document import NormalizedDocument, normalized_document_sha256
+from .work_unit_receipt import (
+    DurableWorkUnitAttemptReceipt,
+    WorkUnitAttemptReceiptStore,
+    build_work_unit_attempt_receipt,
+    persist_work_unit_attempt_receipt,
+    read_durable_work_unit_attempt_receipt,
+    work_unit_attempt_receipt_sha256,
+)
 
 
 _REFERENCE_PATH = (
@@ -46,6 +58,14 @@ _REFERENCE_PATH = (
     / "revision-001"
     / "normalized_document.json"
 )
+_PROFILE_ROOT = Path(__file__).parent / "v1"
+_FULL_PROFILE = load_full_profile(
+    _PROFILE_ROOT / "manifests" / "full" / "revision-001" / "profile.json",
+    _PROFILE_ROOT / "manifests" / "full" / "revision-001" / "profile.sha256",
+    _PROFILE_ROOT,
+)
+_P01_CASE = next(case for case in _FULL_PROFILE.cases if case.case_id == "P01")
+_RECEIPT_FIXTURE_ROOT = Path(tempfile.mkdtemp(prefix="q28-receipt-fixtures-"))
 
 
 def _reference() -> NormalizedDocument:
@@ -167,16 +187,6 @@ def _output(
     )
 
 
-def _receipt_ref(work_unit_id: str, attempt_ordinal: int) -> ExternalOwnerRecordRef:
-    digest = hashlib.sha256(f"{work_unit_id}:{attempt_ordinal}".encode()).hexdigest()
-    return ExternalOwnerRecordRef(
-        schema_version="q15-receipt/1.0.0",
-        sha256=digest,
-        record_type="receipt",
-        record_id=f"receipt-{work_unit_id[-8:]}-{attempt_ordinal}",
-    )
-
-
 def _closure(
     plan: CoveragePlan,
     reference: NormalizedDocument,
@@ -185,34 +195,96 @@ def _closure(
     state: CoverageClosureState = CoverageClosureState.CLOSED,
     attempts_by_unit: dict[str, tuple[tuple[int, str], ...]] | None = None,
     observed_merge_order: tuple[str, ...] | None = None,
-) -> tuple[CoverageClosure, dict[str, WorkUnitOutput], dict[str, dict[str, object]]]:
+) -> tuple[CoverageClosure, dict[str, WorkUnitOutput], WorkUnitAttemptReceiptStore, Any]:
     outputs: dict[str, WorkUnitOutput] = {}
-    owner_records: dict[str, dict[str, object]] = {}
+    owner_records: list[DurableWorkUnitAttemptReceipt] = []
     outcomes = []
     attempts_by_unit = attempts_by_unit or {
         unit.work_unit_id: ((1, condition),)
         for unit in plan.work_units
     }
-    for unit in plan.work_units:
+    for unit_index, unit in enumerate(plan.work_units, start=1):
         bindings = []
+        previous_terminal_digest = None
+        logical_run_id = f"logical-run-{unit_index}"
         for ordinal, attempt_condition in attempts_by_unit[unit.work_unit_id]:
             output = _output(plan, unit.work_unit_id, ordinal, attempt_condition)
             output_digest = work_unit_output_sha256(output)
             outputs[output_digest] = output
-            receipt_ref = _receipt_ref(unit.work_unit_id, ordinal)
-            owner_records[receipt_ref.sha256] = {
-                "schema_version": receipt_ref.schema_version,
-                "record_type": receipt_ref.record_type,
-                "record_id": receipt_ref.record_id,
-                "coverage_plan_sha256": coverage_plan_sha256(plan),
-                "work_unit_id": unit.work_unit_id,
-                "attempt_ordinal": ordinal,
-            }
+            start = build_work_unit_attempt_receipt(
+                receipt_role="attempt_started",
+                lifecycle_status="started",
+                coverage_plan_sha256=coverage_plan_sha256(plan),
+                work_unit_id=unit.work_unit_id,
+                attempt_ordinal=ordinal,
+                work_unit_output_sha256=None,
+                membership="diagnostic",
+                logical_run_id=logical_run_id,
+                execution_id=f"execution-{unit_index}-{ordinal}",
+                runner_plan_sha256="f" * 64,
+                runner_slot_id=f"slot-{unit_index}",
+                runner_attempt_ordinal=ordinal,
+                runner_invocation_id="test-invocation",
+                previous_receipt_sha256=previous_terminal_digest,
+            )
+            start_digest = work_unit_attempt_receipt_sha256(start)
+            terminal_status = (
+                "complete"
+                if attempt_condition == "complete"
+                else "invalid"
+                if attempt_condition == "invalid"
+                else "failed"
+            )
+            terminal = build_work_unit_attempt_receipt(
+                receipt_role="attempt_terminal",
+                lifecycle_status=terminal_status,
+                coverage_plan_sha256=coverage_plan_sha256(plan),
+                work_unit_id=unit.work_unit_id,
+                attempt_ordinal=ordinal,
+                work_unit_output_sha256=output_digest,
+                membership="diagnostic",
+                logical_run_id=logical_run_id,
+                execution_id=f"execution-{unit_index}-{ordinal}",
+                runner_plan_sha256="f" * 64,
+                runner_slot_id=f"slot-{unit_index}",
+                runner_attempt_ordinal=ordinal,
+                runner_invocation_id="test-invocation",
+                previous_receipt_sha256=start_digest,
+            )
+            terminal_digest = work_unit_attempt_receipt_sha256(terminal)
+            start_path = _RECEIPT_FIXTURE_ROOT / f"{start_digest}.json"
+            terminal_path = _RECEIPT_FIXTURE_ROOT / f"{terminal_digest}.json"
+            start_record = (
+                read_durable_work_unit_attempt_receipt(
+                    start_path, start_path.with_suffix(".sha256")
+                )
+                if start_path.exists()
+                else persist_work_unit_attempt_receipt(start, start_path)
+            )
+            terminal_record = (
+                read_durable_work_unit_attempt_receipt(
+                    terminal_path, terminal_path.with_suffix(".sha256")
+                )
+                if terminal_path.exists()
+                else persist_work_unit_attempt_receipt(terminal, terminal_path)
+            )
+            owner_records.extend(
+                (
+                    start_record,
+                    terminal_record,
+                )
+            )
+            previous_terminal_digest = terminal_digest
             bindings.append(
                 {
                     "attempt_ordinal": ordinal,
                     "output_sha256": output_digest,
-                    "receipt_ref": receipt_ref,
+                    "receipt_ref": ExternalOwnerRecordRef(
+                        schema_version=terminal.schema_version,
+                        sha256=terminal_digest,
+                        record_type=terminal.artifact_role,
+                        record_id=terminal.record_id,
+                    ),
                 }
             )
         terminal = bindings[-1]["attempt_ordinal"] if state == CoverageClosureState.CLOSED else None
@@ -240,12 +312,14 @@ def _closure(
             artifact_role="pre_render_note",
             document_id=reference.document_id,
             reference_document_sha256=normalized_document_sha256(reference),
-            sha256="e" * 64,
+            sha256=benchmark_note_sha256(build_pre_render_note(_P01_CASE, _PROFILE_ROOT)),
         ),
         source_reference_mappings=(),
         observations=(),
     )
-    return closure, outputs, owner_records
+    return closure, outputs, WorkUnitAttemptReceiptStore(owner_records), build_pre_render_note(
+        _P01_CASE, _PROFILE_ROOT
+    )
 
 
 def test_work_unit_identity_is_repeatedly_byte_identical() -> None:
@@ -328,12 +402,14 @@ def test_q28_models_forbid_unknown_fields_and_canonical_bytes_have_no_newline() 
 @pytest.mark.parametrize("condition", ["complete", "failed", "truncated", "invalid", "missing"])
 def test_closed_terminal_conditions_are_structurally_valid(condition: str) -> None:
     plan, reference = _plan()
-    closure, outputs, owner_records = _closure(plan, reference, condition=condition)
+    closure, outputs, owner_records, final_note = _closure(plan, reference, condition=condition)
     validated = validate_coverage_closure(
         closure,
         plan,
         output_artifacts=outputs,
         owner_records=owner_records,
+        reference_document=reference,
+        final_pre_render_note_artifact=final_note,
     )
     assert validated.coverage_closure_state == CoverageClosureState.CLOSED
     assert all(outcome.terminal_attempt_ordinal == 1 for outcome in validated.unit_outcomes)
@@ -341,14 +417,19 @@ def test_closed_terminal_conditions_are_structurally_valid(condition: str) -> No
 
 def test_missing_without_attempt_is_not_closed() -> None:
     plan, reference = _plan()
-    closure, _, _ = _closure(
+    closure, _, _, final_note = _closure(
         plan,
         reference,
         condition="missing",
         state=CoverageClosureState.NOT_CLOSED,
         attempts_by_unit={unit.work_unit_id: () for unit in plan.work_units},
     )
-    assert validate_coverage_closure(closure, plan).coverage_closure_state == CoverageClosureState.NOT_CLOSED
+    assert validate_coverage_closure(
+        closure,
+        plan,
+        reference_document=reference,
+        final_pre_render_note_artifact=final_note,
+    ).coverage_closure_state == CoverageClosureState.NOT_CLOSED
 
 
 def test_terminal_pointer_must_reference_an_existing_attempt() -> None:
@@ -367,7 +448,7 @@ def test_prior_failed_attempt_remains_in_later_terminal_history() -> None:
         unit.work_unit_id: ((1, "failed"), (2, "complete"))
         for unit in plan.work_units
     }
-    closure, outputs, owner_records = _closure(
+    closure, outputs, owner_records, final_note = _closure(
         plan,
         reference,
         attempts_by_unit=attempts,
@@ -377,6 +458,8 @@ def test_prior_failed_attempt_remains_in_later_terminal_history() -> None:
         plan,
         output_artifacts=outputs,
         owner_records=owner_records,
+        reference_document=reference,
+        final_pre_render_note_artifact=final_note,
     )
     assert all(len(outcome.attempts) == 2 for outcome in validated.unit_outcomes)
     assert all(outcome.terminal_attempt_ordinal == 2 for outcome in validated.unit_outcomes)
@@ -384,40 +467,228 @@ def test_prior_failed_attempt_remains_in_later_terminal_history() -> None:
 
 def test_closed_closure_rejects_owner_receipt_without_q28_attempt_bindings() -> None:
     plan, reference = _plan()
-    closure, outputs, owner_records = _closure(plan, reference)
+    closure, outputs, owner_records, final_note = _closure(plan, reference)
     incomplete_records = {
         digest: {
             key: value
-            for key, value in record.items()
+            for key, value in record.receipt.model_dump(mode="json").items()
             if key not in {"coverage_plan_sha256", "work_unit_id", "attempt_ordinal"}
         }
-        for digest, record in owner_records.items()
+        for digest, record in owner_records._records.items()
+        if record.receipt.receipt_role == "attempt_terminal"
     }
 
-    with pytest.raises(CoverageContractError, match="coverage-plan binding"):
+    with pytest.raises(CoverageContractError, match="frozen receipt contract"):
         validate_coverage_closure(
             closure,
             plan,
             output_artifacts=outputs,
             owner_records=incomplete_records,
+            reference_document=reference,
+            final_pre_render_note_artifact=final_note,
         )
 
 
 def test_closed_closure_requires_durable_owner_receipt_context() -> None:
     plan, reference = _plan()
-    closure, _, _ = _closure(plan, reference)
+    closure, _, _, final_note = _closure(plan, reference)
 
     with pytest.raises(CoverageContractError, match="durable per-work-unit"):
         validate_coverage_closure(closure, plan)
 
 
+def _alternate_receipt_pair(
+    root: Path,
+    *,
+    plan_sha256: str,
+    work_unit_id: str,
+    attempt_ordinal: int,
+    output_sha256: str,
+    runner_attempt_ordinal: int,
+    label: str,
+) -> tuple[DurableWorkUnitAttemptReceipt, DurableWorkUnitAttemptReceipt]:
+    previous = None if attempt_ordinal == 1 else "e" * 64
+    start = build_work_unit_attempt_receipt(
+        receipt_role="attempt_started",
+        lifecycle_status="started",
+        coverage_plan_sha256=plan_sha256,
+        work_unit_id=work_unit_id,
+        attempt_ordinal=attempt_ordinal,
+        work_unit_output_sha256=None,
+        membership="diagnostic",
+        logical_run_id=f"alternate-run-{label}",
+        execution_id=f"alternate-execution-{label}",
+        runner_plan_sha256="f" * 64,
+        runner_slot_id="alternate-slot",
+        runner_attempt_ordinal=runner_attempt_ordinal,
+        runner_invocation_id="alternate-invocation",
+        previous_receipt_sha256=previous,
+    )
+    start_record = persist_work_unit_attempt_receipt(
+        start, root / f"{label}-start.json"
+    )
+    terminal = build_work_unit_attempt_receipt(
+        receipt_role="attempt_terminal",
+        lifecycle_status="complete",
+        coverage_plan_sha256=plan_sha256,
+        work_unit_id=work_unit_id,
+        attempt_ordinal=attempt_ordinal,
+        work_unit_output_sha256=output_sha256,
+        membership="diagnostic",
+        logical_run_id=f"alternate-run-{label}",
+        execution_id=f"alternate-execution-{label}",
+        runner_plan_sha256="f" * 64,
+        runner_slot_id="alternate-slot",
+        runner_attempt_ordinal=runner_attempt_ordinal,
+        runner_invocation_id="alternate-invocation",
+        previous_receipt_sha256=start_record.sha256,
+    )
+    terminal_record = persist_work_unit_attempt_receipt(
+        terminal, root / f"{label}-terminal.json"
+    )
+    return start_record, terminal_record
+
+
+def _closure_with_first_receipt(
+    closure: CoverageClosure, receipt: DurableWorkUnitAttemptReceipt
+) -> CoverageClosure:
+    data = closure.model_dump(mode="json")
+    data["unit_outcomes"][0]["attempts"][0]["receipt_ref"] = {
+        "schema_version": receipt.receipt.schema_version,
+        "sha256": receipt.sha256,
+        "record_type": receipt.receipt.artifact_role,
+        "record_id": receipt.receipt.record_id,
+    }
+    return CoverageClosure.model_validate(data)
+
+
+@pytest.mark.parametrize("mismatch", ["plan", "work_unit", "ordinal", "output"])
+def test_closed_closure_rejects_direct_owner_binding_mismatches(
+    mismatch: str, tmp_path: Path
+) -> None:
+    plan, reference = _plan()
+    closure, outputs, owner_records, final_note = _closure(plan, reference)
+    target_unit = plan.work_units[0].work_unit_id
+    target_output = next(
+        attempt.output_sha256
+        for attempt in closure.unit_outcomes[0].attempts
+        if attempt.attempt_ordinal == 1
+    )
+    alternate_plan = "e" * 64 if mismatch == "plan" else coverage_plan_sha256(plan)
+    alternate_unit = "work-unit-" + "e" * 64 if mismatch == "work_unit" else target_unit
+    alternate_ordinal = 2 if mismatch == "ordinal" else 1
+    alternate_output = "f" * 64 if mismatch == "output" else target_output
+    start_record, terminal_record = _alternate_receipt_pair(
+        tmp_path,
+        plan_sha256=alternate_plan,
+        work_unit_id=alternate_unit,
+        attempt_ordinal=alternate_ordinal,
+        output_sha256=alternate_output,
+        runner_attempt_ordinal=9,
+        label=mismatch,
+    )
+    all_records = tuple(owner_records._records.values()) + (start_record, terminal_record)
+    bad_closure = _closure_with_first_receipt(closure, terminal_record)
+    with pytest.raises(CoverageContractError):
+        validate_coverage_closure(
+            bad_closure,
+            plan,
+            output_artifacts=outputs,
+            owner_records=WorkUnitAttemptReceiptStore(all_records),
+            reference_document=reference,
+            final_pre_render_note_artifact=final_note,
+        )
+
+
+def test_closed_closure_rejects_missing_and_non_durable_receipts() -> None:
+    plan, reference = _plan()
+    closure, outputs, owner_records, final_note = _closure(plan, reference)
+    with pytest.raises(CoverageContractError, match="cannot be resolved"):
+        validate_coverage_closure(
+            closure,
+            plan,
+            output_artifacts=outputs,
+            owner_records=WorkUnitAttemptReceiptStore(()),
+            reference_document=reference,
+            final_pre_render_note_artifact=final_note,
+        )
+
+    pending_records = {
+        digest: record.receipt for digest, record in owner_records._records.items()
+    }
+    with pytest.raises(CoverageContractError, match="durable per-work-unit"):
+        validate_coverage_closure(
+            closure,
+            plan,
+            output_artifacts=outputs,
+            owner_records=pending_records,
+            reference_document=reference,
+            final_pre_render_note_artifact=final_note,
+        )
+
+
+def test_closed_closure_rejects_broken_owner_history_chain() -> None:
+    plan, reference = _plan()
+    closure, outputs, owner_records, final_note = _closure(plan, reference)
+    terminal_only = WorkUnitAttemptReceiptStore(
+        tuple(
+            record
+            for record in owner_records._records.values()
+            if record.receipt.receipt_role == "attempt_terminal"
+        )
+    )
+    with pytest.raises(CoverageContractError, match="cannot be resolved"):
+        validate_coverage_closure(
+            closure,
+            plan,
+            output_artifacts=outputs,
+            owner_records=terminal_only,
+            reference_document=reference,
+            final_pre_render_note_artifact=final_note,
+        )
+
+
+def test_q28_ignores_runner_ordinal_when_owner_attempt_binding_is_correct(
+    tmp_path: Path,
+) -> None:
+    plan, reference = _plan()
+    closure, outputs, owner_records, final_note = _closure(plan, reference)
+    target_output = closure.unit_outcomes[0].attempts[0].output_sha256
+    start_record, terminal_record = _alternate_receipt_pair(
+        tmp_path,
+        plan_sha256=coverage_plan_sha256(plan),
+        work_unit_id=plan.work_units[0].work_unit_id,
+        attempt_ordinal=1,
+        output_sha256=target_output,
+        runner_attempt_ordinal=99,
+        label="runner-ordinal-only",
+    )
+    bad_closure = _closure_with_first_receipt(closure, terminal_record)
+    validated = validate_coverage_closure(
+        bad_closure,
+        plan,
+        output_artifacts=outputs,
+        owner_records=WorkUnitAttemptReceiptStore(
+            tuple(owner_records._records.values()) + (start_record, terminal_record)
+        ),
+        reference_document=reference,
+        final_pre_render_note_artifact=final_note,
+    )
+    assert validated.coverage_closure_state == CoverageClosureState.CLOSED
+
+
 def test_observed_merge_order_must_respect_merge_dependency() -> None:
     plan, reference = _plan()
-    closure, _, _ = _closure(
+    closure, _, _, final_note = _closure(
         plan,
         reference,
         state=CoverageClosureState.NOT_CLOSED,
         observed_merge_order=(plan.planned_merge_order[-1],),
     )
     with pytest.raises(CoverageContractError):
-        validate_coverage_closure(closure, plan)
+        validate_coverage_closure(
+            closure,
+            plan,
+            reference_document=reference,
+            final_pre_render_note_artifact=final_note,
+        )

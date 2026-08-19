@@ -49,10 +49,6 @@ RESULT_SCHEMA_VERSION = "runner-result/1.0.0"
 ATTEMPT_SCHEMA_VERSION = "runner-attempt/1.0.0"
 _DIGEST_PATTERN = r"^[0-9a-f]{64}$"
 _ATTEMPT_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.-]*$"
-_Q28_RECEIPT_DEPENDENCY_GAP = (
-    "Q28 closure dependency gap: no frozen per-work-unit owner receipt "
-    "binds coverage_plan_sha256, work_unit_id, and attempt_ordinal"
-)
 _Digest = Annotated[StrictStr, Field(pattern=_DIGEST_PATTERN)]
 _AttemptId = Annotated[StrictStr, Field(pattern=_ATTEMPT_ID_PATTERN)]
 
@@ -124,6 +120,8 @@ class RunnerOutcome:
     execution_contract_digest: Optional[str] = None
     coverage_plan_digest: Optional[str] = None
     work_unit_output_digest: Optional[str] = None
+    work_unit_attempt_receipt_digest: Optional[str] = None
+    coverage_closure_digest: Optional[str] = None
     collection_digest: Optional[str] = None
     invocation_id: Optional[str] = None
     error: Optional[str] = None
@@ -153,6 +151,10 @@ class RunnerOutcome:
             payload["coverage_plan_digest"] = self.coverage_plan_digest
         if self.work_unit_output_digest is not None:
             payload["work_unit_output_digest"] = self.work_unit_output_digest
+        if self.work_unit_attempt_receipt_digest is not None:
+            payload["work_unit_attempt_receipt_digest"] = self.work_unit_attempt_receipt_digest
+        if self.coverage_closure_digest is not None:
+            payload["coverage_closure_digest"] = self.coverage_closure_digest
         if self.collection_digest is not None:
             payload["collection_digest"] = self.collection_digest
         if self.invocation_id is not None:
@@ -568,6 +570,12 @@ def _slot_history(
                     "coverage_plan.sha256",
                     "work_unit_output.json",
                     "work_unit_output.sha256",
+                    "work_unit_attempt_start.json",
+                    "work_unit_attempt_start.sha256",
+                    "work_unit_attempt_receipt.json",
+                    "work_unit_attempt_receipt.sha256",
+                    "coverage_closure.json",
+                    "coverage_closure.sha256",
                     "result.json",
                     "result.sha256",
                     "attempt.json",
@@ -996,7 +1004,16 @@ def execute_plan(
                     artifact_root,
                     attempt_dir / "execution",
                     attempt_id=attempt_id,
+                    # The current frozen single-pass materializer has one
+                    # planned work unit.  Pass the two owner ordinals
+                    # explicitly; equality is a caller fact, not a schema
+                    # rule.
                     attempt_ordinal=ordinal,
+                    runner_plan_sha256=plan_digest,
+                    runner_slot_id=slot.slot_id,
+                    runner_attempt_ordinal=ordinal,
+                    runner_invocation_id=invocation_id,
+                    logical_run_id=slot.slot_id,
                 )
                 outcome = RunnerOutcome(
                     generation_outcome.exit_code,
@@ -1010,6 +1027,8 @@ def execute_plan(
                     execution_contract_digest=generation_outcome.execution_contract_digest,
                     coverage_plan_digest=generation_outcome.coverage_plan_digest,
                     work_unit_output_digest=generation_outcome.work_unit_output_digest,
+                    work_unit_attempt_receipt_digest=generation_outcome.work_unit_attempt_receipt_digest,
+                    coverage_closure_digest=generation_outcome.coverage_closure_digest,
                     error=generation_outcome.error,
                 )
             else:
@@ -1026,21 +1045,6 @@ def execute_plan(
                         attempt_dir / "execution",
                         attempt_id=attempt_id,
                     )
-            if lane == "generation" and outcome.exit_code == 0:
-                outcome = RunnerOutcome(
-                    2,
-                    "invalid_input",
-                    candidate_digest=outcome.candidate_digest,
-                    generation_input_digest=outcome.generation_input_digest,
-                    result_digest=None,
-                    attempt_digest=outcome.attempt_digest,
-                    routing_policy_digest=outcome.routing_policy_digest,
-                    route_decision_digest=outcome.route_decision_digest,
-                    execution_contract_digest=outcome.execution_contract_digest,
-                    coverage_plan_digest=outcome.coverage_plan_digest,
-                    work_unit_output_digest=outcome.work_unit_output_digest,
-                    error=_Q28_RECEIPT_DEPENDENCY_GAP,
-                )
             if lane == "generation" and outcome.exit_code == 2 and outcome.error:
                 contract_rejection_error = outcome.error
             _write_terminal_receipt(

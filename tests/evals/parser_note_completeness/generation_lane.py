@@ -13,19 +13,27 @@ import json
 import os
 import re
 from pathlib import Path, PurePosixPath
-from typing import Annotated, Any, Literal, Mapping, Optional, Tuple, Union
+from typing import Annotated, Any, Literal, Mapping, Optional, Tuple, Union, cast
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError
 
 from .coverage import (
     Q26PreRenderNoteRef,
     CoveragePlan,
-    WORK_UNIT_OUTPUT_SCHEMA_VERSION,
+    CoverageClosure,
+    CoverageClosureState,
+    CoverageCondition,
+    OutputCondition,
+    UnitOutcome,
+    AttemptBinding,
     WorkUnitOutput,
     canonical_coverage_plan_bytes,
+    canonical_coverage_closure_bytes,
     canonical_work_unit_output_bytes,
+    ExternalOwnerRecordRef,
     coverage_plan_sha256,
     materialize_single_pass_coverage_plan,
+    validate_coverage_closure,
     validate_coverage_plan,
     validate_work_unit_output,
     work_unit_output_sha256,
@@ -52,6 +60,7 @@ from .benchmark_note import (
     NoteNode,
     NoteNodeKind,
     NoteProducerProvenance,
+    NoteProducerRole,
     NoteTableCellMetadata,
     benchmark_note_citation_id,
     benchmark_note_node_id,
@@ -71,6 +80,15 @@ from .routing import (
     routing_policy_sha256,
     validate_route_decision_bindings,
 )
+from .work_unit_receipt import (
+    DurableWorkUnitAttemptReceipt,
+    WorkUnitAttemptReceiptStore,
+    WorkUnitReceiptContractError,
+    build_work_unit_attempt_receipt,
+    derive_history_id,
+    persist_work_unit_attempt_receipt,
+    read_durable_work_unit_attempt_receipt,
+)
 
 GENERATION_INPUT_SCHEMA_VERSION = "generation-input/1.0.0"
 GENERATION_RESULT_SCHEMA_VERSION = "generation-lane-result/1.0.0"
@@ -80,6 +98,11 @@ _DIGEST_PATTERN = r"^[0-9a-f]{64}$"
 _ATTEMPT_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.-]*$"
 _Digest = Annotated[StrictStr, Field(pattern=_DIGEST_PATTERN)]
 _AttemptId = Annotated[StrictStr, Field(pattern=_ATTEMPT_ID_PATTERN)]
+_ReceiptMembership = Literal["formal_required", "diagnostic"]
+
+
+def _receipt_membership(value: RunMembership | str) -> _ReceiptMembership:
+    return cast(_ReceiptMembership, value.value if isinstance(value, RunMembership) else value)
 
 
 class _StrictFrozenModel(BaseModel):
@@ -175,6 +198,8 @@ class GenerationLaneOutcome:
         "execution_contract_digest",
         "coverage_plan_digest",
         "work_unit_output_digest",
+        "work_unit_attempt_receipt_digest",
+        "coverage_closure_digest",
         "error",
     )
 
@@ -192,6 +217,8 @@ class GenerationLaneOutcome:
         execution_contract_digest: Optional[str] = None,
         coverage_plan_digest: Optional[str] = None,
         work_unit_output_digest: Optional[str] = None,
+        work_unit_attempt_receipt_digest: Optional[str] = None,
+        coverage_closure_digest: Optional[str] = None,
         error: Optional[str] = None,
     ) -> None:
         self.exit_code = exit_code
@@ -205,6 +232,8 @@ class GenerationLaneOutcome:
         self.execution_contract_digest = execution_contract_digest
         self.coverage_plan_digest = coverage_plan_digest
         self.work_unit_output_digest = work_unit_output_digest
+        self.work_unit_attempt_receipt_digest = work_unit_attempt_receipt_digest
+        self.coverage_closure_digest = coverage_closure_digest
         self.error = error
 
 
@@ -606,7 +635,7 @@ def _build_pre_render_note(
         reference_document_sha256=reference_digest,
         nodes=tuple(nodes),
         producer_provenance=NoteProducerProvenance(
-            producer_role="generator",
+            producer_role=NoteProducerRole.GENERATOR,
             producer_name="learnloop-diagnostic-generator",
             producer_version="1.0.0",
             configuration_sha256=configuration_digest,
@@ -652,8 +681,230 @@ def _write_immutable(path: Path, data: bytes) -> None:
 def _write_artifact(path: Path, data: bytes) -> str:
     digest = hashlib.sha256(data).hexdigest()
     _write_immutable(path, data)
-    _write_immutable(path.with_suffix(".sha256"), f"{digest}  {path.name}\n".encode("ascii"))
+    digest_path = path.with_suffix(".sha256")
+    _write_immutable(digest_path, f"{digest}  {path.name}\n".encode("ascii"))
+    try:
+        if path.read_bytes() != data:
+            raise _OperationalFailure("Generation artifact durable readback mismatch")
+        if digest_path.read_text(encoding="ascii").strip() != f"{digest}  {path.name}":
+            raise _OperationalFailure("Generation artifact digest record mismatch")
+    except OSError as exc:
+        raise _OperationalFailure("Generation artifact durable readback failed") from exc
     return digest
+
+
+def _read_durable_work_unit_output(path: Path) -> tuple[WorkUnitOutput, str]:
+    try:
+        data = path.read_bytes()
+        fields = path.with_suffix(".sha256").read_text(encoding="ascii").strip().split()
+    except (OSError, UnicodeError) as exc:
+        raise _InvalidInput("work-unit output durability record is unavailable") from exc
+    if len(fields) != 2 or fields[1] != path.name:
+        raise _InvalidInput("work-unit output digest record is invalid")
+    digest = hashlib.sha256(data).hexdigest()
+    if fields[0] != digest:
+        raise _InvalidInput("work-unit output digest record mismatch")
+    try:
+        output = WorkUnitOutput.model_validate(json.loads(data))
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise _InvalidInput("work-unit output artifact is invalid") from exc
+    if canonical_work_unit_output_bytes(output) != data or work_unit_output_sha256(output) != digest:
+        raise _InvalidInput("work-unit output artifact is not canonical")
+    return output, digest
+
+
+def _generation_attempt_artifacts(
+    output_dir: Path,
+    coverage_plan: CoveragePlan,
+    *,
+    reference_document: NormalizedDocument,
+) -> tuple[
+    tuple[AttemptBinding, ...],
+    dict[str, WorkUnitOutput],
+    WorkUnitAttemptReceiptStore,
+]:
+    attempt_root = output_dir.parent.parent
+    receipt_store = WorkUnitAttemptReceiptStore.from_execution_root(attempt_root)
+    current_unit_id = coverage_plan.work_units[0].work_unit_id
+    bindings: list[AttemptBinding] = []
+    outputs: dict[str, WorkUnitOutput] = {}
+    try:
+        attempt_dirs = sorted(
+            (path for path in attempt_root.glob("attempt-*") if path.is_dir()),
+            key=lambda path: int(path.name.removeprefix("attempt-")),
+        )
+    except (OSError, ValueError) as exc:
+        raise _InvalidInput("work-unit attempt history is unavailable") from exc
+    for attempt_dir in attempt_dirs:
+        execution_dir = attempt_dir / "execution"
+        output_path = execution_dir / "work_unit_output.json"
+        output_digest_path = execution_dir / "work_unit_output.sha256"
+        receipt_path = execution_dir / "work_unit_attempt_receipt.json"
+        receipt_digest_path = execution_dir / "work_unit_attempt_receipt.sha256"
+        present = any(
+            path.exists()
+            for path in (
+                output_path,
+                output_digest_path,
+                receipt_path,
+                receipt_digest_path,
+            )
+        )
+        if not present:
+            continue
+        if not all(
+            path.exists()
+            for path in (output_path, output_digest_path, receipt_path, receipt_digest_path)
+        ):
+            raise _InvalidInput("work-unit attempt output/receipt history is incomplete")
+        output, output_digest = _read_durable_work_unit_output(output_path)
+        try:
+            receipt_record = read_durable_work_unit_attempt_receipt(
+                receipt_path, receipt_digest_path
+            )
+        except WorkUnitReceiptContractError as exc:
+            raise _InvalidInput(str(exc)) from exc
+        receipt = receipt_record.receipt
+        validate_work_unit_output(
+            output,
+            coverage_plan,
+            reference_document=reference_document,
+        )
+        if output.work_unit_id != current_unit_id:
+            raise _InvalidInput("generation coverage supports one planned work unit only")
+        if (
+            receipt.receipt_role != "attempt_terminal"
+            or receipt.work_unit_output_sha256 != output_digest
+            or receipt.work_unit_id != output.work_unit_id
+            or receipt.attempt_ordinal != output.attempt_ordinal
+        ):
+            raise _InvalidInput("work-unit receipt/output binding mismatch")
+        outputs[output_digest] = output
+        bindings.append(
+            AttemptBinding(
+                attempt_ordinal=output.attempt_ordinal,
+                output_sha256=output_digest,
+                receipt_ref=ExternalOwnerRecordRef(
+                    schema_version=receipt.schema_version,
+                    sha256=receipt_record.sha256,
+                    record_type=receipt.artifact_role,
+                    record_id=receipt.record_id,
+                ),
+            )
+        )
+    bindings.sort(key=lambda binding: binding.attempt_ordinal)
+    if not bindings:
+        raise _InvalidInput("Q28 closure dependency gap: no durable work-unit attempt receipt")
+    return tuple(bindings), outputs, receipt_store
+
+
+def _write_generation_coverage_closure(
+    *,
+    output_dir: Path,
+    coverage_plan: CoveragePlan,
+    coverage_plan_digest: str,
+    reference_document: NormalizedDocument,
+    final_note: BenchmarkNoteDocument,
+    final_note_digest: str,
+) -> str:
+    bindings, outputs, receipt_store = _generation_attempt_artifacts(
+        output_dir,
+        coverage_plan,
+        reference_document=reference_document,
+    )
+    terminal = bindings[-1]
+    current_output = outputs[terminal.output_sha256]
+    if current_output.pre_render_note is None:
+        raise _InvalidInput("closed Q28 closure requires a final pre_render_note")
+    closure = CoverageClosure(
+        schema_version="benchmark-generation-coverage-closure/1.0.0",
+        artifact_role="coverage_closure",
+        coverage_closure_state=CoverageClosureState.CLOSED,
+        coverage_plan_sha256=coverage_plan_digest,
+        unit_outcomes=(
+            UnitOutcome(
+                work_unit_id=coverage_plan.work_units[0].work_unit_id,
+                attempts=bindings,
+                terminal_attempt_ordinal=terminal.attempt_ordinal,
+                coverage_condition=CoverageCondition(current_output.output_condition.value),
+            ),
+        ),
+        observed_merge_order=coverage_plan.planned_merge_order,
+        final_pre_render_note=current_output.pre_render_note,
+        source_reference_mappings=(),
+        observations=(),
+    )
+    validate_coverage_closure(
+        closure,
+        coverage_plan,
+        output_artifacts=outputs,
+        owner_records=receipt_store,
+        reference_document=reference_document,
+        final_pre_render_note_artifact=final_note,
+        q26_artifacts={final_note_digest: final_note},
+    )
+    closure_bytes = canonical_coverage_closure_bytes(closure)
+    closure_digest = _write_artifact(output_dir / "coverage_closure.json", closure_bytes)
+    if closure_digest != hashlib.sha256(closure_bytes).hexdigest():
+        raise _InvalidInput("coverage closure digest binding mismatch")
+    return closure_digest
+
+
+def _materialize_failed_work_unit_receipt(
+    *,
+    output_dir: Path,
+    coverage_plan: CoveragePlan,
+    coverage_plan_digest: str,
+    reference_document: NormalizedDocument,
+    attempt_ordinal: int,
+    membership: RunMembership,
+    logical_run_id: str,
+    attempt_id: str,
+    runner_plan_sha256: str,
+    runner_slot_id: str,
+    runner_attempt_ordinal: int,
+    runner_invocation_id: str,
+    start_receipt_record: DurableWorkUnitAttemptReceipt,
+    existing_output: Optional[WorkUnitOutput],
+    existing_output_digest: Optional[str],
+) -> None:
+    """Durably retain an owner failure after a started work-unit attempt."""
+
+    output = existing_output
+    output_digest = existing_output_digest
+    if output is None or output_digest is None:
+        output = WorkUnitOutput(
+            schema_version="benchmark-generation-work-unit-output/1.0.0",
+            artifact_role="work_unit_output",
+            coverage_plan_sha256=coverage_plan_digest,
+            work_unit_id=coverage_plan.work_units[0].work_unit_id,
+            attempt_ordinal=attempt_ordinal,
+            output_condition=OutputCondition.FAILED,
+            pre_render_note=None,
+        )
+        validate_work_unit_output(output, coverage_plan, reference_document=reference_document)
+        output_bytes = canonical_work_unit_output_bytes(output)
+        output_digest = _write_artifact(output_dir / "work_unit_output.json", output_bytes)
+    terminal = build_work_unit_attempt_receipt(
+        receipt_role="attempt_terminal",
+        lifecycle_status="failed",
+        coverage_plan_sha256=coverage_plan_digest,
+        work_unit_id=output.work_unit_id,
+        attempt_ordinal=output.attempt_ordinal,
+        work_unit_output_sha256=output_digest,
+        membership=_receipt_membership(membership),
+        logical_run_id=logical_run_id,
+        execution_id=attempt_id,
+        runner_plan_sha256=runner_plan_sha256,
+        runner_slot_id=runner_slot_id,
+        runner_attempt_ordinal=runner_attempt_ordinal,
+        runner_invocation_id=runner_invocation_id,
+        previous_receipt_sha256=start_receipt_record.sha256,
+    )
+    receipt_path = output_dir / "work_unit_attempt_receipt.json"
+    if receipt_path.exists() or receipt_path.with_suffix(".sha256").exists():
+        return
+    persist_work_unit_attempt_receipt(terminal, receipt_path)
 
 
 def execute_generation_case(
@@ -663,13 +914,76 @@ def execute_generation_case(
     *,
     attempt_id: str,
     attempt_ordinal: int,
+    runner_plan_sha256: str,
+    runner_slot_id: str,
+    runner_attempt_ordinal: int,
+    runner_invocation_id: str,
+    logical_run_id: str,
 ) -> GenerationLaneOutcome:
-    """Generate one deterministic pre-render note and lineage artifacts offline."""
+    """Generate one deterministic pre-render note and owner lineage offline.
+
+    ``attempt_ordinal`` is the Q15 per-work-unit ordinal.  The outer runner
+    ordinal is carried separately in ``runner_binding`` even though the
+    current one-unit diagnostic caller explicitly maps the two values.
+    """
 
     if re.fullmatch(_ATTEMPT_ID_PATTERN, attempt_id) is None:
         return GenerationLaneOutcome(2, "invalid_input", error="invalid attempt id")
-    if attempt_ordinal < 1:
+    if attempt_ordinal < 1 or runner_attempt_ordinal < 1:
         return GenerationLaneOutcome(2, "invalid_input", error="invalid attempt ordinal")
+    if re.fullmatch(_ATTEMPT_ID_PATTERN, runner_slot_id) is None:
+        return GenerationLaneOutcome(2, "invalid_input", error="invalid runner slot id")
+    if re.fullmatch(_ATTEMPT_ID_PATTERN, runner_invocation_id) is None:
+        return GenerationLaneOutcome(2, "invalid_input", error="invalid runner invocation id")
+    if re.fullmatch(_ATTEMPT_ID_PATTERN, logical_run_id) is None:
+        return GenerationLaneOutcome(2, "invalid_input", error="invalid logical run id")
+    if re.fullmatch(_DIGEST_PATTERN, runner_plan_sha256) is None:
+        return GenerationLaneOutcome(2, "invalid_input", error="invalid runner plan digest")
+    start_receipt_record: Optional[DurableWorkUnitAttemptReceipt] = None
+    coverage_plan: Optional[CoveragePlan] = None
+    coverage_plan_digest: Optional[str] = None
+    document: Optional[NormalizedDocument] = None
+    reference_digest: Optional[str] = None
+    candidate_model: Optional[BenchmarkNoteDocument] = None
+    candidate_digest: Optional[str] = None
+    work_unit_output: Optional[WorkUnitOutput] = None
+    work_unit_output_digest: Optional[str] = None
+    terminal_receipt_record: Optional[DurableWorkUnitAttemptReceipt] = None
+    route_decision = None
+
+    def retain_failed_owner_history() -> None:
+        if (
+            start_receipt_record is None
+            or coverage_plan is None
+            or coverage_plan_digest is None
+            or document is None
+            or route_decision is None
+        ):
+            return
+        if (output_dir / "work_unit_attempt_receipt.json").exists():
+            return
+        try:
+            _materialize_failed_work_unit_receipt(
+                output_dir=output_dir,
+                coverage_plan=coverage_plan,
+                coverage_plan_digest=coverage_plan_digest,
+                reference_document=document,
+                attempt_ordinal=attempt_ordinal,
+                membership=_receipt_membership(route_decision.run_membership),
+                logical_run_id=logical_run_id,
+                attempt_id=attempt_id,
+                runner_plan_sha256=runner_plan_sha256,
+                runner_slot_id=runner_slot_id,
+                runner_attempt_ordinal=runner_attempt_ordinal,
+                runner_invocation_id=runner_invocation_id,
+                start_receipt_record=start_receipt_record,
+                existing_output=work_unit_output,
+                existing_output_digest=work_unit_output_digest,
+            )
+        except (OSError, ValueError, WorkUnitReceiptContractError, _OperationalFailure):
+            # Preserve the original execution failure.  The absence of a
+            # durable owner failure receipt keeps any later closure fail-closed.
+            return
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
         input_model = build_generation_input(case, benchmark_root)
@@ -685,6 +999,7 @@ def execute_generation_case(
             execution_contract,
             coverage_plan,
         ) = _materialize_generation_coverage(case, Path(benchmark_root), document)
+        assert coverage_plan is not None
         policy_digest = _write_artifact(
             output_dir / "routing_policy.json",
             canonical_routing_bytes(routing_policy),
@@ -707,6 +1022,7 @@ def execute_generation_case(
             output_dir / "coverage_plan.json",
             canonical_coverage_plan_bytes(coverage_plan),
         )
+        coverage_plan_digest = plan_digest
         if plan_digest != coverage_plan_sha256(coverage_plan):
             raise _InvalidInput("coverage plan digest binding mismatch")
         validate_coverage_plan(
@@ -716,6 +1032,40 @@ def execute_generation_case(
             route_decision=route_decision,
             execution_contract=execution_contract,
         )
+        try:
+            prior_store = WorkUnitAttemptReceiptStore.from_execution_root(
+                output_dir.parent.parent
+            )
+            history_id = derive_history_id(
+                coverage_plan_sha256=plan_digest,
+                work_unit_id=coverage_plan.work_units[0].work_unit_id,
+                logical_run_id=logical_run_id,
+            )
+            previous_receipt_sha256 = prior_store.latest_terminal_digest(
+                history_id=history_id
+            )
+            start_receipt = build_work_unit_attempt_receipt(
+                receipt_role="attempt_started",
+                lifecycle_status="started",
+                coverage_plan_sha256=plan_digest,
+                work_unit_id=coverage_plan.work_units[0].work_unit_id,
+                attempt_ordinal=attempt_ordinal,
+                work_unit_output_sha256=None,
+                membership=_receipt_membership(route_decision.run_membership),
+                logical_run_id=logical_run_id,
+                execution_id=attempt_id,
+                runner_plan_sha256=runner_plan_sha256,
+                runner_slot_id=runner_slot_id,
+                runner_attempt_ordinal=runner_attempt_ordinal,
+                runner_invocation_id=runner_invocation_id,
+                previous_receipt_sha256=previous_receipt_sha256,
+            )
+            start_receipt_record = persist_work_unit_attempt_receipt(
+                start_receipt,
+                output_dir / "work_unit_attempt_start.json",
+            )
+        except WorkUnitReceiptContractError as exc:
+            raise _InvalidInput(str(exc)) from exc
         candidate_model = _build_pre_render_note(
             document,
             reference_digest=reference_digest,
@@ -728,12 +1078,12 @@ def execute_generation_case(
         )
         work_unit = coverage_plan.work_units[0]
         work_unit_output = WorkUnitOutput(
-            schema_version=WORK_UNIT_OUTPUT_SCHEMA_VERSION,
+            schema_version="benchmark-generation-work-unit-output/1.0.0",
             artifact_role="work_unit_output",
             coverage_plan_sha256=plan_digest,
             work_unit_id=work_unit.work_unit_id,
             attempt_ordinal=attempt_ordinal,
-            output_condition="complete",
+            output_condition=OutputCondition.COMPLETE,
             pre_render_note=Q26PreRenderNoteRef(
                 schema_version=candidate_model.schema_version,
                 artifact_role=candidate_model.artifact_role,
@@ -755,6 +1105,51 @@ def execute_generation_case(
         )
         if work_unit_output_digest != work_unit_output_sha256(work_unit_output):
             raise _InvalidInput("work-unit output digest binding mismatch")
+        try:
+            terminal_receipt = build_work_unit_attempt_receipt(
+                receipt_role="attempt_terminal",
+                lifecycle_status="complete",
+                coverage_plan_sha256=plan_digest,
+                work_unit_id=work_unit_output.work_unit_id,
+                attempt_ordinal=work_unit_output.attempt_ordinal,
+                work_unit_output_sha256=work_unit_output_digest,
+                membership=_receipt_membership(route_decision.run_membership),
+                logical_run_id=logical_run_id,
+                execution_id=attempt_id,
+                runner_plan_sha256=runner_plan_sha256,
+                runner_slot_id=runner_slot_id,
+                runner_attempt_ordinal=runner_attempt_ordinal,
+                runner_invocation_id=runner_invocation_id,
+                previous_receipt_sha256=(
+                    start_receipt_record.sha256 if start_receipt_record is not None else None
+                ),
+            )
+            terminal_receipt_record = persist_work_unit_attempt_receipt(
+                terminal_receipt,
+                output_dir / "work_unit_attempt_receipt.json",
+            )
+        except WorkUnitReceiptContractError as exc:
+            raise _InvalidInput(str(exc)) from exc
+        assert (
+            candidate_model is not None
+            and candidate_digest is not None
+            and work_unit_output_digest is not None
+            and coverage_plan is not None
+        )
+        coverage_closure_digest = _write_generation_coverage_closure(
+            output_dir=output_dir,
+            coverage_plan=coverage_plan,
+            coverage_plan_digest=plan_digest,
+            reference_document=document,
+            final_note=candidate_model,
+            final_note_digest=candidate_digest,
+        )
+        assert (
+            candidate_digest is not None
+            and work_unit_output_digest is not None
+            and terminal_receipt_record is not None
+            and coverage_plan_digest is not None
+        )
         result_model = GenerationResultArtifact(
             schema_version="generation-lane-result/1.0.0",
             runner_version="parser-note-completeness-runner/1.0.0",
@@ -812,12 +1207,17 @@ def execute_generation_case(
             execution_contract_digest=execution_contract.sha256,
             coverage_plan_digest=plan_digest,
             work_unit_output_digest=work_unit_output_digest,
+            work_unit_attempt_receipt_digest=terminal_receipt_record.sha256,
+            coverage_closure_digest=coverage_closure_digest,
         )
     except _InvalidInput as exc:
+        retain_failed_owner_history()
         return GenerationLaneOutcome(2, "invalid_input", error=str(exc))
     except _OperationalFailure as exc:
+        retain_failed_owner_history()
         return GenerationLaneOutcome(1, "operational_failure", error=str(exc))
     except (ValidationError, ValueError) as exc:
+        retain_failed_owner_history()
         return GenerationLaneOutcome(2, "invalid_input", error=str(exc))
 
 

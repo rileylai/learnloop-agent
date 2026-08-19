@@ -29,6 +29,7 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
+    ValidationError,
     StrictInt,
     StrictStr,
     model_validator,
@@ -57,6 +58,16 @@ from .routing import (
     route_decision_sha256,
     routing_policy_sha256,
     validate_route_decision_bindings,
+)
+from .work_unit_receipt import (
+    DurableWorkUnitAttemptReceipt,
+    WORK_UNIT_ATTEMPT_RECEIPT_RECORD_TYPE,
+    WORK_UNIT_ATTEMPT_RECEIPT_SCHEMA_VERSION,
+    WorkUnitAttemptReceipt,
+    WorkUnitAttemptReceiptStore,
+    WorkUnitReceiptContractError,
+    validate_work_unit_attempt_receipt,
+    work_unit_attempt_receipt_sha256,
 )
 
 COVERAGE_PLAN_SCHEMA_VERSION = "benchmark-generation-coverage-plan/1.0.0"
@@ -442,6 +453,11 @@ class CoverageClosure(_StrictFrozenCoverageModel):
 
 
 CoverageArtifact = Union[CoveragePlan, WorkUnitOutput, CoverageClosure]
+OwnerRecordCollection = Union[
+    Mapping[str, Any],
+    Sequence[Any],
+    WorkUnitAttemptReceiptStore,
+]
 CoveragePlanArtifact = CoveragePlan
 WorkUnitOutputArtifact = WorkUnitOutput
 CoverageClosureArtifact = CoverageClosure
@@ -590,7 +606,7 @@ def materialize_coverage_plan(
     )
     work_unit_id = work_unit.work_unit_id
     plan = CoveragePlan(
-        schema_version=COVERAGE_PLAN_SCHEMA_VERSION,
+        schema_version="benchmark-generation-coverage-plan/1.0.0",
         artifact_role="coverage_plan",
         plan_id=plan_id or f"{document.document_id}-coverage",
         plan_revision=plan_revision,
@@ -1014,11 +1030,13 @@ def validate_work_unit_output(
 
 
 def _lookup_digest_record(
-    records: Optional[Union[Mapping[str, Any], Sequence[Any]]],
+    records: Optional[OwnerRecordCollection],
     digest: str,
 ) -> Any:
     if records is None:
         return None
+    if isinstance(records, WorkUnitAttemptReceiptStore):
+        return records.resolve(digest)
     if isinstance(records, Mapping):
         return records.get(digest)
     for record in records:
@@ -1041,13 +1059,64 @@ def _validate_owner_record(
     plan_sha256: Optional[str] = None,
     work_unit_id: Optional[str] = None,
     attempt_ordinal: Optional[int] = None,
+    output_sha256: Optional[str] = None,
     require_attempt_binding: bool = False,
 ) -> None:
     if record is None:
         raise CoverageContractError("owner receipt reference cannot be resolved")
-    data = record.model_dump(mode="json") if isinstance(record, BaseModel) else record
+    if isinstance(record, DurableWorkUnitAttemptReceipt):
+        if record.sha256 != reference.sha256:
+            raise CoverageContractError("owner receipt durable digest mismatch")
+        data: Any = record.receipt
+    else:
+        data = record
+    if isinstance(data, WorkUnitAttemptReceipt):
+        if require_attempt_binding:
+            if reference.schema_version != WORK_UNIT_ATTEMPT_RECEIPT_SCHEMA_VERSION:
+                raise CoverageContractError("owner receipt schema_version is not the frozen work-unit receipt")
+            if reference.record_type != WORK_UNIT_ATTEMPT_RECEIPT_RECORD_TYPE:
+                raise CoverageContractError("owner receipt record_type is not the frozen work-unit receipt")
+            if data.artifact_role != reference.record_type or data.record_id != reference.record_id:
+                raise CoverageContractError("owner receipt identity binding mismatch")
+            if data.receipt_role != "attempt_terminal":
+                raise CoverageContractError("owner receipt is not a terminal attempt receipt")
+            if work_unit_attempt_receipt_sha256(data) != reference.sha256:
+                raise CoverageContractError("owner receipt digest binding mismatch")
+            try:
+                validate_work_unit_attempt_receipt(
+                    data,
+                    coverage_plan_sha256=plan_sha256,
+                    work_unit_id=work_unit_id,
+                    attempt_ordinal=attempt_ordinal,
+                    output_sha256=output_sha256,
+                )
+            except WorkUnitReceiptContractError as exc:
+                raise CoverageContractError(str(exc)) from exc
+        return
+    data = data.model_dump(mode="json") if isinstance(data, BaseModel) else data
     if not isinstance(data, Mapping):
         raise CoverageContractError("owner receipt record must be a mapping/model")
+    if require_attempt_binding:
+        if reference.schema_version != WORK_UNIT_ATTEMPT_RECEIPT_SCHEMA_VERSION:
+            raise CoverageContractError("owner receipt schema_version is not the frozen work-unit receipt")
+        if reference.record_type != WORK_UNIT_ATTEMPT_RECEIPT_RECORD_TYPE:
+            raise CoverageContractError("owner receipt record_type is not the frozen work-unit receipt")
+        try:
+            receipt = WorkUnitAttemptReceipt.model_validate(data)
+            if receipt.receipt_role != "attempt_terminal":
+                raise CoverageContractError("owner receipt is not a terminal attempt receipt")
+            if work_unit_attempt_receipt_sha256(receipt) != reference.sha256:
+                raise CoverageContractError("owner receipt digest binding mismatch")
+            validate_work_unit_attempt_receipt(
+                receipt,
+                coverage_plan_sha256=plan_sha256,
+                work_unit_id=work_unit_id,
+                attempt_ordinal=attempt_ordinal,
+                output_sha256=output_sha256,
+            )
+        except (ValidationError, WorkUnitReceiptContractError, ValueError) as exc:
+            raise CoverageContractError("owner receipt does not satisfy the frozen receipt contract") from exc
+        return
     if data.get("schema_version") is not None and data["schema_version"] != reference.schema_version:
         raise CoverageContractError("owner receipt schema_version mismatch")
     if data.get("record_type") is not None and data["record_type"] != reference.record_type:
@@ -1080,6 +1149,20 @@ def _validate_owner_record(
         and data["attempt_ordinal"] != attempt_ordinal
     ):
         raise CoverageContractError("owner receipt attempt binding mismatch")
+
+
+def _durable_receipt_store(records: OwnerRecordCollection) -> WorkUnitAttemptReceiptStore:
+    if isinstance(records, WorkUnitAttemptReceiptStore):
+        return records
+    candidates = tuple(records.values()) if isinstance(records, Mapping) else tuple(records)
+    if not all(isinstance(record, DurableWorkUnitAttemptReceipt) for record in candidates):
+        raise CoverageContractError(
+            "closed closure requires durable per-work-unit owner receipts"
+        )
+    try:
+        return WorkUnitAttemptReceiptStore(candidates)
+    except WorkUnitReceiptContractError as exc:
+        raise CoverageContractError(str(exc)) from exc
 
 
 def _validate_source_ref(
@@ -1138,7 +1221,7 @@ def _validate_closure_order_and_refs(
     plan: CoveragePlan,
     *,
     q26_artifacts: Optional[Union[Mapping[str, Any], Sequence[Any]]],
-    owner_records: Optional[Union[Mapping[str, Any], Sequence[Any]]],
+    owner_records: Optional[OwnerRecordCollection],
 ) -> None:
     work_unit_ids = tuple(unit.work_unit_id for unit in plan.work_units)
     outcome_ids = tuple(outcome.work_unit_id for outcome in closure.unit_outcomes)
@@ -1220,8 +1303,8 @@ def validate_coverage_closure(
     coverage_plan: Optional[CoveragePlanInput] = None,
     *,
     output_artifacts: Optional[Union[Mapping[str, Any], Sequence[Any]]] = None,
-    owner_records: Optional[Union[Mapping[str, Any], Sequence[Any]]] = None,
-    receipts: Optional[Union[Mapping[str, Any], Sequence[Any]]] = None,
+    owner_records: Optional[OwnerRecordCollection] = None,
+    receipts: Optional[OwnerRecordCollection] = None,
     reference_document: Optional[NormalizedDocumentInput] = None,
     final_pre_render_note_artifact: Optional[BenchmarkNoteArtifactInput] = None,
     q26_artifacts: Optional[Union[Mapping[str, Any], Sequence[Any]]] = None,
@@ -1242,7 +1325,7 @@ def validate_coverage_closure(
             closure,
             plan,
             q26_artifacts=q26_artifacts,
-            owner_records=owner_records or receipts,
+            owner_records=owner_records if owner_records is not None else receipts,
         )
 
     if final_pre_render_note_artifact is not None:
@@ -1252,6 +1335,7 @@ def validate_coverage_closure(
             reference_document,
         )
 
+    owner_source = owner_records if owner_records is not None else receipts
     outputs = output_artifacts
     if plan is not None:
         for outcome in closure.unit_outcomes:
@@ -1271,20 +1355,20 @@ def validate_coverage_closure(
                             raise CoverageContractError("output note reference digest mismatch")
                     if output.work_unit_id != outcome.work_unit_id or output.attempt_ordinal != attempt.attempt_ordinal:
                         raise CoverageContractError("output unit/attempt binding mismatch")
-                receipt_record = _lookup_digest_record(owner_records or receipts, attempt.receipt_ref.sha256)
-                if owner_records is not None or receipts is not None:
+                receipt_record = _lookup_digest_record(owner_source, attempt.receipt_ref.sha256)
+                if owner_source is not None:
                     _validate_owner_record(
                         attempt.receipt_ref,
                         receipt_record,
                         plan_sha256=closure.coverage_plan_sha256,
                         work_unit_id=outcome.work_unit_id,
                         attempt_ordinal=attempt.attempt_ordinal,
+                        output_sha256=attempt.output_sha256,
                         require_attempt_binding=True,
                     )
         if (
             closure.coverage_closure_state == CoverageClosureState.CLOSED
-            and owner_records is None
-            and receipts is None
+            and owner_source is None
         ):
             raise CoverageContractError(
                 "closed closure requires durable per-work-unit owner receipts"
@@ -1293,6 +1377,29 @@ def validate_coverage_closure(
             for outcome in closure.unit_outcomes:
                 if outcome.terminal_attempt_ordinal is None:
                     raise CoverageContractError("closed closure requires terminal attempts")
+                terminal = next(
+                    attempt
+                    for attempt in outcome.attempts
+                    if attempt.attempt_ordinal == outcome.terminal_attempt_ordinal
+                )
+                if final_pre_render_note_artifact is None:
+                    raise CoverageContractError(
+                        "closed closure requires durable final pre_render_note"
+                    )
+            if owner_source is None:
+                raise CoverageContractError(
+                    "closed closure requires durable per-work-unit owner receipts"
+                )
+            durable_store = _durable_receipt_store(owner_source)
+            for outcome in closure.unit_outcomes:
+                for attempt in outcome.attempts:
+                    try:
+                        receipt_record = durable_store.require_durable(
+                            attempt.receipt_ref.sha256
+                        )
+                        durable_store.validate_chain(receipt_record.receipt)
+                    except WorkUnitReceiptContractError as exc:
+                        raise CoverageContractError(str(exc)) from exc
 
     if closure.coverage_closure_state == CoverageClosureState.CLOSED:
         if any(outcome.terminal_attempt_ordinal is None for outcome in closure.unit_outcomes):
@@ -1326,6 +1433,7 @@ __all__ = [
     "ExternalOwnerRecordRef",
     "Observation",
     "ObservationKind",
+    "OwnerRecordCollection",
     "OutputCondition",
     "Q26CitationRef",
     "Q26NodeRef",
