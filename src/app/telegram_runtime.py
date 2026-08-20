@@ -223,4 +223,5 @@ def build_telegram_gateway_orchestrator(
         update_idempotency_service=update_idempotency_service,
         queue_client=queue_client,
         telegram_job_timeout_seconds=settings.telegram_job_timeout_seconds,
+        telegram_review_job_timeout_seconds=settings.telegram_review_job_timeout_seconds,
     )

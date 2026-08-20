@@ -137,8 +137,17 @@ page ids, paths, titles, text, vectors, or proposal JSON.
 When `REDIS_URL` is configured, the webhook claims the durable update ledger
 and enqueues one serializable envelope on the `telegram` queue. The worker
 uses the canonical module-level job import path and an embedded scheduler.
-Ordinary jobs use `TELEGRAM_JOB_TIMEOUT_SECONDS`; full indexing uses
-`TELEGRAM_INDEXING_JOB_TIMEOUT_SECONDS`.
+Ordinary jobs use `TELEGRAM_JOB_TIMEOUT_SECONDS`; review Accept jobs use
+`TELEGRAM_REVIEW_JOB_TIMEOUT_SECONDS`; full indexing uses
+`TELEGRAM_INDEXING_JOB_TIMEOUT_SECONDS`. The generic webhook worker remains
+the review execution path; the enqueue boundary selects the review bound from
+the typed callback mapping or `/accept` command. Reject, Change Target, and
+read-only callbacks remain ordinary jobs.
+
+RQ timeout exceptions are translated to the neutral `QUEUE_JOB_TIMEOUT`
+failure reason. Accept recovery still treats the visible
+`change-request-<id>` identity as the reconciliation boundary: a timeout does
+not authorize a blind retry or a second Notion append.
 
 The embedded RQ scheduler is required for delayed media-group settle jobs and
 retry intervals. The initial full-index job is enqueued immediately; the

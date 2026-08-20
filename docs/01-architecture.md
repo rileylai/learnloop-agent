@@ -74,6 +74,10 @@ scheduler promotes delayed media-group settle jobs and retry intervals; the
 initial full-index job is enqueued immediately rather than scheduled.
 
 Ordinary Telegram jobs use `TELEGRAM_JOB_TIMEOUT_SECONDS` (default `180`).
+Review Accept work uses the dedicated `TELEGRAM_REVIEW_JOB_TIMEOUT_SECONDS`
+(default `10800`) when the enqueue boundary can deterministically identify an
+Accept command or typed review Accept callback. Review Reject, Change Target,
+read-only callbacks, and other ordinary work remain on the ordinary bound.
 Full indexing uses a dedicated job and
 `TELEGRAM_INDEXING_JOB_TIMEOUT_SECONDS` (default `10800`). The latter is a
 configurable execution bound, not a latency promise. The dedicated full-index

@@ -193,6 +193,13 @@ Webhook
   -> worker runs the gateway and persists terminal outcome
 ```
 
+The generic webhook callable remains the execution path for review callbacks;
+the enqueue boundary selects `TELEGRAM_REVIEW_JOB_TIMEOUT_SECONDS` only for a
+deterministically identified Accept action. Reject, Change Target, read-only
+callbacks, and ordinary commands use `TELEGRAM_JOB_TIMEOUT_SECONDS`. RQ timeout
+signals are translated to `QUEUE_JOB_TIMEOUT` before review error handling can
+rewrite them as an application or Notion failure.
+
 Without Redis, a synchronous compatibility path is retained for local/test
 operation, but the ready `local` profile reports the queue dependency as
 unavailable. Duplicate Telegram `update_id` values replay a running or terminal

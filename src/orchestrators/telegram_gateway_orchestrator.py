@@ -273,6 +273,7 @@ class TelegramGatewayOrchestrator:
         update_idempotency_service: Optional[TelegramUpdateIdempotencyService] = None,
         queue_client: Optional[QueueClient] = None,
         telegram_job_timeout_seconds: int = 180,
+        telegram_review_job_timeout_seconds: int = 10800,
     ) -> None:
         self._tool_registry = tool_registry
         self._workflow_run_service = workflow_run_service
@@ -289,6 +290,7 @@ class TelegramGatewayOrchestrator:
         self._update_idempotency_service = update_idempotency_service
         self._queue_client = queue_client
         self._telegram_job_timeout_seconds = telegram_job_timeout_seconds
+        self._telegram_review_job_timeout_seconds = telegram_review_job_timeout_seconds
         self._logger = get_logger("learnloop.telegram.gateway")
 
     async def handle_webhook(
@@ -444,7 +446,13 @@ class TelegramGatewayOrchestrator:
                 ),
                 description="Process one Telegram webhook update",
                 retry_policy=retry_policy,
-                timeout_seconds=self._telegram_job_timeout_seconds,
+                timeout_seconds=self._timeout_seconds_for_webhook(
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    text=text,
+                    caption=caption,
+                    callback=callback,
+                ),
             )
         except Exception as exc:
             error = TelegramGatewayError(
@@ -2400,6 +2408,47 @@ class TelegramGatewayOrchestrator:
         if not command_text:
             return "unknown"
         return command_text
+
+    def _timeout_seconds_for_webhook(
+        self,
+        *,
+        chat_id: Optional[str],
+        user_id: Optional[str],
+        text: Optional[str],
+        caption: Optional[str],
+        callback: Optional[TelegramCallbackAttachment],
+    ) -> int:
+        """Select a long bound only for deterministically identified Accept work."""
+
+        if callback is not None:
+            normalized_chat_id = (chat_id or "").strip()
+            normalized_user_id = (user_id or normalized_chat_id).strip()
+            try:
+                callback_action = self._resolve_callback_action(
+                    callback=callback,
+                    chat_id=normalized_chat_id,
+                    user_id=normalized_user_id,
+                )
+            except TelegramGatewayError:
+                # The worker remains responsible for the normal invalid/expired
+                # callback outcome. An unresolved callback is never granted the
+                # long-running review bound.
+                callback_action = None
+            if (
+                callback_action is not None
+                and callback_action.callback_kind == TELEGRAM_CALLBACK_KIND_REVIEW
+                and callback_action.action == "accept"
+            ):
+                return self._telegram_review_job_timeout_seconds
+            return self._telegram_job_timeout_seconds
+
+        command_text = self._select_command_text(
+            text=(text or "").strip(),
+            caption=(caption or "").strip(),
+        )
+        if self._parse_command(command_text) == "accept":
+            return self._telegram_review_job_timeout_seconds
+        return self._telegram_job_timeout_seconds
 
     def _select_command_text(self, *, text: str, caption: str) -> str:
         for candidate in (text, caption):

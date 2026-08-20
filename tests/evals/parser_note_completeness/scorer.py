@@ -15,3 +15,7 @@ class Scorer(Protocol):
     def evaluate(self, document: NormalizedDocument) -> None:
         """Observe quality without defining metrics, thresholds, or decisions."""
 
+
+# Keep the historical scorer boundary import-compatible while exposing the
+# realized Q14 foundation from the package's existing scorer module.
+from .q14_scoring import *  # noqa: F401,F403,E402

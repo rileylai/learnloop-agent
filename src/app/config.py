@@ -90,6 +90,7 @@ class Settings(BaseModel):
     max_daily_cost_usd: Optional[float] = None
     workflow_stale_after_seconds: int = 3600
     telegram_job_timeout_seconds: int = 180
+    telegram_review_job_timeout_seconds: int = 10800
     telegram_indexing_job_timeout_seconds: int = 10800
 
     @classmethod
@@ -187,6 +188,10 @@ class Settings(BaseModel):
             telegram_job_timeout_seconds=_read_optional_positive_int_env(
                 "TELEGRAM_JOB_TIMEOUT_SECONDS",
                 default=180,
+            ),
+            telegram_review_job_timeout_seconds=_read_optional_positive_int_env(
+                "TELEGRAM_REVIEW_JOB_TIMEOUT_SECONDS",
+                default=10800,
             ),
             telegram_indexing_job_timeout_seconds=_read_optional_positive_int_env(
                 "TELEGRAM_INDEXING_JOB_TIMEOUT_SECONDS",

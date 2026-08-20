@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 from urllib.parse import quote
 
 from src.tools.notion_api_reader_client import (
@@ -38,6 +38,9 @@ class NotionAPIWriterClient(NotionWriterClient):
         base_url: str = DEFAULT_NOTION_API_BASE_URL,
         notion_version: str = DEFAULT_NOTION_VERSION,
         timeout_seconds: float = 10.0,
+        infrastructure_exception_classifier: Optional[
+            Callable[[BaseException], Optional[BaseException]]
+        ] = None,
     ) -> None:
         normalized_token = token.strip()
         if not normalized_token:
@@ -49,6 +52,9 @@ class NotionAPIWriterClient(NotionWriterClient):
             raise ValueError("notion_version must not be empty")
         self._token = normalized_token
         self._notion_version = normalized_version
+        self._infrastructure_exception_classifier = (
+            infrastructure_exception_classifier
+        )
         self._transport = transport or UrllibNotionHTTPTransport(
             base_url=base_url,
             timeout_seconds=timeout_seconds,
@@ -59,6 +65,9 @@ class NotionAPIWriterClient(NotionWriterClient):
             base_url=base_url,
             notion_version=normalized_version,
             timeout_seconds=timeout_seconds,
+            infrastructure_exception_classifier=(
+                infrastructure_exception_classifier
+            ),
         )
 
     def append_to_ai_supplement_zone(
@@ -199,7 +208,14 @@ class NotionAPIWriterClient(NotionWriterClient):
             raise NotionWriterClientError(
                 "Notion append transport request failed"
             ) from None
-        except Exception:
+        except Exception as exc:
+            infrastructure_error = (
+                self._infrastructure_exception_classifier(exc)
+                if self._infrastructure_exception_classifier is not None
+                else None
+            )
+            if infrastructure_error is not None:
+                raise infrastructure_error from exc
             raise NotionWriterClientError("Notion append request failed") from None
 
         if response.status_code in (401, 403):

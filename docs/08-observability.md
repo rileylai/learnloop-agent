@@ -93,6 +93,9 @@ The update ledger remains the outer idempotency boundary.
 
 The worker validates the canonical module-level RQ callables before consuming
 the queue, uses an embedded scheduler, and logs only safe queue/worker fields.
+Review Accept timeout failures keep `business_status=failed` and callback
+acknowledgement status recorded independently; their safe failure reason is
+`QUEUE_JOB_TIMEOUT`, not `UNKNOWN_ERROR`.
 
 ## Failure taxonomy
 

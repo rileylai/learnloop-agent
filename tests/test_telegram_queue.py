@@ -18,11 +18,15 @@ from src.db.session import (
     get_db_session_factory,
     get_unit_of_work_factory,
 )
-from src.orchestrators import TelegramGatewayOrchestrator
+from src.orchestrators import (
+    TelegramCallbackAttachment,
+    TelegramGatewayOrchestrator,
+)
 from src.orchestrators.telegram_index_orchestrator import TelegramIndexError, TelegramIndexOrchestrator
 from src.queue import FakeQueueClient
 from src.services import (
     InMemoryTelegramIndexSessionStore,
+    InMemoryTelegramSessionStore,
     TelegramUpdateIdempotencyService,
     WorkflowRunService,
 )
@@ -98,6 +102,115 @@ def test_gateway_claims_once_and_enqueues_once() -> None:
         assert ledger.status == "running"
     finally:
         session.close()
+
+
+def test_review_accept_uses_dedicated_timeout_and_preserves_queue_retry_policy() -> None:
+    import asyncio
+
+    session_factory = _build_session_factory()
+    queue_client = FakeQueueClient()
+    session_store = InMemoryTelegramSessionStore()
+    callback_token = session_store.create_callback(
+        session_id="proposal-44",
+        chat_id="555",
+        user_id="777",
+        action="accept",
+        change_request_id=44,
+    )
+    gateway = TelegramGatewayOrchestrator(
+        tool_registry=ToolRegistry(),
+        workflow_run_service=WorkflowRunService(session_factory),
+        update_idempotency_service=TelegramUpdateIdempotencyService(
+            session_factory
+        ),
+        telegram_session_store=session_store,
+        queue_client=queue_client,
+        telegram_job_timeout_seconds=180,
+        telegram_review_job_timeout_seconds=7200,
+    )
+    callback = TelegramCallbackAttachment(
+        callback_query_id="review-accept-44",
+        callback_data=f"ll:{callback_token}",
+    )
+
+    first = asyncio.run(
+        gateway.enqueue_webhook(
+            update_id=7044,
+            chat_id="555",
+            text=None,
+            caption=None,
+            document=None,
+            photos=[],
+            request_workflow_id="request-7044",
+            user_id="777",
+            callback=callback,
+        )
+    )
+    second = asyncio.run(
+        gateway.enqueue_webhook(
+            update_id=7044,
+            chat_id="555",
+            text=None,
+            caption=None,
+            document=None,
+            photos=[],
+            request_workflow_id="request-7044-retry",
+            user_id="777",
+            callback=callback,
+        )
+    )
+
+    assert first.skipped_reason == "QUEUED"
+    assert second.skipped_reason == "DUPLICATE_UPDATE_IN_PROGRESS"
+    assert len(queue_client.enqueued_jobs) == 1
+    job = queue_client.enqueued_jobs[0]
+    assert job.timeout_seconds == 7200
+    assert job.retry_policy is not None
+    assert job.retry_policy.max_retries == 2
+    assert job.retry_policy.retry_intervals == (5, 30)
+
+
+def test_review_reject_callback_keeps_ordinary_timeout() -> None:
+    import asyncio
+
+    session_factory = _build_session_factory()
+    queue_client = FakeQueueClient()
+    session_store = InMemoryTelegramSessionStore()
+    callback_token = session_store.create_callback(
+        session_id="proposal-45",
+        chat_id="555",
+        user_id="777",
+        action="reject",
+        change_request_id=45,
+    )
+    gateway = TelegramGatewayOrchestrator(
+        tool_registry=ToolRegistry(),
+        workflow_run_service=WorkflowRunService(session_factory),
+        telegram_session_store=session_store,
+        queue_client=queue_client,
+        telegram_job_timeout_seconds=180,
+        telegram_review_job_timeout_seconds=7200,
+    )
+
+    asyncio.run(
+        gateway.enqueue_webhook(
+            update_id=7045,
+            chat_id="555",
+            text=None,
+            caption=None,
+            document=None,
+            photos=[],
+            request_workflow_id="request-7045",
+            user_id="777",
+            callback=TelegramCallbackAttachment(
+                callback_query_id="review-reject-45",
+                callback_data=f"ll:{callback_token}",
+            ),
+        )
+    )
+
+    assert len(queue_client.enqueued_jobs) == 1
+    assert queue_client.enqueued_jobs[0].timeout_seconds == 180
 
 
 def test_webhook_returns_fast_ack_when_queue_is_configured() -> None:

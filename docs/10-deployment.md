@@ -50,6 +50,7 @@ the optional `REDIS_PORT` override.
 | `MAX_DAILY_COST_USD` | Optional daily budget |
 | `WORKFLOW_STALE_AFTER_SECONDS` | Stale workflow threshold; default `3600` |
 | `TELEGRAM_JOB_TIMEOUT_SECONDS` | Ordinary Telegram job bound; default `180` |
+| `TELEGRAM_REVIEW_JOB_TIMEOUT_SECONDS` | Review Accept job bound; default `10800` |
 | `TELEGRAM_INDEXING_JOB_TIMEOUT_SECONDS` | Full-index job bound; default `10800` |
 
 Notion read and embedding retry/timeouts and batch limits are also configurable
@@ -93,9 +94,12 @@ the standard worker on other platforms. `REDIS_URL` is required by the worker.
 
 Redis stores RQ jobs and short-lived Telegram sessions; PostgreSQL remains the
 durable workflow and idempotency store. Ordinary Telegram jobs use
-`TELEGRAM_JOB_TIMEOUT_SECONDS`. Confirmed full indexing is enqueued as a
-dedicated job with `TELEGRAM_INDEXING_JOB_TIMEOUT_SECONDS`, because a large
-workspace can take much longer than an ordinary command. The initial
+`TELEGRAM_JOB_TIMEOUT_SECONDS`. Review Accept uses
+`TELEGRAM_REVIEW_JOB_TIMEOUT_SECONDS`; Reject, Change Target, read-only
+callbacks, and other ordinary work remain on the ordinary bound. Confirmed
+full indexing is enqueued as a dedicated job with
+`TELEGRAM_INDEXING_JOB_TIMEOUT_SECONDS`, because a large workspace can take
+much longer than an ordinary command. The initial
 full-index job is immediate and has no automatic RQ retry. The scheduler is
 still required by the ready queue profile because delayed media-group settling
 and configured retry intervals depend on it.

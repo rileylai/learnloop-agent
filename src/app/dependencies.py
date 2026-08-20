@@ -249,7 +249,11 @@ def _build_notion_clients(
                 retry_max_seconds=settings.notion_read_retry_max_seconds,
                 infrastructure_exception_classifier=classify_rq_execution_exception,
             ),
-            NotionAPIWriterClient(token=settings.notion_token),
+            NotionAPIWriterClient(
+                token=settings.notion_token,
+                timeout_seconds=settings.notion_request_timeout_seconds,
+                infrastructure_exception_classifier=classify_rq_execution_exception,
+            ),
         )
     return _build_mock_notion_clients(settings)
 
@@ -289,7 +293,10 @@ def get_embedding_client() -> Optional[EmbeddingClient]:
     settings = get_settings()
     if not settings.openai_api_key:
         return None
-    return OpenAIEmbeddingClient(api_key=settings.openai_api_key)
+    return OpenAIEmbeddingClient(
+        api_key=settings.openai_api_key,
+        infrastructure_exception_classifier=classify_rq_execution_exception,
+    )
 
 
 def build_embedding_batch_service(

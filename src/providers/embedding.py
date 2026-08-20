@@ -149,6 +149,9 @@ class OpenAIEmbeddingClient(EmbeddingClient):
         base_url: str = "https://api.openai.com/v1",
         default_model: str = "text-embedding-3-small",
         transport: Optional[TransportFn] = None,
+        infrastructure_exception_classifier: Optional[
+            Callable[[BaseException], Optional[BaseException]]
+        ] = None,
     ) -> None:
         normalized_key = api_key.strip()
         if not normalized_key:
@@ -167,6 +170,9 @@ class OpenAIEmbeddingClient(EmbeddingClient):
         )
         self._default_model = normalized_model
         self._transport = transport or _default_transport
+        self._infrastructure_exception_classifier = (
+            infrastructure_exception_classifier
+        )
 
     @property
     def name(self) -> str:
@@ -238,6 +244,13 @@ class OpenAIEmbeddingClient(EmbeddingClient):
                 request_diagnostics=request_diagnostics,
             ) from None
         except Exception as exc:
+            infrastructure_error = (
+                self._infrastructure_exception_classifier(exc)
+                if self._infrastructure_exception_classifier is not None
+                else None
+            )
+            if infrastructure_error is not None:
+                raise infrastructure_error from exc
             raise EmbeddingClientError(
                 "Embedding request failed",
                 diagnostic=ExternalErrorDiagnostic(

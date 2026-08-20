@@ -17,6 +17,7 @@ from src.orchestrators.supplement_proposal_schema import (
 )
 from src.repositories import ChangeRequestRepository, NotionPageRepository
 from src.services import (
+    InfrastructureExecutionTimeout,
     STANDARD_FAILURE_REASONS,
     WorkflowRunAuditUpdateError,
     WorkflowRunService,
@@ -388,6 +389,20 @@ class SupplementReviewOrchestrator:
                 failure_reason=exc.failure_reason,
                 workflow_run_id=workflow_run.id,
             ) from exc
+        except InfrastructureExecutionTimeout:
+            self._mark_failed_workflow(
+                workflow_run_id=workflow_run.id,
+                failure_reason="QUEUE_JOB_TIMEOUT",
+                error_code="QUEUE_JOB_TIMEOUT",
+                review_action=review_action,
+            )
+            raise SupplementReviewError(
+                error_code="QUEUE_JOB_TIMEOUT",
+                message="Review workflow timed out before completion",
+                http_status_code=HTTPStatus.GATEWAY_TIMEOUT,
+                failure_reason="QUEUE_JOB_TIMEOUT",
+                workflow_run_id=workflow_run.id,
+            ) from None
         except Exception as exc:
             self._mark_failed_workflow(
                 workflow_run_id=workflow_run.id,
@@ -479,6 +494,15 @@ class SupplementReviewOrchestrator:
                 http_status_code=exc.http_status_code,
                 failure_reason=self._normalize_failure_reason(exc.failure_reason),
             ) from exc
+        except InfrastructureExecutionTimeout:
+            self._page_index_orchestrator.mark_indexing_workflow_failed(
+                workflow_run_id=index_workflow_id,
+                page_id=notion_page.notion_page_id,
+                sync_mode=SYNC_MODE_AUTO_AFTER_ACCEPT,
+                error_code="QUEUE_JOB_TIMEOUT",
+                failure_reason="QUEUE_JOB_TIMEOUT",
+            )
+            raise
 
         try:
             with self._unit_of_work_factory() as unit_of_work:
@@ -544,6 +568,15 @@ class SupplementReviewOrchestrator:
                 sync_mode=SYNC_MODE_AUTO_AFTER_ACCEPT,
                 error_code=exc.error_code,
                 failure_reason=self._normalize_failure_reason(exc.failure_reason),
+            )
+            raise
+        except InfrastructureExecutionTimeout:
+            self._page_index_orchestrator.mark_indexing_workflow_failed(
+                workflow_run_id=index_workflow_id,
+                page_id=notion_page.notion_page_id,
+                sync_mode=SYNC_MODE_AUTO_AFTER_ACCEPT,
+                error_code="QUEUE_JOB_TIMEOUT",
+                failure_reason="QUEUE_JOB_TIMEOUT",
             )
             raise
         except Exception as exc:

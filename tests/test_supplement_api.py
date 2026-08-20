@@ -37,6 +37,7 @@ from src.providers import (
     ProviderRouter,
     get_openai_embedding_capabilities,
 )
+from src.services import InfrastructureExecutionTimeout
 from src.tools import (
     InMemoryNotionPageSnapshot,
     InMemoryNotionWriterClient,
@@ -263,6 +264,12 @@ class _SnapshotBackedNotionReaderClient(NotionReaderClient):
             notion_path=snapshot.notion_path,
             blocks=blocks,
         )
+
+
+class _TimeoutNotionReaderClient(_SnapshotBackedNotionReaderClient):
+    def fetch_page_tree(self, page_id: str) -> NotionPageTree | None:
+        _ = page_id
+        raise InfrastructureExecutionTimeout()
 
 
 class _FakeEmbeddingClient(EmbeddingClient):
@@ -1429,6 +1436,109 @@ def test_supplement_accept_api_appends_and_reindexes_before_accepting() -> None:
             assert all(chunk.embedding_text is not None for chunk in chunks)
         finally:
             verify_session.close()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_supplement_accept_queue_timeout_is_neutral_and_recoverable() -> None:
+    session_factory = _build_session_factory()
+    snapshot_pages = {
+        "page-accept-timeout": InMemoryNotionPageSnapshot(
+            page_id="page-accept-timeout",
+            title="Timeout Page",
+            notion_path="Knowledge/Timeout",
+            original_blocks=["Original note remains unchanged."],
+        )
+    }
+    seed_session = session_factory()
+    try:
+        _seed_notion_page(
+            seed_session,
+            page_db_id=113,
+            notion_page_id="page-accept-timeout",
+            title="Timeout Page",
+            notion_path="Knowledge/Timeout",
+        )
+        _seed_change_request(
+            seed_session,
+            change_request_id=113,
+            status="pending",
+            target_notion_page_id=113,
+            proposal_json=json.dumps(
+                {
+                    "title": "Timeout Supplement",
+                    "target_path": "Knowledge/Timeout/AI Supplement Zone/Timeout Supplement",
+                    "source": {
+                        "source_type": "chat_text",
+                        "source_display_name": "timeout-source",
+                    },
+                    "summary": "The append must remain recoverable after a queue timeout.",
+                    "concepts": ["queue timeout"],
+                    "notes": ["Reconcile the visible change-request identity before retry."],
+                }
+            ),
+        )
+    finally:
+        seed_session.close()
+
+    writer_client = InMemoryNotionWriterClient(snapshot_pages)
+
+    def _db_override():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _tool_registry_override() -> ToolRegistry:
+        registry = ToolRegistry()
+        registry.register_tool(
+            NotionReaderTool(_TimeoutNotionReaderClient(snapshot_pages))
+        )
+        registry.register_tool(NotionWriterTool(writer_client))
+        return registry
+
+    app.dependency_overrides[get_db_session] = _db_override
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_unit_of_work_factory] = lambda: (
+        lambda: SqlAlchemyUnitOfWork(session_factory)
+    )
+    app.dependency_overrides[get_tool_registry] = _tool_registry_override
+    app.dependency_overrides[get_embedding_client] = _embedding_client_override
+
+    try:
+        response = TestClient(app).post(
+            "/api/supplement/accept",
+            json={"change_request_id": 113, "reviewer": "timeout-reviewer"},
+        )
+
+        assert response.status_code == 504
+        detail = response.json()["detail"]
+        assert detail["error_code"] == "QUEUE_JOB_TIMEOUT"
+        assert detail["failure_reason"] == "QUEUE_JOB_TIMEOUT"
+
+        verify_session = session_factory()
+        try:
+            change_request = verify_session.get(ChangeRequest, 113)
+            assert change_request is not None
+            assert change_request.status == "pending"
+            workflow = verify_session.get(WorkflowRun, detail["workflow_run_id"])
+            assert workflow is not None
+            assert workflow.status == "failed"
+            assert workflow.failure_reason == "QUEUE_JOB_TIMEOUT"
+            indexing_runs = (
+                verify_session.query(WorkflowRun)
+                .filter(WorkflowRun.workflow_type == "indexing")
+                .all()
+            )
+            assert len(indexing_runs) == 1
+            assert indexing_runs[0].status == "failed"
+            assert indexing_runs[0].failure_reason == "QUEUE_JOB_TIMEOUT"
+        finally:
+            verify_session.close()
+
+        assert len(writer_client.list_operations(page_id="page-accept-timeout")) == 1
+        assert len(snapshot_pages["page-accept-timeout"].ai_supplement_entries) == 1
     finally:
         app.dependency_overrides.clear()
 
