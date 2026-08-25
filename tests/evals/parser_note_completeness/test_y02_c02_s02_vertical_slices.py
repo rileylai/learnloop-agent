@@ -9,6 +9,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import pytest
+
 from tests.evals.parser_note_completeness.normalized_document import (
     NormalizedDocument,
     canonical_normalized_document_bytes,
@@ -36,14 +38,14 @@ CASES: dict[str, dict[str, Any]] = {
         "reference_digest": "ce6d935830bd56d3b55a56f1b547dac78c798ab8249d224f7b0f19ac179e3e0e",
     },
     "S02": {
-        "fixture": ROOT / "fixtures" / "S02" / "revision-001",
-        "governance": ROOT / "governance" / "S02" / "revision-001",
-        "reference": ROOT / "reference_documents" / "S02" / "revision-001",
-        "image_001_digest": "9371cdde4cd11381d7d6a1d71264a9a53b1118e82919f4aaf27916988adfbbb4",
-        "image_002_digest": "58ff761c484266b4859c67be8f59f039466df777f4ecfb7ab736ff33759b2a0e",
-        "source_manifest_digest": "2204ae118b8cc03ea8457f72dda5b050c8329beb30f0c4e49984f7809460d6b3",
-        "configuration_digest": "e803f62c55245de89b4bc527da0a73edd1a9fcd794b6bfd416d4ea085a7de07e",
-        "reference_digest": "51c98a36fe41c00a531b20764f3d88fb47e2e4b6b52e6798576b911853488619",
+        "fixture": ROOT / "fixtures" / "S02" / "revision-002",
+        "governance": ROOT / "governance" / "S02" / "revision-002",
+        "reference": ROOT / "reference_documents" / "S02" / "revision-002",
+        "image_001_digest": "ee02c2dde11f28a4c202323d3ef22e01a135f5e2510be5c2a20ba683b94988db",
+        "image_002_digest": "20d43a7230f2f4279ae3b1509cbcd502c1b3d0d1b44d24c497a71b4f23d7f502",
+        "source_manifest_digest": "93ac9498f7e323b85d018bc831eebef10b06eeba48a3a62dd523f7509682858d",
+        "configuration_digest": "94edf506a69ec56cee5d6048475b6dbe33fa4c3f7ffd7f9784e0ffb08ee1fe7b",
+        "reference_digest": "e42730f359f4c4a86602f6c6ddcdd6a97c4f3597c8306a2093f8133352957299",
     },
 }
 
@@ -261,6 +263,41 @@ def test_y02_c02_s02_builders_are_deterministic_and_offline_only(tmp_path: Path)
     ):
         assert (s02_copy / filename).read_bytes() == (CASES["S02"]["fixture"] / filename).read_bytes()
     assert canonical_normalized_document_bytes(s02_reference.build_document()) == (CASES["S02"]["reference"] / "normalized_document.json").read_bytes()
+
+
+def test_s02_controlled_font_is_fail_closed_and_cwd_independent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = CASES["S02"]
+    source_module = _load_module("S02", "build_source")
+    source_text = (case["fixture"] / "build_source.py").read_text(encoding="utf-8")
+    assert "Hiragino" not in source_text
+    assert "/System/Library/Fonts" not in source_text
+    assert hashlib.sha256(source_module.FONT_PATH.read_bytes()).hexdigest() == source_module.FONT_SHA256
+
+    first_dir = tmp_path / "first"
+    second_dir = tmp_path / "second"
+    monkeypatch.chdir(tmp_path)
+    source_module.build_artifacts(first_dir)
+    source_module.build_artifacts(second_dir)
+    for filename in (
+        "source-001.png",
+        "source-001.sha256",
+        "source-002.png",
+        "source-002.sha256",
+        "source_manifest.json",
+        "source.sha256",
+    ):
+        assert (first_dir / filename).read_bytes() == (second_dir / filename).read_bytes()
+
+    monkeypatch.setattr(source_module, "FONT_PATH", tmp_path / "missing.otf")
+    with pytest.raises(RuntimeError, match="font is unavailable"):
+        source_module.build_artifacts(tmp_path / "missing")
+
+    monkeypatch.setattr(source_module, "FONT_PATH", case["fixture"] / "source_manifest.json")
+    with pytest.raises(RuntimeError, match="font digest mismatch"):
+        source_module.build_artifacts(tmp_path / "wrong")
 
     forbidden_imports = {"requests", "urllib", "urllib3", "httpx", "playwright", "selenium", "yt_dlp", "pytube"}
     for case_id in CASES:

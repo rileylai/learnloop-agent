@@ -26,6 +26,9 @@ ROOT = Path(__file__).parent / "v1"
 PROFILE_ROOT = ROOT / "manifests" / "full" / "revision-001"
 PROFILE_PATH = PROFILE_ROOT / "profile.json"
 PROFILE_DIGEST_PATH = PROFILE_ROOT / "profile.sha256"
+PROFILE_V2_ROOT = ROOT / "manifests" / "full" / "revision-002"
+PROFILE_V2_PATH = PROFILE_V2_ROOT / "profile.json"
+PROFILE_V2_DIGEST_PATH = PROFILE_V2_ROOT / "profile.sha256"
 SMOKE_PROFILE_PATH = ROOT / "manifests" / "smoke" / "revision-001" / "profile.json"
 SMOKE_PROFILE_DIGEST = "49cfde8bb9aef1d96316665b8e9c55f9c78bf7a68fe8a93929ac8b136ebbf9a9"
 
@@ -52,6 +55,28 @@ def test_full_profile_rebuild_is_byte_deterministic_from_existing_artifacts() ->
     rebuilt = build_full_profile(ROOT)
     assert canonical_full_profile_bytes(rebuilt) == PROFILE_PATH.read_bytes()
     assert full_profile_sha256(rebuilt) == "0f00e4a1b89d7f5bdb218d51fe6a75fd9c7e3b5e88e1ce1a806eaed5df71d4a9"
+
+
+def test_full_profile_revision_002_binds_only_the_new_fixture_revisions() -> None:
+    profile = load_full_profile(PROFILE_V2_PATH, PROFILE_V2_DIGEST_PATH, ROOT)
+    assert profile.profile_revision == "revision-002"
+    assert tuple(case.fixture_revision for case in profile.cases) == (
+        "revision-001",
+        "revision-001",
+        "revision-002",
+        "revision-002",
+        "revision-001",
+        "revision-001",
+        "revision-001",
+        "revision-001",
+        "revision-001",
+        "revision-001",
+        "revision-001",
+        "revision-001",
+        "revision-002",
+    )
+    assert PROFILE_V2_PATH.read_bytes() == canonical_full_profile_bytes(profile)
+    assert read_external_sha256_record(PROFILE_V2_DIGEST_PATH, "profile.json") == full_profile_sha256(profile)
 
 
 def test_full_profile_rejects_case_addition_removal_reordering_and_duplicates() -> None:

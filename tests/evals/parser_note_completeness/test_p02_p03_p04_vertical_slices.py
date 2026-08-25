@@ -7,6 +7,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import pytest
 from pypdf import PdfReader
 
 from tests.evals.parser_note_completeness.normalized_document import (
@@ -28,24 +29,24 @@ CASES: dict[str, dict[str, Any]] = {
         "expected_reference_digest": "70bbca910c764daf4423e793962d8509aa4ab6900ba3015746c8758156277e6e",
     },
     "P03": {
-        "fixture": ROOT / "fixtures" / "P03" / "revision-001",
-        "governance": ROOT / "governance" / "P03" / "revision-001",
-        "reference": ROOT / "reference_documents" / "P03" / "revision-001",
+        "fixture": ROOT / "fixtures" / "P03" / "revision-002",
+        "governance": ROOT / "governance" / "P03" / "revision-002",
+        "reference": ROOT / "reference_documents" / "P03" / "revision-002",
         "source_name": "source.pdf",
         "source_type": "pdf",
-        "expected_source_digest": "44a7e46292cbad64bab18269027c1bf5945e62c4957469d6749e60d47559a455",
-        "expected_configuration_digest": "79046888fda8303e18679fbf1c8df8ab1f811bc62a62782e505ba9d9a1f937c1",
-        "expected_reference_digest": "ca9e37fd3ed2b7a674199b836ae29c38800c81e52843427c614a7aab15590b12",
+        "expected_source_digest": "227ec02d17e0336088a4b702f2a0f7cca9c2b9d2cdc796a8ef1165192262b720",
+        "expected_configuration_digest": "53e01bf49379952e8cfedf33371f09e084ecfe4d3bee16b6ca7bdf923badbd24",
+        "expected_reference_digest": "935b762d112c95c20b9f375b5288fd649be2948311bee92c547ee5be2870990d",
     },
     "P04": {
-        "fixture": ROOT / "fixtures" / "P04" / "revision-001",
-        "governance": ROOT / "governance" / "P04" / "revision-001",
-        "reference": ROOT / "reference_documents" / "P04" / "revision-001",
+        "fixture": ROOT / "fixtures" / "P04" / "revision-002",
+        "governance": ROOT / "governance" / "P04" / "revision-002",
+        "reference": ROOT / "reference_documents" / "P04" / "revision-002",
         "source_name": "source.pdf",
         "source_type": "pdf",
-        "expected_source_digest": "d353e1da824c08c2a2872d365cead717b265abdbebc4f5f94a71596569171c3c",
-        "expected_configuration_digest": "f9cd521f05964afb0036b3ff82738e327cedba933526b4693b6d121c7c7dadba",
-        "expected_reference_digest": "f4351414267d92f6657eea1f3d04f55c616e0253bc656c18abbf640afe0ee18d",
+        "expected_source_digest": "9d26db0f4c5104a1f4514aa781190f3a6ba9d0b81fa85fd048ee9840ee465036",
+        "expected_configuration_digest": "d6760c39740e1d14539c7bf6ebef92bda8acb1723b7fa98d3f3f1bac3f2b96b8",
+        "expected_reference_digest": "851e7902def5e556544248cbfd2b67e4d000132902c65e20debca4491be43131",
     },
 }
 
@@ -141,6 +142,46 @@ def test_p03_is_at_least_five_pages_and_raster_only_with_geometry() -> None:
 def test_p03_build_recipe_reproduces_exact_scanned_pdf_bytes() -> None:
     module = _load_build_source("P03")
     assert module.build_pdf() == (CASES["P03"]["fixture"] / "source.pdf").read_bytes()
+
+
+def test_p03_and_p04_controlled_font_is_fail_closed_and_cwd_independent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for case_id in ("P03", "P04"):
+        case = CASES[case_id]
+        module = _load_build_source(case_id)
+        source_text = (case["fixture"] / "build_source.py").read_text(encoding="utf-8")
+        assert "Hiragino" not in source_text
+        assert "/System/Library/Fonts" not in source_text
+        assert hashlib.sha256(module.FONT_PATH.read_bytes()).hexdigest() == module.FONT_SHA256
+
+        monkeypatch.chdir(tmp_path)
+        first = module.build_pdf()
+        second = module.build_pdf()
+        assert hashlib.sha256(first).hexdigest() == hashlib.sha256(second).hexdigest()
+
+        monkeypatch.setattr(module, "FONT_PATH", tmp_path / f"{case_id.lower()}-missing.otf")
+        with pytest.raises(RuntimeError, match="font is unavailable"):
+            module.build_pdf()
+
+        monkeypatch.setattr(module, "FONT_PATH", case["fixture"] / "source.pdf")
+        with pytest.raises(RuntimeError, match="font digest mismatch"):
+            module.build_pdf()
+
+        monkeypatch.setattr(module, "FONT_PATH", module.ASSET_ROOT / "assets" / "fonts" / "NotoSansCJKtc-Regular.otf")
+
+
+def test_revision_001_source_fixture_bytes_remain_preserved() -> None:
+    preserved = {
+        ROOT / "fixtures" / "P03" / "revision-001" / "source.pdf": "44a7e46292cbad64bab18269027c1bf5945e62c4957469d6749e60d47559a455",
+        ROOT / "fixtures" / "P04" / "revision-001" / "source.pdf": "d353e1da824c08c2a2872d365cead717b265abdbebc4f5f94a71596569171c3c",
+        ROOT / "fixtures" / "S02" / "revision-001" / "source-001.png": "9371cdde4cd11381d7d6a1d71264a9a53b1118e82919f4aaf27916988adfbbb4",
+        ROOT / "fixtures" / "S02" / "revision-001" / "source-002.png": "58ff761c484266b4859c67be8f59f039466df777f4ecfb7ab736ff33759b2a0e",
+        ROOT / "fixtures" / "S02" / "revision-001" / "source_manifest.json": "2204ae118b8cc03ea8457f72dda5b050c8329beb30f0c4e49984f7809460d6b3",
+    }
+    for path, expected_digest in preserved.items():
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == expected_digest
 
 
 def test_p04_has_native_and_scanned_pages_with_formula_and_table() -> None:

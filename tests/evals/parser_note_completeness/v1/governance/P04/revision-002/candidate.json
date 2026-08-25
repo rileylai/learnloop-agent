@@ -1,0 +1,26 @@
+{
+  "artifacts": {
+    "build_reference": "../../../fixtures/P04/revision-002/build_reference.py",
+    "build_source": "../../../fixtures/P04/revision-002/build_source.py",
+    "producer_configuration": "producer_configuration.json",
+    "reference_digest": "../../../reference_documents/P04/revision-002/normalized_document.sha256",
+    "reference_document": "../../../reference_documents/P04/revision-002/normalized_document.json",
+    "source": "../../../fixtures/P04/revision-002/source.pdf",
+    "source_digest": "../../../fixtures/P04/revision-002/source.sha256"
+  },
+  "authority": {
+    "approved": false,
+    "baseline_gate_authority": false,
+    "canonical_dataset": false,
+    "formal": false
+  },
+  "candidate_status": "draft_candidate",
+  "case_id": "P04",
+  "formal_manifest_present": false,
+  "pending_evidence": [
+    "Q22: fixture provenance, rights, privacy, and independent approval evidence",
+    "Q25: fixture governance, acquisition receipt, separation-of-duties, and independent approval"
+  ],
+  "revision": "revision-002",
+  "scope_note": "Project-authored mixed native and raster bilingual PDF draft candidate for development validation only; no formal dataset, baseline, gate, comparison, or adoption authority is claimed."
+}

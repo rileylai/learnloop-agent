@@ -1,0 +1,28 @@
+{
+  "artifacts": {
+    "image_001": "../../../fixtures/S02/revision-002/source-001.png",
+    "image_001_digest": "../../../fixtures/S02/revision-002/source-001.sha256",
+    "image_002": "../../../fixtures/S02/revision-002/source-002.png",
+    "image_002_digest": "../../../fixtures/S02/revision-002/source-002.sha256",
+    "producer_configuration": "producer_configuration.json",
+    "reference_digest": "../../../reference_documents/S02/revision-002/normalized_document.sha256",
+    "reference_document": "../../../reference_documents/S02/revision-002/normalized_document.json",
+    "source_manifest": "../../../fixtures/S02/revision-002/source_manifest.json",
+    "source_manifest_digest": "../../../fixtures/S02/revision-002/source.sha256"
+  },
+  "authority": {
+    "approved": false,
+    "baseline_gate_authority": false,
+    "canonical_dataset": false,
+    "formal": false
+  },
+  "candidate_status": "draft_candidate",
+  "case_id": "S02",
+  "formal_manifest_present": false,
+  "pending_evidence": [
+    "Q22: fixture provenance, rights, privacy, and independent approval evidence",
+    "Q25: fixture governance, acquisition receipt, separation-of-duties, and independent approval"
+  ],
+  "revision": "revision-002",
+  "scope_note": "Project-authored deterministic bilingual screenshot-set draft candidate for development validation only; it is not an approved or formal dataset and carries no decision authority."
+}

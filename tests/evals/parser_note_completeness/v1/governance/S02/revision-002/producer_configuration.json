@@ -1,0 +1,29 @@
+{
+  "font_asset": {
+    "path": "assets/fonts/NotoSansCJKtc-Regular.otf",
+    "sha256": "dce08bd4fd91aa8aa76ed8fea4b694c2dfb8550f67871e326843212ddbeb88b4"
+  },
+  "font_sizes": [15, 20, 24],
+  "geometry_policy": "normalized_top_left_0_1000000_integer_bounds",
+  "image_policy": {
+    "compress_level": 9,
+    "format": "png_rgb",
+    "height": 360,
+    "order": "ascending_image_index",
+    "width": 640
+  },
+  "language_policy": {
+    "source_declared": ["zh-Hant", "en"],
+    "unknown": "und"
+  },
+  "locator_policy": {
+    "family": "screenshots",
+    "identity": "image_index_and_sha256_with_normalized_region",
+    "fabrication": "reject"
+  },
+  "overlap_policy": "retain_overlapping_text_regions_and_repeated_cross_image_content",
+  "processing_method": "project_authored_deterministic_screenshot_set",
+  "processing_stage": "fixture_build_and_reference_authoring",
+  "segmentation_semantics": "png-multi-image-text-regions-v1",
+  "source_policy": "self_contained_offline_raster_build"
+}

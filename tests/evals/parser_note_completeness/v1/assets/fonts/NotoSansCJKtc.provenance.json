@@ -1,0 +1,18 @@
+{
+  "archive_sha256": "8ea0d6feb8e092c250710cdc75c138090832ddaa98d8ccb37cd89b03b72c331b",
+  "asset_filename": "NotoSansCJKtc-Regular.otf",
+  "asset_sha256": "dce08bd4fd91aa8aa76ed8fea4b694c2dfb8550f67871e326843212ddbeb88b4",
+  "font_family": "Noto Sans CJK TC",
+  "font_style": "Regular",
+  "font_version": "2.004",
+  "license": "SIL Open Font License 1.1",
+  "license_sha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2",
+  "license_source": "https://github.com/googlefonts/noto-cjk/blob/main/Sans/LICENSE",
+  "original_filename": "NotoSansCJKtc-Regular.otf",
+  "purpose": "Deterministic benchmark fixture rendering.",
+  "upstream_project": "Noto CJK",
+  "upstream_release_date": "2021-04-28",
+  "upstream_release": "Sans2.004 (Noto Sans CJK 2.004)",
+  "upstream_repository": "https://github.com/notofonts/noto-cjk",
+  "upstream_source": "https://github.com/googlefonts/noto-cjk/releases/download/Sans2.004/09_NotoSansCJKtc.zip"
+}

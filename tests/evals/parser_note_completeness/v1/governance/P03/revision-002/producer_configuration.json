@@ -1,0 +1,34 @@
+{
+  "build_method": "pillow_raster_to_stdlib_pdf_image_writer_with_controlled_noto_font",
+  "build_reference": "../../../fixtures/P03/revision-002/build_reference.py",
+  "build_source": "../../../fixtures/P03/revision-002/build_source.py",
+  "font_asset": {
+    "path": "assets/fonts/NotoSansCJKtc-Regular.otf",
+    "sha256": "dce08bd4fd91aa8aa76ed8fea4b694c2dfb8550f67871e326843212ddbeb88b4"
+  },
+  "font_size": 27,
+  "image": {
+    "height": 900,
+    "mode": "L",
+    "width": 640
+  },
+  "language_policy": "traditional_chinese_scan_text",
+  "locator_policy": "pdf_page_and_normalized_region",
+  "noise_recipe": {
+    "modulus": 997,
+    "pixel_rule": "coordinate_hash_salt_pepper",
+    "seed_formula": "x17_y31_page101"
+  },
+  "processing_method": "project_authored_deterministic_raster_scan",
+  "processing_stage": "fixture_build_and_reference_authoring",
+  "pdf": {
+    "compression": "zlib-level-9",
+    "metadata": false,
+    "version": "1.4"
+  },
+  "segmentation_semantics": "pdf-scanned-page-regions-v1",
+  "skew_recipe": {
+    "affine_factor": 0.018,
+    "resampling": "bicubic"
+  }
+}

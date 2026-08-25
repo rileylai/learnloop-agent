@@ -22,7 +22,7 @@ FULL_PROFILE_SCHEMA_VERSION = "full-profile/1.0.0"
 FULL_PROFILE_ARTIFACT_TYPE = "parser_note_completeness_full_profile"
 BENCHMARK_CONTRACT = "parser-note-completeness-v1"
 FULL_PROFILE_ID = "full"
-FULL_PROFILE_REVISION = "revision-001"
+FULL_PROFILE_REVISION: Literal["revision-001"] = "revision-001"
 FULL_CASE_IDS = (
     "P01",
     "P02",
@@ -42,6 +42,7 @@ FULL_CASE_IDS = (
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
 _SHA256_RE = re.compile(_SHA256_PATTERN)
 _ALLOWED_ARTIFACT_ROOTS = frozenset({"fixtures", "governance", "reference_documents"})
+_REVISION_002_CASE_IDS = frozenset({"P03", "P04", "S02"})
 
 Sha256 = Annotated[StrictStr, Field(pattern=_SHA256_PATTERN)]
 FullCaseId = Literal[
@@ -159,6 +160,17 @@ _EXPECTED_PATHS = {
     },
 }
 
+def _expected_paths(case_id: str, fixture_revision: str) -> dict[str, str]:
+    if fixture_revision == "revision-001":
+        return _EXPECTED_PATHS[case_id]
+    if fixture_revision == "revision-002" and case_id in _REVISION_002_CASE_IDS:
+        return {
+            field_name: path.replace("/revision-001/", "/revision-002/")
+            for field_name, path in _EXPECTED_PATHS[case_id].items()
+        }
+    raise ValueError(f"unsupported fixture revision for {case_id}: {fixture_revision}")
+
+
 _EXPECTED_SOURCE_TYPES = {
     "P01": SourceType.PDF,
     "P02": SourceType.PDF,
@@ -193,7 +205,7 @@ def _validate_relative_artifact_path(value: str) -> str:
 
 class FullCase(_StrictFrozenModel):
     case_id: FullCaseId
-    fixture_revision: Literal["revision-001"]
+    fixture_revision: Literal["revision-001", "revision-002"]
     source_artifact_path: StrictStr = Field(min_length=1)
     source_digest_path: StrictStr = Field(min_length=1)
     source_sha256: Sha256
@@ -216,10 +228,10 @@ class FullCase(_StrictFrozenModel):
 
     @model_validator(mode="after")
     def _validate_revision_paths(self) -> "FullCase":
-        expected = _EXPECTED_PATHS[self.case_id]
+        expected = _expected_paths(self.case_id, self.fixture_revision)
         for field_name, expected_path in expected.items():
             if getattr(self, field_name) != expected_path:
-                raise ValueError(f"{self.case_id} must bind its revision-001 canonical artifact paths")
+                raise ValueError(f"{self.case_id} must bind its {self.fixture_revision} canonical artifact paths")
         return self
 
 
@@ -237,7 +249,7 @@ class FullProfile(_StrictFrozenModel):
     artifact_type: Literal["parser_note_completeness_full_profile"]
     benchmark_contract: Literal["parser-note-completeness-v1"]
     profile_id: Literal["full"]
-    profile_revision: Literal["revision-001"]
+    profile_revision: Literal["revision-001", "revision-002"]
     execution_mode: Literal["development"]
     membership: Literal["diagnostic"]
     cases: Tuple[FullCase, ...] = Field(min_length=13, max_length=13)
@@ -249,6 +261,14 @@ class FullProfile(_StrictFrozenModel):
             raise ValueError(
                 "full profile cases must be exactly P01-P04, W01-W03, Y01-Y02, C01-C02, S01-S02 in order"
             )
+        expected_revisions = tuple(
+            "revision-002"
+            if self.profile_revision == "revision-002" and case_id in _REVISION_002_CASE_IDS
+            else "revision-001"
+            for case_id in FULL_CASE_IDS
+        )
+        if tuple(case.fixture_revision for case in self.cases) != expected_revisions:
+            raise ValueError("full profile fixture revisions do not match the profile revision")
         return self
 
 
@@ -378,20 +398,29 @@ def validate_full_profile_artifacts(
     return model
 
 
-def build_full_profile(benchmark_root: Path) -> FullProfile:
+def build_full_profile(
+    benchmark_root: Path,
+    *,
+    profile_revision: Literal["revision-001", "revision-002"] = FULL_PROFILE_REVISION,
+) -> FullProfile:
     """Build profile bindings from existing immutable artifacts under ``benchmark_root``."""
 
     root = Path(benchmark_root)
     cases = []
     for case_id in FULL_CASE_IDS:
-        paths = _EXPECTED_PATHS[case_id]
+        fixture_revision = (
+            "revision-002"
+            if profile_revision == "revision-002" and case_id in _REVISION_002_CASE_IDS
+            else "revision-001"
+        )
+        paths = _expected_paths(case_id, fixture_revision)
         source_bytes = _read_bounded_artifact(root, paths["source_artifact_path"], "source artifact")
         configuration_bytes = _read_bounded_artifact(root, paths["producer_configuration_path"], "producer configuration")
         reference_bytes = _read_bounded_artifact(root, paths["reference_path"], "canonical reference")
         cases.append(
             {
                 "case_id": case_id,
-                "fixture_revision": "revision-001",
+                "fixture_revision": fixture_revision,
                 **paths,
                 "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
                 "producer_configuration_sha256": hashlib.sha256(configuration_bytes).hexdigest(),
@@ -404,7 +433,7 @@ def build_full_profile(benchmark_root: Path) -> FullProfile:
             "artifact_type": FULL_PROFILE_ARTIFACT_TYPE,
             "benchmark_contract": BENCHMARK_CONTRACT,
             "profile_id": FULL_PROFILE_ID,
-            "profile_revision": FULL_PROFILE_REVISION,
+            "profile_revision": profile_revision,
             "execution_mode": "development",
             "membership": "diagnostic",
             "cases": cases,
@@ -412,8 +441,17 @@ def build_full_profile(benchmark_root: Path) -> FullProfile:
     )
 
 
-def write_full_profile(profile_path: Path, digest_path: Path, benchmark_root: Path) -> FullProfile:
-    profile = validate_full_profile_artifacts(build_full_profile(benchmark_root), benchmark_root)
+def write_full_profile(
+    profile_path: Path,
+    digest_path: Path,
+    benchmark_root: Path,
+    *,
+    profile_revision: Literal["revision-001", "revision-002"] = FULL_PROFILE_REVISION,
+) -> FullProfile:
+    profile = validate_full_profile_artifacts(
+        build_full_profile(benchmark_root, profile_revision=profile_revision),
+        benchmark_root,
+    )
     profile_bytes = canonical_full_profile_bytes(profile)
     profile_path.parent.mkdir(parents=True, exist_ok=True)
     profile_path.write_bytes(profile_bytes)
