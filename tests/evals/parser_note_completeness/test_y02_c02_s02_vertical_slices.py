@@ -41,11 +41,11 @@ CASES: dict[str, dict[str, Any]] = {
         "fixture": ROOT / "fixtures" / "S02" / "revision-002",
         "governance": ROOT / "governance" / "S02" / "revision-002",
         "reference": ROOT / "reference_documents" / "S02" / "revision-002",
-        "image_001_digest": "ee02c2dde11f28a4c202323d3ef22e01a135f5e2510be5c2a20ba683b94988db",
-        "image_002_digest": "20d43a7230f2f4279ae3b1509cbcd502c1b3d0d1b44d24c497a71b4f23d7f502",
-        "source_manifest_digest": "93ac9498f7e323b85d018bc831eebef10b06eeba48a3a62dd523f7509682858d",
+        "image_001_digest": "47617d8a01d6d7d3e47fc8b521c96b677bd5f18d170eeeaf8f4eacc18fc7c5ad",
+        "image_002_digest": "90ad2a83c837d12586c76d72bddd11293fd2ed6e3c705addb04cb2d794770c4e",
+        "source_manifest_digest": "34ac32424526527808db6c54f615ff9b5e2f2594a89590102902c1cb8ecaeb30",
         "configuration_digest": "94edf506a69ec56cee5d6048475b6dbe33fa4c3f7ffd7f9784e0ffb08ee1fe7b",
-        "reference_digest": "e42730f359f4c4a86602f6c6ddcdd6a97c4f3597c8306a2093f8133352957299",
+        "reference_digest": "e5f58120026419c284a9a8bbbf90d31b122c19aa68daaece0f6138fcb33ed98f",
     },
 }
 

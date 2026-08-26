@@ -57,7 +57,7 @@ def test_benchmark_manifest_100_preserves_old_profile_and_101_selects_revision_0
     assert old.full_profile_sha256 == "0f00e4a1b89d7f5bdb218d51fe6a75fd9c7e3b5e88e1ce1a806eaed5df71d4a9"
     assert new.benchmark_version == "parser-note-completeness/1.0.1"
     assert new.full_profile_revision == "revision-002"
-    assert new.full_profile_sha256 == "59e1ab02dfc5bcb87731c22e78e707de2d2ff550f664d81da121f8c3ac8f0c39"
+    assert new.full_profile_sha256 == "4e32c4d31c9fc4359ae15c693d6f35e0d56712a37214965adeede587bb5ebc27"
 
 
 def test_benchmark_manifest_build_is_byte_deterministic() -> None:

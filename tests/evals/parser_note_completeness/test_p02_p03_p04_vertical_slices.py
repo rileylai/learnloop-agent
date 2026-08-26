@@ -34,9 +34,9 @@ CASES: dict[str, dict[str, Any]] = {
         "reference": ROOT / "reference_documents" / "P03" / "revision-002",
         "source_name": "source.pdf",
         "source_type": "pdf",
-        "expected_source_digest": "227ec02d17e0336088a4b702f2a0f7cca9c2b9d2cdc796a8ef1165192262b720",
+        "expected_source_digest": "a5fceec1d03317f6c7ca7dab576ef18b54124d31a1ef68b53511ed36741b4e26",
         "expected_configuration_digest": "53e01bf49379952e8cfedf33371f09e084ecfe4d3bee16b6ca7bdf923badbd24",
-        "expected_reference_digest": "935b762d112c95c20b9f375b5288fd649be2948311bee92c547ee5be2870990d",
+        "expected_reference_digest": "2fb7ffd00853c4973184f85fb12b148bbfbcb0e1c48ca21dd8e0bd927768f13e",
     },
     "P04": {
         "fixture": ROOT / "fixtures" / "P04" / "revision-002",
@@ -44,9 +44,9 @@ CASES: dict[str, dict[str, Any]] = {
         "reference": ROOT / "reference_documents" / "P04" / "revision-002",
         "source_name": "source.pdf",
         "source_type": "pdf",
-        "expected_source_digest": "9d26db0f4c5104a1f4514aa781190f3a6ba9d0b81fa85fd048ee9840ee465036",
+        "expected_source_digest": "c3ead34126004b0639ed1366e85bfb1af1691c04e92c949403cfad9e94fecd0e",
         "expected_configuration_digest": "d6760c39740e1d14539c7bf6ebef92bda8acb1723b7fa98d3f3f1bac3f2b96b8",
-        "expected_reference_digest": "851e7902def5e556544248cbfd2b67e4d000132902c65e20debca4491be43131",
+        "expected_reference_digest": "c5bdcd64d595634a565e16c8d555f0e356a5fe6d2ff63d7d643358799b26a159",
     },
 }
 

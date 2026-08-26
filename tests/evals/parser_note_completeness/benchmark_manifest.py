@@ -47,7 +47,7 @@ _EXPECTED_BINDINGS: dict[BenchmarkVersion, dict[str, str]] = {
         "full_profile_revision": "revision-002",
         "full_profile_path": "manifests/full/revision-002/profile.json",
         "full_profile_digest_path": "manifests/full/revision-002/profile.sha256",
-        "full_profile_sha256": "59e1ab02dfc5bcb87731c22e78e707de2d2ff550f664d81da121f8c3ac8f0c39",
+        "full_profile_sha256": "4e32c4d31c9fc4359ae15c693d6f35e0d56712a37214965adeede587bb5ebc27",
     },
 }
 
