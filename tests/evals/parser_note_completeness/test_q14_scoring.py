@@ -70,8 +70,12 @@ from .q14_scoring import (
     build_fixture_metric_result,
     validate_cohort_metric_result,
     validate_fixture_metric_result,
+    validate_aggregation_contract,
+    validate_metric_contract,
     validate_metric_contract_bindings,
+    validate_metric_registry,
     validate_metric_registry_bindings,
+    validate_scorer_contract,
     validate_scorer_contract_bindings,
 )
 
@@ -1083,3 +1087,71 @@ def test_binding_helpers_revalidate_mutated_parent_contracts() -> None:
                 (contract.metric_contract_id, contract.metric_contract_version): contract
             },
         )
+
+
+def test_public_validation_helpers_revalidate_existing_model_instances() -> None:
+    contract, registry, scorer, aggregation = _metric(kind=MetricKind.SUPPORT)
+    mutated = (
+        (validate_metric_contract, contract.model_copy(
+            update={"components": tuple(reversed(contract.components))}
+        )),
+        (validate_metric_registry, registry.model_copy(
+            update={"metric_contracts": registry.metric_contracts * 2}
+        )),
+        (validate_scorer_contract, scorer.model_copy(
+            update={
+                "compatible_lanes": (
+                    Q14Lane.END_TO_END,
+                    Q14Lane.GENERATION,
+                )
+            }
+        )),
+        (validate_aggregation_contract, aggregation.model_copy(
+            update={"aggregation_kind": "invalid-kind"}
+        )),
+    )
+    for validator, payload in mutated:
+        with pytest.raises(Q14ContractError):
+            validator(payload)
+
+
+def test_generic_and_named_q14_canonical_helpers_enforce_their_boundaries() -> None:
+    contract, registry, scorer, aggregation = _metric(kind=MetricKind.SUPPORT)
+    value = score_support_fixture(
+        authoritative_generated_claim_ids=("g1",),
+        support_state_by_generated_claim_id={"g1": "supported"},
+    )
+    fixture = _fixture(contract, registry, scorer, value)
+    cohort = _cohort_from_fixture(contract, registry, aggregation, fixture)
+    artifacts = (contract, registry, scorer, aggregation, fixture, cohort)
+
+    for artifact in artifacts:
+        replay = type(artifact).model_validate(artifact.model_dump(mode="json"))
+        assert canonical_q14_bytes(artifact) == canonical_q14_bytes(replay)
+        assert q14_artifact_sha256(artifact) == q14_artifact_sha256(replay)
+
+    typed_helpers = (
+        (contract, canonical_metric_contract_bytes, metric_contract_sha256),
+        (registry, canonical_metric_registry_bytes, metric_registry_sha256),
+        (scorer, canonical_scorer_contract_bytes, scorer_contract_sha256),
+        (aggregation, canonical_aggregation_contract_bytes, aggregation_contract_sha256),
+        (fixture, canonical_fixture_metric_result_bytes, fixture_metric_result_sha256),
+        (cohort, canonical_cohort_metric_result_bytes, cohort_metric_result_sha256),
+    )
+    for artifact, canonicalizer, sha256 in typed_helpers:
+        assert canonicalizer(artifact) == canonical_q14_bytes(artifact)
+        assert sha256(artifact) == q14_artifact_sha256(artifact)
+
+    wrong_type_cases = (
+        (canonical_metric_contract_bytes, metric_contract_sha256, registry),
+        (canonical_metric_registry_bytes, metric_registry_sha256, contract),
+        (canonical_scorer_contract_bytes, scorer_contract_sha256, contract),
+        (canonical_aggregation_contract_bytes, aggregation_contract_sha256, scorer),
+        (canonical_fixture_metric_result_bytes, fixture_metric_result_sha256, cohort),
+        (canonical_cohort_metric_result_bytes, cohort_metric_result_sha256, fixture),
+    )
+    for canonicalizer, sha256, wrong_artifact in wrong_type_cases:
+        with pytest.raises(Q14ContractError):
+            canonicalizer(wrong_artifact)
+        with pytest.raises(Q14ContractError):
+            sha256(wrong_artifact)

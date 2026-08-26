@@ -939,52 +939,52 @@ def q14_artifact_sha256(payload: Any) -> str:
     return hashlib.sha256(canonical_q14_bytes(payload)).hexdigest()
 
 
-def canonical_metric_contract_bytes(payload: MetricContract) -> bytes:
-    return canonical_q14_bytes(payload)
+def canonical_metric_contract_bytes(payload: Any) -> bytes:
+    return canonical_q14_bytes(_coerce_q14_type(payload, MetricContract))
 
 
-def canonical_metric_registry_bytes(payload: MetricRegistry) -> bytes:
-    return canonical_q14_bytes(payload)
+def canonical_metric_registry_bytes(payload: Any) -> bytes:
+    return canonical_q14_bytes(_coerce_q14_type(payload, MetricRegistry))
 
 
-def canonical_scorer_contract_bytes(payload: ScorerContract) -> bytes:
-    return canonical_q14_bytes(payload)
+def canonical_scorer_contract_bytes(payload: Any) -> bytes:
+    return canonical_q14_bytes(_coerce_q14_type(payload, ScorerContract))
 
 
-def canonical_aggregation_contract_bytes(payload: AggregationContract) -> bytes:
-    return canonical_q14_bytes(payload)
+def canonical_aggregation_contract_bytes(payload: Any) -> bytes:
+    return canonical_q14_bytes(_coerce_q14_type(payload, AggregationContract))
 
 
-def canonical_fixture_metric_result_bytes(payload: FixtureMetricResult) -> bytes:
-    return canonical_q14_bytes(payload)
+def canonical_fixture_metric_result_bytes(payload: Any) -> bytes:
+    return canonical_q14_bytes(_coerce_q14_type(payload, FixtureMetricResult))
 
 
-def canonical_cohort_metric_result_bytes(payload: CohortMetricResult) -> bytes:
-    return canonical_q14_bytes(payload)
+def canonical_cohort_metric_result_bytes(payload: Any) -> bytes:
+    return canonical_q14_bytes(_coerce_q14_type(payload, CohortMetricResult))
 
 
-def metric_contract_sha256(payload: MetricContract) -> str:
-    return q14_artifact_sha256(payload)
+def metric_contract_sha256(payload: Any) -> str:
+    return hashlib.sha256(canonical_metric_contract_bytes(payload)).hexdigest()
 
 
-def metric_registry_sha256(payload: MetricRegistry) -> str:
-    return q14_artifact_sha256(payload)
+def metric_registry_sha256(payload: Any) -> str:
+    return hashlib.sha256(canonical_metric_registry_bytes(payload)).hexdigest()
 
 
-def scorer_contract_sha256(payload: ScorerContract) -> str:
-    return q14_artifact_sha256(payload)
+def scorer_contract_sha256(payload: Any) -> str:
+    return hashlib.sha256(canonical_scorer_contract_bytes(payload)).hexdigest()
 
 
-def aggregation_contract_sha256(payload: AggregationContract) -> str:
-    return q14_artifact_sha256(payload)
+def aggregation_contract_sha256(payload: Any) -> str:
+    return hashlib.sha256(canonical_aggregation_contract_bytes(payload)).hexdigest()
 
 
-def fixture_metric_result_sha256(payload: FixtureMetricResult) -> str:
-    return q14_artifact_sha256(payload)
+def fixture_metric_result_sha256(payload: Any) -> str:
+    return hashlib.sha256(canonical_fixture_metric_result_bytes(payload)).hexdigest()
 
 
-def cohort_metric_result_sha256(payload: CohortMetricResult) -> str:
-    return q14_artifact_sha256(payload)
+def cohort_metric_result_sha256(payload: Any) -> str:
+    return hashlib.sha256(canonical_cohort_metric_result_bytes(payload)).hexdigest()
 
 
 def validate_metric_contract_bindings(
@@ -1502,19 +1502,19 @@ def _make_rational(numerator: int, denominator: int) -> Rational:
 
 
 def validate_metric_contract(payload: Any) -> MetricContract:
-    return payload if isinstance(payload, MetricContract) else MetricContract.model_validate(payload)
+    return _coerce_q14_type(payload, MetricContract)
 
 
 def validate_metric_registry(payload: Any) -> MetricRegistry:
-    return payload if isinstance(payload, MetricRegistry) else MetricRegistry.model_validate(payload)
+    return _coerce_q14_type(payload, MetricRegistry)
 
 
 def validate_scorer_contract(payload: Any) -> ScorerContract:
-    return payload if isinstance(payload, ScorerContract) else ScorerContract.model_validate(payload)
+    return _coerce_q14_type(payload, ScorerContract)
 
 
 def validate_aggregation_contract(payload: Any) -> AggregationContract:
-    return payload if isinstance(payload, AggregationContract) else AggregationContract.model_validate(payload)
+    return _coerce_q14_type(payload, AggregationContract)
 
 
 # The shorter Ref names match the existing benchmark modules' public API.
