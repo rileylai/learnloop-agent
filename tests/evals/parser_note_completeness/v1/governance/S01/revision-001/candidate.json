@@ -1,5 +1,6 @@
 {
   "artifacts": {
+    "gold_review_packet": "gold-review-packet.json",
     "producer_configuration": "producer_configuration.json",
     "reference_digest": "../../../reference_documents/S01/revision-001/normalized_document.sha256",
     "reference_document": "../../../reference_documents/S01/revision-001/normalized_document.json",

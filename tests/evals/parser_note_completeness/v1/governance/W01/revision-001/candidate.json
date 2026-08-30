@@ -10,6 +10,7 @@
     "baseline_gate_authority": false
   },
   "artifacts": {
+    "gold_review_packet": "gold-review-packet.json",
     "source": "../../../fixtures/W01/revision-001/source.html",
     "source_digest": "../../../fixtures/W01/revision-001/source.sha256",
     "reference_document": "../../../reference_documents/W01/revision-001/normalized_document.json",

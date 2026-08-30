@@ -1,5 +1,6 @@
 {
   "artifacts": {
+    "gold_review_packet": "gold-review-packet.json",
     "image_001": "../../../fixtures/S02/revision-002/source-001.png",
     "image_001_digest": "../../../fixtures/S02/revision-002/source-001.sha256",
     "image_002": "../../../fixtures/S02/revision-002/source-002.png",

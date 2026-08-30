@@ -1,5 +1,6 @@
 {
   "artifacts": {
+    "gold_review_packet": "gold-review-packet.json",
     "build_source": "../../../fixtures/P01/revision-001/build_source.py",
     "producer_configuration": "producer_configuration.json",
     "reference_digest": "../../../reference_documents/P01/revision-001/normalized_document.sha256",

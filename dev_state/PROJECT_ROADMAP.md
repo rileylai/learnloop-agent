@@ -3,13 +3,14 @@
 ## Current Pointer
 
 - Current phase: Parser & Note Completeness execution
-- Current focus: C01 implementation/audit closure; see
+- Current focus: 13-case evidence review and formal-authority handoff; see
   [the dedicated parser-note-completeness roadmap](parser-note-completeness/03-roadmap.md)
-- Status: doing (diagnostic C01 slice is present in the working tree; formal
-  authority remains blocked)
+- Status: blocked (C01 audit and five-case technical smoke wiring are complete;
+  Parser/formal schemas and human evidence authority remain unavailable)
 - Last updated: 2026-08-30
-- Next command: audit the existing C01 working-tree diff against ADR-0009 and
-  the dedicated roadmap; preserve the diagnostic-only boundary.
+- Next action: human review of the 13 immutable draft review packets plus
+  provenance/rights/privacy and separation-of-duties evidence; then freeze the
+  pending Q14 Parser and formal Q16-Q24 schemas before full execution.
   Retrieval Step 100 remains independently deferred because the Step 99
   weighted-RRF candidate missed its preregistered quality gate; do not infer a
   rollout or re-index.

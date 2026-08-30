@@ -1,5 +1,6 @@
 {
   "artifacts": {
+    "gold_review_packet": "gold-review-packet.json",
     "captions": "../../../fixtures/Y01/revision-001/captions.vtt",
     "captions_digest": "../../../fixtures/Y01/revision-001/captions.sha256",
     "chapters": "../../../fixtures/Y01/revision-001/chapters.json",

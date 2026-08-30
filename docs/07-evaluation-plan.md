@@ -4,9 +4,14 @@ Evaluation separates deterministic acceptance from opt-in dependency checks.
 The default suite must not contact a real Notion workspace, send Telegram
 messages, consume provider quota, or mutate a shared database.
 
-The future parser and note completeness benchmark is governed by
-[ADR-0009](decisions/0009-parser-note-completeness-benchmark-contract.md); its
-fixture evidence, metric policy, calibration, schemas, and implementation remain pending.
+The parser and note completeness benchmark is governed by
+[ADR-0009](decisions/0009-parser-note-completeness-benchmark-contract.md).
+Its diagnostic manifests, runner/lane/renderer path, C01 Generation/End-to-end
+Q14 slice, and 13 draft review packets are implemented. Formal fixture
+evidence, reviewed gold, Parser metric contracts, calibration, formal
+provenance/store schemas, and baseline authority remain pending. See the
+[operational roadmap](../dev_state/parser-note-completeness/03-roadmap.md) for
+the exact evidence boundary.
 
 ## Verification levels
 
