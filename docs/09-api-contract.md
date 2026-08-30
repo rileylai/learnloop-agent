@@ -196,4 +196,4 @@ returns `409 IDEMPOTENCY_KEY_CONFLICT`; an in-progress owner returns
 Telegram uses its durable `update_id` ledger instead of this middleware. The
 ledger and API idempotency records do not retain raw request payloads.
 
-For Telegram command syntax, see [Telegram operator contract](13-telegram-operator-contract.md).
+For Telegram command syntax, see [Telegram operator contract](11-telegram-operator-contract.md).

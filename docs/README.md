@@ -34,7 +34,7 @@ public documentation set.
 | [Notion permissions](06-notion-permission-model.md) | Ownership rules and `AI Supplement Zone` append semantics |
 | [Evaluation plan](07-evaluation-plan.md) | Deterministic tests, evaluation commands, and opt-in live checks |
 | [Observability](08-observability.md) | Workflow metadata, metrics, redaction, and recovery signals |
-| [Telegram operator contract](13-telegram-operator-contract.md) | `/sync`, `/index-full`, review, cost, status, and statistics commands |
+| [Telegram operator contract](11-telegram-operator-contract.md) | `/sync`, `/index-full`, review, cost, status, and statistics commands |
 | [Contributing](../CONTRIBUTING.md) | Architecture boundaries, tests, documentation, and review expectations |
 
 Operational procedures are in [`runbooks/`](runbooks/). Accepted architectural

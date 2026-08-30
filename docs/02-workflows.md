@@ -211,7 +211,7 @@ tracked independently. Acknowledgement failure does not undo committed
 business work. A post-commit preview failure keeps the pending proposal and is
 recoverable by resending the existing preview.
 
-See the [Telegram operator contract](13-telegram-operator-contract.md) for
+See the [Telegram operator contract](11-telegram-operator-contract.md) for
 operator commands and callback classes.
 
 ## Reliability properties

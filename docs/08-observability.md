@@ -137,4 +137,4 @@ outcome and explicitly reconciles it. Reconciliation is dry-run first and only
 transitions an eligible stale workflow; it never repeats business work.
 
 See [incident recovery](runbooks/incident-recovery.md), [backup and restore](runbooks/backup-restore.md),
-and the [Telegram operator contract](13-telegram-operator-contract.md).
+and the [Telegram operator contract](11-telegram-operator-contract.md).

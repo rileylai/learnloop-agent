@@ -47,7 +47,7 @@ It indexes existing Notion notes as read-only knowledge, generates AI supplement
 - `docs/09-api-contract.md`: API contract.
 - `docs/10-deployment.md`: local-first deployment and future V2 cloud.
 - `CONTRIBUTING.md`: coding, testing, documentation, and collaboration rules.
-- `docs/13-telegram-operator-contract.md`: Telegram operator commands,
+- `docs/11-telegram-operator-contract.md`: Telegram operator commands,
   callbacks, authorization, safe output, and queue boundaries.
 - `docs/prompts/`: prompt templates.
 - `docs/decisions/`: ADRs.
