@@ -21,9 +21,11 @@ BENCHMARK_MANIFEST_ARTIFACT_TYPE = "parser_note_completeness_benchmark_manifest"
 BENCHMARK_CONTRACT = "parser-note-completeness-v1"
 BENCHMARK_VERSION_001: Literal["parser-note-completeness/1.0.0"] = "parser-note-completeness/1.0.0"
 BENCHMARK_VERSION_002: Literal["parser-note-completeness/1.0.1"] = "parser-note-completeness/1.0.1"
+BENCHMARK_VERSION_003: Literal["parser-note-completeness/1.0.2"] = "parser-note-completeness/1.0.2"
 BenchmarkVersion = Literal[
     "parser-note-completeness/1.0.0",
     "parser-note-completeness/1.0.1",
+    "parser-note-completeness/1.0.2",
 ]
 
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
@@ -48,6 +50,12 @@ _EXPECTED_BINDINGS: dict[BenchmarkVersion, dict[str, str]] = {
         "full_profile_path": "manifests/full/revision-002/profile.json",
         "full_profile_digest_path": "manifests/full/revision-002/profile.sha256",
         "full_profile_sha256": "4e32c4d31c9fc4359ae15c693d6f35e0d56712a37214965adeede587bb5ebc27",
+    },
+    BENCHMARK_VERSION_003: {
+        "full_profile_revision": "revision-003",
+        "full_profile_path": "manifests/full/revision-003/profile.json",
+        "full_profile_digest_path": "manifests/full/revision-003/profile.sha256",
+        "full_profile_sha256": "45a00105debf8b452bdc18f045fe48a2e75fd2ebaeb94f20a71c1ca877187039",
     },
 }
 
@@ -86,7 +94,7 @@ class BenchmarkManifest(_StrictFrozenModel):
     benchmark_contract: Literal["parser-note-completeness-v1"]
     benchmark_version: BenchmarkVersion
     full_profile_id: Literal["full"]
-    full_profile_revision: Literal["revision-001", "revision-002"]
+    full_profile_revision: Literal["revision-001", "revision-002", "revision-003"]
     full_profile_path: StrictStr = Field(min_length=1)
     full_profile_digest_path: StrictStr = Field(min_length=1)
     full_profile_sha256: Sha256
@@ -277,6 +285,7 @@ __all__ = [
     "BENCHMARK_MANIFEST_SCHEMA_VERSION",
     "BENCHMARK_VERSION_001",
     "BENCHMARK_VERSION_002",
+    "BENCHMARK_VERSION_003",
     "BenchmarkManifest",
     "BenchmarkVersion",
     "benchmark_manifest_sha256",

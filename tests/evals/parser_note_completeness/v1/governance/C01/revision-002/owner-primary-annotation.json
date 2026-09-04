@@ -1,0 +1,48 @@
+{
+  "schema_version": "parser-note-completeness-owner-primary-annotation/1.0.0",
+  "artifact_role": "owner_primary_annotation_record",
+  "authority_status": "owner_approved_independent_review_pending",
+  "formal_authority": false,
+  "benchmark_version": "parser-note-completeness/1.0.1",
+  "case_id": "C01",
+  "fixture_revision": "revision-001",
+  "source_sha256": "d0f4543a2e71526ec208dbd5b3f645bedc074145ec3e91de5c017276f9fd6288",
+  "reference_document_sha256": "0be80f1cdd163fc0aaeefce69b127aa27d5661c496ab65a0083ab0f91263f390",
+  "decision_reference": "dev_state/parser-note-completeness/human-review-intake.json#c01-primary-gold-decision-2026-08-31-001",
+  "assigned_by": "Riley Lai",
+  "assigned_at": "2026-08-31T22:34:07+08:00",
+  "independent_review": {"status": "pending", "reviewer": null, "reviewed_at": null},
+  "source_references": [
+    {"source_reference_id": "c01-source-ref-001", "mode": "whole_element", "element_id": "c01-element-0"},
+    {"source_reference_id": "c01-source-ref-002", "mode": "whole_element", "element_id": "c01-element-1"},
+    {"source_reference_id": "c01-source-ref-003", "mode": "whole_element", "element_id": "c01-element-2"}
+  ],
+  "structure_assertions": [
+    {"assertion_id": "c01-structure-message-identities", "predicate": "chat_message_identity", "ordered_element_ids": ["c01-element-0", "c01-element-1", "c01-element-2"], "expected_message_ids": ["c01-message-001", "c01-message-002", "c01-message-003"]},
+    {"assertion_id": "c01-structure-thread-membership", "predicate": "chat_thread_membership", "ordered_element_ids": ["c01-element-0", "c01-element-1", "c01-element-2"], "expected_thread_id": "c01-synthetic-thread-001"},
+    {"assertion_id": "c01-structure-canonical-order", "predicate": "canonical_document_order", "ordered_element_ids": ["c01-element-0", "c01-element-1", "c01-element-2"]},
+    {"assertion_id": "c01-structure-reply-001", "predicate": "chat_reply", "subject_element_id": "c01-element-1", "object_element_id": "c01-element-0"},
+    {"assertion_id": "c01-structure-reply-002", "predicate": "chat_reply", "subject_element_id": "c01-element-2", "object_element_id": "c01-element-1"}
+  ],
+  "locator_assertions": [
+    {"assertion_id": "c01-locator-001", "element_id": "c01-element-0", "message_id": "c01-message-001", "thread_id": "c01-synthetic-thread-001", "source_sequence": 0},
+    {"assertion_id": "c01-locator-002", "element_id": "c01-element-1", "message_id": "c01-message-002", "thread_id": "c01-synthetic-thread-001", "source_sequence": 1},
+    {"assertion_id": "c01-locator-003", "element_id": "c01-element-2", "message_id": "c01-message-003", "thread_id": "c01-synthetic-thread-001", "source_sequence": 2}
+  ],
+  "evidence_items": [
+    {"evidence_id": "c01-evidence-001", "source_reference_ids": ["c01-source-ref-001"], "primary_category": "recommendation", "additional_categories": []},
+    {"evidence_id": "c01-evidence-002", "source_reference_ids": ["c01-source-ref-002"], "primary_category": "recommendation", "additional_categories": []},
+    {"evidence_id": "c01-evidence-003", "source_reference_ids": ["c01-source-ref-003"], "primary_category": "recommendation", "additional_categories": ["uncertainty"]}
+  ],
+  "expected_claims": [
+    {"expected_claim_id": "c01-expected-claim-001", "evidence_relations": [{"evidence_id": "c01-evidence-001", "support_role": "required"}], "importance": "critical", "importance_rationale": "Omitting or reversing the instruction would permit implementation before the parser contract is fixed, materially changing process correctness.", "primary_impact_reason": "process_correctness", "additional_impact_reasons": [], "review_status": "independent_review_pending"},
+    {"expected_claim_id": "c01-expected-claim-002", "evidence_relations": [{"evidence_id": "c01-evidence-002", "support_role": "required"}], "importance": "major", "importance_rationale": "Omission leaves a substantive source-family modeling gap while the overall contract-first message remains recognizable.", "primary_impact_reason": "substantive_understanding_gap", "additional_impact_reasons": [], "review_status": "independent_review_pending"},
+    {"expected_claim_id": "c01-expected-claim-003", "evidence_relations": [{"evidence_id": "c01-evidence-003", "support_role": "required"}], "importance": "critical", "importance_rationale": "Omitting or reversing the instruction would turn unresolved evidence into invented authority and materially corrupt governance truth conditions.", "primary_impact_reason": "truth_condition_loss", "additional_impact_reasons": ["core_meaning_distortion"], "review_status": "independent_review_pending"}
+  ],
+  "category_applicability": {
+    "background_context": "not_present", "definition": "not_present", "core_concept": "not_present", "mechanism": "not_present", "procedure": "not_present", "quantitative_result": "not_present", "condition": "not_present", "limitation": "not_present", "exception": "not_present", "risk": "not_present", "example": "not_present", "counterpoint": "not_present", "conclusion": "not_present", "recommendation": "present_and_required", "uncertainty": "present_and_required", "contradiction": "not_present", "open_question": "not_present", "attribution_context": "not_present"
+  },
+  "source_exclusions": [],
+  "duplicates": [],
+  "unresolved_items": []
+}

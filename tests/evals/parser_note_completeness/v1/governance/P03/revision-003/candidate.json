@@ -1,0 +1,24 @@
+{
+  "artifacts": {
+    "gold_review_packet": "gold-review-packet.json",
+    "build_reference": "../../../fixtures/P03/revision-003/build_reference.py",
+    "build_source": "../../../fixtures/P03/revision-003/build_source.py",
+    "producer_configuration": "producer_configuration.json",
+    "reference_digest": "../../../reference_documents/P03/revision-003/normalized_document.sha256",
+    "reference_document": "../../../reference_documents/P03/revision-003/normalized_document.json",
+    "source": "../../../fixtures/P03/revision-003/source.pdf",
+    "source_digest": "../../../fixtures/P03/revision-003/source.sha256"
+  },
+  "authority": {"approved": false, "baseline_gate_authority": false, "canonical_dataset": false, "formal": false},
+  "candidate_status": "draft_candidate",
+  "case_id": "P03",
+  "formal_manifest_present": false,
+  "owner_decision_status": "visible_labels_included_same_owner_approved_source_bytes",
+  "pending_evidence": [
+    "Q22/Q25: independent fixture rights/privacy review",
+    "Q25: independent reference/Gold review",
+    "Q14/Q16-Q24: Parser and formal execution contracts remain pending"
+  ],
+  "revision": "revision-003",
+  "scope_note": "Owner-selected visible-label reference correction over byte-identical source content; no formal authority is claimed."
+}

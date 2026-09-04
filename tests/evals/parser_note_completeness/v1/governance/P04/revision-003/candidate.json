@@ -1,0 +1,24 @@
+{
+  "artifacts": {
+    "gold_review_packet": "gold-review-packet.json",
+    "build_reference": "../../../fixtures/P04/revision-003/build_reference.py",
+    "build_source": "../../../fixtures/P04/revision-003/build_source.py",
+    "producer_configuration": "producer_configuration.json",
+    "reference_digest": "../../../reference_documents/P04/revision-003/normalized_document.sha256",
+    "reference_document": "../../../reference_documents/P04/revision-003/normalized_document.json",
+    "source": "../../../fixtures/P04/revision-003/source.pdf",
+    "source_digest": "../../../fixtures/P04/revision-003/source.sha256"
+  },
+  "authority": {"approved": false, "baseline_gate_authority": false, "canonical_dataset": false, "formal": false},
+  "candidate_status": "draft_candidate",
+  "case_id": "P04",
+  "formal_manifest_present": false,
+  "owner_decision_status": "successor_correction_approved_exact_source_rebinding_pending",
+  "pending_evidence": [
+    "Q22: exact successor source ownership, redistribution, and privacy re-binding",
+    "Q25: independent fixture and reference/Gold review",
+    "Q14/Q16-Q24: Parser and formal execution contracts remain pending"
+  ],
+  "revision": "revision-003",
+  "scope_note": "Owner-selected rendering/reference correction candidate only; no formal dataset, baseline, gate, comparison, or adoption authority is claimed."
+}

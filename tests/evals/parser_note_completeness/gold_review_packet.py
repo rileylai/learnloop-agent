@@ -25,6 +25,10 @@ GOLD_REVIEW_PACKET_SCHEMA_VERSION: Literal[
 BENCHMARK_REVISION: Literal[
     "parser-note-completeness/1.0.1"
 ] = "parser-note-completeness/1.0.1"
+BenchmarkRevision = Literal[
+    "parser-note-completeness/1.0.1",
+    "parser-note-completeness/1.0.2",
+]
 
 Digest = Annotated[StrictStr, Field(pattern=r"^[0-9a-f]{64}$")]
 Identifier = Annotated[StrictStr, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")]
@@ -62,7 +66,7 @@ class AuthorityGateInventory(_StrictFrozenModel):
 class GoldReviewPacket(_StrictFrozenModel):
     schema_version: Literal["benchmark-gold-review-packet/1.0.0"]
     artifact_role: Literal["gold_review_packet"]
-    benchmark_revision: Literal["parser-note-completeness/1.0.1"]
+    benchmark_revision: BenchmarkRevision
     case_id: Identifier
     fixture_revision: Identifier
     source_sha256: Digest
@@ -142,7 +146,12 @@ def _load_reference(case: FullCase, benchmark_root: Path) -> NormalizedDocument:
     return reference
 
 
-def build_gold_review_packet(case: FullCase, benchmark_root: Path) -> GoldReviewPacket:
+def build_gold_review_packet(
+    case: FullCase,
+    benchmark_root: Path,
+    *,
+    benchmark_revision: BenchmarkRevision = BENCHMARK_REVISION,
+) -> GoldReviewPacket:
     """Build an unreviewed element inventory for one selected full-profile case."""
 
     reference = _load_reference(case, benchmark_root)
@@ -164,7 +173,7 @@ def build_gold_review_packet(case: FullCase, benchmark_root: Path) -> GoldReview
     return GoldReviewPacket(
         schema_version=GOLD_REVIEW_PACKET_SCHEMA_VERSION,
         artifact_role="gold_review_packet",
-        benchmark_revision=BENCHMARK_REVISION,
+        benchmark_revision=benchmark_revision,
         case_id=case.case_id,
         fixture_revision=case.fixture_revision,
         source_sha256=case.source_sha256,
@@ -190,7 +199,19 @@ def build_full_profile_review_packets(
     profile: FullProfile,
     benchmark_root: Path,
 ) -> Tuple[GoldReviewPacket, ...]:
-    return tuple(build_gold_review_packet(case, benchmark_root) for case in profile.cases)
+    benchmark_revision: BenchmarkRevision = (
+        "parser-note-completeness/1.0.2"
+        if profile.profile_revision == "revision-003"
+        else BENCHMARK_REVISION
+    )
+    return tuple(
+        build_gold_review_packet(
+            case,
+            benchmark_root,
+            benchmark_revision=benchmark_revision,
+        )
+        for case in profile.cases
+    )
 
 
 def _write_external_artifact(path: Path, data: bytes) -> str:
@@ -237,6 +258,42 @@ def write_full_profile_review_packets(
     return digests
 
 
+def write_selected_review_packets(
+    profile: FullProfile,
+    benchmark_root: Path,
+    *,
+    case_ids: Tuple[str, ...],
+    benchmark_revision: BenchmarkRevision,
+) -> Mapping[str, str]:
+    """Persist packets only for named successor revisions, leaving old packets immutable."""
+
+    selected = set(case_ids)
+    available = {case.case_id for case in profile.cases}
+    if not selected or selected - available or len(selected) != len(case_ids):
+        raise GoldReviewPacketError("selected review-packet case IDs are invalid")
+    digests: dict[str, str] = {}
+    for case in profile.cases:
+        if case.case_id not in selected:
+            continue
+        packet = build_gold_review_packet(
+            case,
+            benchmark_root,
+            benchmark_revision=benchmark_revision,
+        )
+        path = (
+            benchmark_root
+            / "governance"
+            / packet.case_id
+            / packet.fixture_revision
+            / "gold-review-packet.json"
+        )
+        digests[packet.case_id] = _write_external_artifact(
+            path,
+            canonical_gold_review_packet_bytes(packet),
+        )
+    return digests
+
+
 __all__ = [
     "BENCHMARK_REVISION",
     "GOLD_REVIEW_PACKET_SCHEMA_VERSION",
@@ -247,4 +304,5 @@ __all__ = [
     "canonical_gold_review_packet_bytes",
     "gold_review_packet_sha256",
     "write_full_profile_review_packets",
+    "write_selected_review_packets",
 ]

@@ -1,0 +1,20 @@
+{
+  "build_method": "mixed_controlled_noto_type3_native_and_pillow_raster_pdf_writer",
+  "build_reference": "../../../fixtures/P04/revision-003/build_reference.py",
+  "build_source": "../../../fixtures/P04/revision-003/build_source.py",
+  "font_asset": {"path": "assets/fonts/NotoSansCJKtc-Regular.otf", "sha256": "dce08bd4fd91aa8aa76ed8fea4b694c2dfb8550f67871e326843212ddbeb88b4"},
+  "font_policy": "self_contained_selectable_type3_native_pages_and_controlled_raster_pages",
+  "font_size": 27,
+  "image": {"height": 900, "mode": "L", "width": 640},
+  "language_policy": {"declared_order": ["zh-Hant", "en"], "native_and_scanned_pages": "explicit_page_modality"},
+  "locator_policy": "native_pdf_page_and_scanned_normalized_region",
+  "modality_policy": "native_pages_1_3_scanned_pages_2_4",
+  "noise_recipe": {"modulus": 991, "pixel_rule": "coordinate_hash_salt_pepper", "seed_formula": "x19_y29_page97"},
+  "processing_method": "project_authored_mixed_native_and_raster_pdf",
+  "processing_stage": "fixture_build_and_reference_authoring",
+  "pdf": {"compression": "zlib-level-9", "metadata": false, "version": "1.4"},
+  "segmentation_semantics": "pdf-mixed-native-raster-v2-visible-labels",
+  "skew_recipe": {"affine_factor": 0.014, "resampling": "bicubic"},
+  "table_policy": "explicit_table_row_cell_elements",
+  "formula_policy": "native_text_formula_element_with_visible_label"
+}

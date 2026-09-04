@@ -1,0 +1,8 @@
+{
+  "figure_text_policy": "retain_visible_role_img_text_as_child_ui_text",
+  "locator_policy": {"family": "web", "identity": "snapshot_sha256_and_dom_path", "fabrication": "reject"},
+  "processing_method": "project_authored_rendered_dom_snapshot",
+  "processing_stage": "fixture_build_and_reference_authoring",
+  "segmentation_semantics": "html-rendered-dom-sections-v2-visible-figure-text",
+  "source_policy": "self_contained_utf8_no_external_assets"
+}

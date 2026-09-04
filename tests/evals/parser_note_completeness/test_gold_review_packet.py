@@ -14,6 +14,7 @@ from .gold_review_packet import (
     canonical_gold_review_packet_bytes,
     gold_review_packet_sha256,
     write_full_profile_review_packets,
+    build_gold_review_packet,
 )
 
 
@@ -120,3 +121,21 @@ def test_review_packet_writer_is_immutable_and_idempotent(tmp_path: Path) -> Non
     tampered_path.write_bytes(b"{}\n")
     with pytest.raises(GoldReviewPacketError, match="already differs"):
         write_full_profile_review_packets(profile, copied_root)
+
+
+def test_successor_review_packets_bind_benchmark_102_and_remain_non_authoritative() -> None:
+    profile_root = ROOT / "manifests" / "full" / "revision-003"
+    profile = load_full_profile(profile_root / "profile.json", profile_root / "profile.sha256", ROOT)
+    successor_ids = {"P02", "P03", "P04", "W02", "W03"}
+    for case in profile.cases:
+        if case.case_id not in successor_ids:
+            continue
+        packet = build_gold_review_packet(
+            case,
+            ROOT,
+            benchmark_revision="parser-note-completeness/1.0.2",
+        )
+        packet_path = ROOT / "governance" / case.case_id / case.fixture_revision / "gold-review-packet.json"
+        assert packet.benchmark_revision == "parser-note-completeness/1.0.2"
+        assert packet.formal_authority is False
+        assert packet_path.read_bytes() == canonical_gold_review_packet_bytes(packet)

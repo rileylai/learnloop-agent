@@ -1,0 +1,132 @@
+[
+  {
+    "case_id": "P01",
+    "fixture_review": null,
+    "reference_fidelity": null,
+    "gold_review": null,
+    "parser_contract_review": null,
+    "notes": "",
+    "reviewer_name": "",
+    "reviewed_at": ""
+  },
+  {
+    "case_id": "P02",
+    "fixture_review": null,
+    "reference_fidelity": null,
+    "gold_review": null,
+    "parser_contract_review": null,
+    "notes": "",
+    "reviewer_name": "",
+    "reviewed_at": ""
+  },
+  {
+    "case_id": "P03",
+    "fixture_review": null,
+    "reference_fidelity": null,
+    "gold_review": null,
+    "parser_contract_review": null,
+    "notes": "",
+    "reviewer_name": "",
+    "reviewed_at": ""
+  },
+  {
+    "case_id": "P04",
+    "fixture_review": null,
+    "reference_fidelity": null,
+    "gold_review": null,
+    "parser_contract_review": null,
+    "notes": "",
+    "reviewer_name": "",
+    "reviewed_at": ""
+  },
+  {
+    "case_id": "W01",
+    "fixture_review": null,
+    "reference_fidelity": null,
+    "gold_review": null,
+    "parser_contract_review": null,
+    "notes": "",
+    "reviewer_name": "",
+    "reviewed_at": ""
+  },
+  {
+    "case_id": "W02",
+    "fixture_review": null,
+    "reference_fidelity": null,
+    "gold_review": null,
+    "parser_contract_review": null,
+    "notes": "",
+    "reviewer_name": "",
+    "reviewed_at": ""
+  },
+  {
+    "case_id": "W03",
+    "fixture_review": null,
+    "reference_fidelity": null,
+    "gold_review": null,
+    "parser_contract_review": null,
+    "notes": "",
+    "reviewer_name": "",
+    "reviewed_at": ""
+  },
+  {
+    "case_id": "Y01",
+    "fixture_review": null,
+    "reference_fidelity": null,
+    "gold_review": null,
+    "parser_contract_review": null,
+    "notes": "",
+    "reviewer_name": "",
+    "reviewed_at": ""
+  },
+  {
+    "case_id": "Y02",
+    "fixture_review": null,
+    "reference_fidelity": null,
+    "gold_review": null,
+    "parser_contract_review": null,
+    "notes": "",
+    "reviewer_name": "",
+    "reviewed_at": ""
+  },
+  {
+    "case_id": "C01",
+    "fixture_review": null,
+    "reference_fidelity": null,
+    "gold_review": null,
+    "parser_contract_review": null,
+    "notes": "",
+    "reviewer_name": "",
+    "reviewed_at": ""
+  },
+  {
+    "case_id": "C02",
+    "fixture_review": null,
+    "reference_fidelity": null,
+    "gold_review": null,
+    "parser_contract_review": null,
+    "notes": "",
+    "reviewer_name": "",
+    "reviewed_at": ""
+  },
+  {
+    "case_id": "S01",
+    "fixture_review": null,
+    "reference_fidelity": null,
+    "gold_review": null,
+    "parser_contract_review": null,
+    "notes": "",
+    "reviewer_name": "",
+    "reviewed_at": ""
+  },
+  {
+    "case_id": "S02",
+    "fixture_review": null,
+    "reference_fidelity": null,
+    "gold_review": null,
+    "parser_contract_review": null,
+    "notes": "",
+    "reviewer_name": "",
+    "reviewed_at": ""
+  }
+]

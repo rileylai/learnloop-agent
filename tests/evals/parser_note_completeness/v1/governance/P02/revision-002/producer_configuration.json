@@ -1,0 +1,14 @@
+{
+  "build_method": "controlled_noto_type3_vector_glyph_pdf_writer",
+  "build_reference": "../../../fixtures/P02/revision-002/build_reference.py",
+  "build_source": "../../../fixtures/P02/revision-002/build_source.py",
+  "figure_policy": "project_authored_vector_figures_with_exact_visible_captions",
+  "font_asset": {"path": "assets/fonts/NotoSansCJKtc-Regular.otf", "sha256": "dce08bd4fd91aa8aa76ed8fea4b694c2dfb8550f67871e326843212ddbeb88b4"},
+  "font_policy": "self_contained_selectable_type3_glyph_programs_with_tounicode",
+  "language_policy": {"declared_order": ["zh-Hant", "en"], "element_languages": "explicit_bilingual_tags"},
+  "locator_policy": "pdf_page_only_no_geometry",
+  "processing_method": "project_authored_native_pdf",
+  "processing_stage": "fixture_build_and_reference_authoring",
+  "segmentation_semantics": "pdf-bilingual-tables-figures-v2",
+  "table_policy": "explicit_table_row_cell_elements"
+}

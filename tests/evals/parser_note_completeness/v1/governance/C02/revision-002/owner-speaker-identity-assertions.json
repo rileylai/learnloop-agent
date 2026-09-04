@@ -1,0 +1,24 @@
+{
+  "schema_version": "parser-note-completeness-owner-identity-assertions/1.0.0",
+  "artifact_role": "owner_identity_assertion_record",
+  "authority_status": "owner_approved_independent_review_pending",
+  "formal_authority": false,
+  "benchmark_version": "parser-note-completeness/1.0.1",
+  "case_id": "C02",
+  "fixture_revision": "revision-001",
+  "source_sha256": "7ac22d5006e724078d5db448768f8e85b704d4ef17ebaebd74f7d148eeb4a77e",
+  "reference_document_sha256": "ce6d935830bd56d3b55a56f1b547dac78c798ab8249d224f7b0f19ac179e3e0e",
+  "decision_reference": "dev_state/parser-note-completeness/human-review-intake.json#c02-speaker-identity-decision-2026-08-31-001",
+  "assigned_by": "Riley Lai",
+  "assigned_at": "2026-08-31T22:34:07+08:00",
+  "independent_review": {"status": "pending", "reviewer": null, "reviewed_at": null},
+  "measurement_disposition": "Missing or incorrect speaker_id is reported as a raw missing/incorrect identity assertion. No pass threshold or aggregate score is authorized.",
+  "speaker_identity_assertions": [
+    {"assertion_id": "c02-speaker-001", "message_element_id": "c02-message-001-element", "message_id": "c02-message-001", "speaker_id": "speaker-alice"},
+    {"assertion_id": "c02-speaker-002", "message_element_id": "c02-message-002-element", "message_id": "c02-message-002", "speaker_id": "speaker-bob"},
+    {"assertion_id": "c02-speaker-003", "message_element_id": "c02-message-003-element", "message_id": "c02-message-003", "speaker_id": "speaker-chen"},
+    {"assertion_id": "c02-speaker-004", "message_element_id": "c02-message-004-element", "message_id": "c02-message-004", "speaker_id": "speaker-alice"},
+    {"assertion_id": "c02-speaker-005", "message_element_id": "c02-message-005-element", "message_id": "c02-message-005", "speaker_id": "speaker-chen"},
+    {"assertion_id": "c02-speaker-006", "message_element_id": "c02-message-006-element", "message_id": "c02-message-006", "speaker_id": "speaker-bob"}
+  ]
+}

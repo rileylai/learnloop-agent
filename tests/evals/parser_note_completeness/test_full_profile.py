@@ -29,6 +29,9 @@ PROFILE_DIGEST_PATH = PROFILE_ROOT / "profile.sha256"
 PROFILE_V2_ROOT = ROOT / "manifests" / "full" / "revision-002"
 PROFILE_V2_PATH = PROFILE_V2_ROOT / "profile.json"
 PROFILE_V2_DIGEST_PATH = PROFILE_V2_ROOT / "profile.sha256"
+PROFILE_V3_ROOT = ROOT / "manifests" / "full" / "revision-003"
+PROFILE_V3_PATH = PROFILE_V3_ROOT / "profile.json"
+PROFILE_V3_DIGEST_PATH = PROFILE_V3_ROOT / "profile.sha256"
 SMOKE_PROFILE_PATH = ROOT / "manifests" / "smoke" / "revision-001" / "profile.json"
 SMOKE_PROFILE_DIGEST = "49cfde8bb9aef1d96316665b8e9c55f9c78bf7a68fe8a93929ac8b136ebbf9a9"
 
@@ -77,6 +80,29 @@ def test_full_profile_revision_002_binds_only_the_new_fixture_revisions() -> Non
     )
     assert PROFILE_V2_PATH.read_bytes() == canonical_full_profile_bytes(profile)
     assert read_external_sha256_record(PROFILE_V2_DIGEST_PATH, "profile.json") == full_profile_sha256(profile)
+
+
+def test_full_profile_revision_003_binds_owner_selected_successor_candidates() -> None:
+    profile = load_full_profile(PROFILE_V3_PATH, PROFILE_V3_DIGEST_PATH, ROOT)
+    assert profile.profile_revision == "revision-003"
+    assert tuple(case.fixture_revision for case in profile.cases) == (
+        "revision-001",
+        "revision-002",
+        "revision-003",
+        "revision-003",
+        "revision-001",
+        "revision-002",
+        "revision-002",
+        "revision-001",
+        "revision-001",
+        "revision-001",
+        "revision-001",
+        "revision-001",
+        "revision-002",
+    )
+    assert PROFILE_V3_PATH.read_bytes() == canonical_full_profile_bytes(profile)
+    assert read_external_sha256_record(PROFILE_V3_DIGEST_PATH, "profile.json") == full_profile_sha256(profile)
+    assert canonical_full_profile_bytes(build_full_profile(ROOT, profile_revision="revision-003")) == PROFILE_V3_PATH.read_bytes()
 
 
 def test_full_profile_rejects_case_addition_removal_reordering_and_duplicates() -> None:
@@ -187,3 +213,22 @@ def test_full_profile_has_no_formal_or_adoption_authority_and_all_candidates_rem
 def test_full_profile_manifest_directory_contains_bindings_only_and_smoke_is_unchanged() -> None:
     assert sorted(path.name for path in PROFILE_ROOT.iterdir()) == ["profile.json", "profile.sha256"]
     assert hashlib.sha256(SMOKE_PROFILE_PATH.read_bytes()).hexdigest() == SMOKE_PROFILE_DIGEST
+
+
+def test_revision_003_successor_candidates_remain_draft_and_non_authoritative() -> None:
+    profile = load_full_profile(PROFILE_V3_PATH, PROFILE_V3_DIGEST_PATH, ROOT)
+    for case in profile.cases:
+        candidate = json.loads(
+            (ROOT / "governance" / case.case_id / case.fixture_revision / "candidate.json").read_bytes()
+        )
+        assert candidate["candidate_status"] == "draft_candidate"
+        assert candidate["formal_manifest_present"] is False
+        assert candidate["authority"] == {
+            "approved": False,
+            "baseline_gate_authority": False,
+            "canonical_dataset": False,
+            "formal": False,
+        }
+        assert "result_role" not in candidate
+        assert any(item.startswith("Q22") for item in candidate["pending_evidence"])
+        assert any(item.startswith("Q25") for item in candidate["pending_evidence"])

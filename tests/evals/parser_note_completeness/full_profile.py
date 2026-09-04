@@ -22,7 +22,7 @@ FULL_PROFILE_SCHEMA_VERSION = "full-profile/1.0.0"
 FULL_PROFILE_ARTIFACT_TYPE = "parser_note_completeness_full_profile"
 BENCHMARK_CONTRACT = "parser-note-completeness-v1"
 FULL_PROFILE_ID = "full"
-FULL_PROFILE_REVISION: Literal["revision-001"] = "revision-001"
+FULL_PROFILE_REVISION = "revision-001"
 FULL_CASE_IDS = (
     "P01",
     "P02",
@@ -42,7 +42,26 @@ FULL_CASE_IDS = (
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
 _SHA256_RE = re.compile(_SHA256_PATTERN)
 _ALLOWED_ARTIFACT_ROOTS = frozenset({"fixtures", "governance", "reference_documents"})
-_REVISION_002_CASE_IDS = frozenset({"P03", "P04", "S02"})
+_PROFILE_FIXTURE_REVISIONS = {
+    "revision-001": {case_id: "revision-001" for case_id in FULL_CASE_IDS},
+    "revision-002": {
+        case_id: "revision-002" if case_id in {"P03", "P04", "S02"} else "revision-001"
+        for case_id in FULL_CASE_IDS
+    },
+    "revision-003": {
+        **{case_id: "revision-001" for case_id in FULL_CASE_IDS},
+        "P02": "revision-002",
+        "P03": "revision-003",
+        "P04": "revision-003",
+        "W02": "revision-002",
+        "W03": "revision-002",
+        "S02": "revision-002",
+    },
+}
+_ALLOWED_CASE_REVISIONS = {
+    case_id: frozenset(revisions[case_id] for revisions in _PROFILE_FIXTURE_REVISIONS.values())
+    for case_id in FULL_CASE_IDS
+}
 
 Sha256 = Annotated[StrictStr, Field(pattern=_SHA256_PATTERN)]
 FullCaseId = Literal[
@@ -163,9 +182,9 @@ _EXPECTED_PATHS = {
 def _expected_paths(case_id: str, fixture_revision: str) -> dict[str, str]:
     if fixture_revision == "revision-001":
         return _EXPECTED_PATHS[case_id]
-    if fixture_revision == "revision-002" and case_id in _REVISION_002_CASE_IDS:
+    if fixture_revision in _ALLOWED_CASE_REVISIONS[case_id]:
         return {
-            field_name: path.replace("/revision-001/", "/revision-002/")
+            field_name: path.replace("/revision-001/", f"/{fixture_revision}/")
             for field_name, path in _EXPECTED_PATHS[case_id].items()
         }
     raise ValueError(f"unsupported fixture revision for {case_id}: {fixture_revision}")
@@ -205,7 +224,7 @@ def _validate_relative_artifact_path(value: str) -> str:
 
 class FullCase(_StrictFrozenModel):
     case_id: FullCaseId
-    fixture_revision: Literal["revision-001", "revision-002"]
+    fixture_revision: Literal["revision-001", "revision-002", "revision-003"]
     source_artifact_path: StrictStr = Field(min_length=1)
     source_digest_path: StrictStr = Field(min_length=1)
     source_sha256: Sha256
@@ -249,7 +268,7 @@ class FullProfile(_StrictFrozenModel):
     artifact_type: Literal["parser_note_completeness_full_profile"]
     benchmark_contract: Literal["parser-note-completeness-v1"]
     profile_id: Literal["full"]
-    profile_revision: Literal["revision-001", "revision-002"]
+    profile_revision: Literal["revision-001", "revision-002", "revision-003"]
     execution_mode: Literal["development"]
     membership: Literal["diagnostic"]
     cases: Tuple[FullCase, ...] = Field(min_length=13, max_length=13)
@@ -262,9 +281,7 @@ class FullProfile(_StrictFrozenModel):
                 "full profile cases must be exactly P01-P04, W01-W03, Y01-Y02, C01-C02, S01-S02 in order"
             )
         expected_revisions = tuple(
-            "revision-002"
-            if self.profile_revision == "revision-002" and case_id in _REVISION_002_CASE_IDS
-            else "revision-001"
+            _PROFILE_FIXTURE_REVISIONS[self.profile_revision][case_id]
             for case_id in FULL_CASE_IDS
         )
         if tuple(case.fixture_revision for case in self.cases) != expected_revisions:
@@ -401,18 +418,14 @@ def validate_full_profile_artifacts(
 def build_full_profile(
     benchmark_root: Path,
     *,
-    profile_revision: Literal["revision-001", "revision-002"] = FULL_PROFILE_REVISION,
+    profile_revision: Literal["revision-001", "revision-002", "revision-003"] = FULL_PROFILE_REVISION,
 ) -> FullProfile:
     """Build profile bindings from existing immutable artifacts under ``benchmark_root``."""
 
     root = Path(benchmark_root)
     cases = []
     for case_id in FULL_CASE_IDS:
-        fixture_revision = (
-            "revision-002"
-            if profile_revision == "revision-002" and case_id in _REVISION_002_CASE_IDS
-            else "revision-001"
-        )
+        fixture_revision = _PROFILE_FIXTURE_REVISIONS[profile_revision][case_id]
         paths = _expected_paths(case_id, fixture_revision)
         source_bytes = _read_bounded_artifact(root, paths["source_artifact_path"], "source artifact")
         configuration_bytes = _read_bounded_artifact(root, paths["producer_configuration_path"], "producer configuration")
@@ -446,7 +459,7 @@ def write_full_profile(
     digest_path: Path,
     benchmark_root: Path,
     *,
-    profile_revision: Literal["revision-001", "revision-002"] = FULL_PROFILE_REVISION,
+    profile_revision: Literal["revision-001", "revision-002", "revision-003"] = FULL_PROFILE_REVISION,
 ) -> FullProfile:
     profile = validate_full_profile_artifacts(
         build_full_profile(benchmark_root, profile_revision=profile_revision),

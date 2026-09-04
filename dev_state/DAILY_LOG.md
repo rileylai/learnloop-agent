@@ -26,6 +26,191 @@ It captures key implementation progress, decisions, blockers, and verification.
 ### Next
 - Next planned step.
 
+## 2026-09-04 (Parser Benchmark Current-State Synchronization)
+
+### Highlights
+- Synchronized `dev_state/parser-note-completeness/03-roadmap.md` to current
+  repository evidence. The 13-case benchmark remains the project-owned
+  synthetic conformance / diagnostic set; it is retained for future
+  calibration and is not replaced by later real-world cases.
+- Recorded the closed owner-primary boundary: corrected successor
+  fixtures/references, owner provenance/privacy decisions, 13-case
+  owner-primary Gold, Parser raw-measurement contracts/implementation,
+  diagnostic runner/history/receipt/store/replay, the minimal formal
+  manifest/provenance/publication contract, and the Docker no-egress launcher
+  contract.
+
+### Issues and Decisions
+- `owner-primary complete`, `independent review pending`,
+  `formal_authority=false`, and no formal baseline exists.
+- Current stop is independent human review plus reproducible/content-addressed
+  image and genuine no-egress execution evidence, including independent review
+  of no-egress/formal governance. Formal synthetic baseline execution is later.
+- Added a deferred future milestone for a human-curated representative
+  benchmark. It will supplement, not replace, the synthetic set; no collection
+  or implementation starts now.
+
+### Verification
+- Docs-only roadmap synchronization. No benchmark implementation, fixtures,
+  Gold, scorer, formal execution code, or production runtime was changed.
+
+### Next
+- Current next: independent review + genuine no-egress evidence. Later: formal
+  synthetic baseline; after that: human-curated representative benchmark;
+  only after baselines/calibration: parser/generation candidate experiments.
+
+## 2026-09-01 (Bounded Parser Metrics and Minimal Formal Contracts)
+
+### Highlights
+- Recorded Riley Lai's `8A 9A 10A` decisions. P02 revision-002 and P04
+  revision-003 exact source bytes are owner-bound; independent rights/privacy
+  review remains pending.
+- Implemented raw Parser measurements only for the frozen 13-case applicability
+  matrix: exact text/OCR edits and counts, adjacent reading-order edges,
+  structure/table/formula/code facts, duplicate/noise, typed locators, integer
+  geometry/IoU, caption deltas, and chat identity. Ambiguous exact alignment is
+  `unresolved`; there is no fuzzy match or zero substitution.
+- Kept raw measurements fully separate from thresholds, weights, partial
+  credit, global scores, and universal macro/micro aggregation. WER, ASR,
+  span-overlap, and hypothetical-case frameworks were not added.
+- Added a minimal fail-closed formal manifest/provenance/run-identity contract
+  and immutable local publication pointer that cannot encode pending authority
+  as formal.
+- Added a thin Docker-native no-egress conformance launcher using one container,
+  `--network none`, read-only root, all capabilities dropped,
+  no-new-privileges, bounded mounts/tmpfs, inspect checks, and denied
+  DNS/literal-IP/HTTP probes. Its evidence is always marked independent-review
+  pending and non-formal.
+- Added a single concise independent-review handoff. No formal run, baseline,
+  publication, candidate experiment, production parser change, or network call
+  occurred.
+- Extended `07-independent-review-handoff.md` into a self-contained Human
+  Independent Review Bundle for all 13 owner-primary cases: exact current
+  source/reference/Gold bindings, SHA-256 values, bounded navigation excerpts,
+  claim-level locators/qualifiers, and per-case review checklists.
+- Replaced the review intake with a minimal machine-readable template containing
+  only the requested per-case decision fields. No benchmark contract, Gold
+  semantics, Parser scorer, or production code was changed.
+- Recorded `11A` and generated 12 new immutable owner-primary Gold revisions.
+  Together with C01, a content-addressed 13-case index binds 82 owner-approved
+  claims. Every record keeps independent review pending and formal authority /
+  baseline readiness false.
+
+### Issues and Decisions
+- C02 `speaker_id` is source-owned Gold identity but has no field in the frozen
+  `NormalizedDocument`; the raw report explicitly emits six missing identity
+  facts instead of deriving or hiding them.
+- Docker is locally available, but no suitable pinned Python benchmark image is
+  present. A content-addressed runnable image, independent launcher review, and
+  one genuine conformance/terminal binding remain external-evidence blockers.
+- Primary-owner Gold is now complete for all 13 cases. This does not close
+  independent fixture/reference/Gold/scorer/governance review and does not
+  permit formal execution or publication.
+
+### Verification
+- Raw-measurement focused tests: 20 passed; combined affected successor/profile/
+  manifest/review/metric/formal/no-egress tests: 65 passed.
+- Owner-primary Gold generation/index/intake focused tests: 6 passed; combined
+  affected logical-boundary suite: 71 passed.
+- Parser-note-completeness suite: 418 passed.
+- Q14/scoring/runner/run-plan/diagnostic/E2E/full-profile/offline focused suite:
+  73 passed.
+- The first full-suite attempt had one unrelated non-deterministic failure in
+  `test_concurrent_claims_have_one_owner` (`1041 passed, 3 skipped`). Its focused
+  rerun passed, and the complete rerun passed (`1042 passed, 3 skipped`). No
+  production idempotency code was changed.
+- Full `src`/`tests`/`scripts` compileall, intake JSON parsing, and
+  `git diff --check` passed.
+
+### Next
+- Hand the exact package to one qualified independent reviewer. Do not enable formal
+  runner mode or publication before every authority and genuine no-egress
+  binding closes.
+
+## 2026-08-31 (Parser Formal-Baseline Readiness Audit)
+
+### Highlights
+- Audited the selected 13-case full profile against exact source/reference
+  bytes, external digests, revisions, producer configurations, draft
+  governance packets, diagnostic lane wiring, receipts, storage, and replay.
+- Added one authoritative expanded readiness matrix that keeps technical and
+  human authority states separate and classifies every missing item under the
+  required five-value taxonomy.
+- Added a fixture-to-Parser-metric applicability matrix and a per-family raw-
+  measurement decision packet. No Parser formula, threshold, aggregation, or
+  global score was granted authority.
+- Added a practical human review workbook with exact source/reference/packet
+  pointers, bounded excerpts, checklists, C01-specific decisions, and a non-
+  authoritative machine-readable intake template.
+- Audited M9 without duplicating the runner. Diagnostic plan/history/receipt/
+  terminal/store/replay and formal rejection remain valid; exact formal
+  bindings and a genuine external no-egress launcher remain contract gates.
+- Closed M6 as diagnostic technical wiring only. M5, M7, M8 authority, M9
+  formal execution, and M10 baseline publication remain blocked.
+- Performed a direct visual/content source-reference pre-review. It found
+  repository-demonstrable fidelity defects in P02/P03/P04/W02/W03 and a C02
+  speaker-identity contract question that digest/schema validation cannot
+  detect; recorded them in the readiness audit and reviewer workbook without
+  modifying or approving source, reference, or Gold artifacts.
+- Recorded Riley Lai's `4A 5A 6A 7A` decisions with owner/independent authority
+  kept separate. Built corrected successor references for P02/P03/P04/W02/W03,
+  an owner-primary C01 annotation record, and six C02 speaker-ID assertions.
+- Replaced the P02/P04 native-font dependency in successor PDFs with selectable,
+  self-contained Type 3 glyph programs derived from the digest-locked Noto
+  asset. Rendered and inspected every final page; no production parser changed.
+
+### Issues and Decisions
+- Existing review packets are immutable and evidence-honest but contain only
+  element IDs/hashes; retained them unchanged and added the smaller reviewer
+  workbook instead of a UI or new Gold schema.
+- Repository creation history and producer configurations can close technical
+  provenance, but cannot prove ownership, redistribution rights, privacy, or
+  independent approval.
+- The repository has an attestation validator but no OS/container no-egress
+  mechanism. Missing credentials and mocked transports remain insufficient.
+- Q14 explicitly leaves Parser units/formulas/alignment and Q16-Q24 formal
+  schemas/equivalence/publication pending, so this work prepared exact decision
+  packets instead of inventing formal artifacts.
+- P02 and P04 native PDF pages use non-embedded synthetic CID fonts: ToUnicode
+  extraction succeeds, but an independent Poppler render does not faithfully
+  display Chinese. Current revisions remain unsuitable for fidelity approval.
+- Audited local no-egress capabilities. Docker Desktop 4.48.0 / Engine 28.5.1
+  is available, but the repo has no pinned benchmark image or launcher. Recorded
+  a minimal `--network none` outer-launcher contract and rejected `sandbox-exec`,
+  missing credentials, mocks, and host-wide `pfctl` as sufficient proof.
+- Recorded Riley Lai's explicit `1A 2A 3A` owner decisions for all 13 selected
+  fixtures in `human-review-intake.json`: project-owned synthetic provenance,
+  redistribution permission, and no private/personal source material are owner-
+  approved; Q25 independent fixture review remains explicitly pending.
+- P03/W02/W03 successor sources are byte-identical to their approved source
+  bytes. P02/P04 have necessary new exact digests after the rendering/layout
+  correction and remain pending one owner rights/privacy re-binding plus Q25
+  independent review.
+- Added exact recommended Parser raw-measurement and fail-closed Docker formal-
+  execution choices for the next owner checkpoint; neither proposal has been
+  implemented or treated as approved.
+
+### Verification
+- Parser-note-completeness benchmark suite: 373 passed.
+- Focused Q14/C01/runner/offline/replay/full-profile/review-packet suite: 70
+  passed.
+- Full deterministic repository suite: 997 passed, 3 skipped.
+- Full `src`/`tests`/`scripts` compileall passed.
+- Human-review intake JSON parsing and `git diff --check` passed.
+- Successor artifact focused tests: 5 passed, including digest/canonical-schema
+  bindings, self-contained selectable native PDF text, retained visible labels,
+  byte-identical source carry-forward, and non-authoritative owner records.
+- Final successor focused tests: 6 passed, including exact PDF rebuilds.
+- Updated parser-note-completeness suite: 378 passed. Updated full deterministic
+  repository suite: 1002 passed, 3 skipped. Compileall, intake JSON validation,
+  and `git diff --check` passed.
+
+### Next
+- Re-bind the two new P02/P04 source digests, decide the prepared Parser and
+  formal execution contracts, then implement only approved contracts. Q25
+  independent fixture/Gold/scorer/governance review remains mandatory before
+  any formal execution or publication.
+
 ## 2026-08-30 (Parser Benchmark Technical Readiness Handoff)
 
 ### Highlights

@@ -3,17 +3,20 @@
 ## Current Pointer
 
 - Current phase: Parser & Note Completeness execution
-- Current focus: 13-case evidence review and formal-authority handoff; see
+- Current focus: independent review + genuine no-egress evidence for the
+  owner-primary 13-case synthetic conformance/diagnostic benchmark; see
   [the dedicated parser-note-completeness roadmap](parser-note-completeness/03-roadmap.md)
-- Status: blocked (C01 audit and five-case technical smoke wiring are complete;
-  Parser/formal schemas and human evidence authority remain unavailable)
-- Last updated: 2026-08-30
-- Next action: human review of the 13 immutable draft review packets plus
-  provenance/rights/privacy and separation-of-duties evidence; then freeze the
-  pending Q14 Parser and formal Q16-Q24 schemas before full execution.
-  Retrieval Step 100 remains independently deferred because the Step 99
-  weighted-RRF candidate missed its preregistered quality gate; do not infer a
-  rollout or re-index.
+- Status: owner-primary complete; independent review pending;
+  `formal_authority=false`; no formal baseline exists. Technical wiring and
+  the minimal formal/no-egress contracts are complete, but independent review,
+  reproducible/content-addressed image evidence, genuine no-egress evidence,
+  governance review, and formal 13-case execution remain open.
+- Last updated: 2026-09-04
+- Next action: complete independent review and genuine no-egress evidence.
+  Formal synthetic baseline execution is later; the deferred human-curated
+  representative benchmark is after that and supplements rather than replaces
+  the synthetic set. Retrieval Step 100 remains deferred; do not infer rollout
+  or re-index.
 
 ## Status Values
 

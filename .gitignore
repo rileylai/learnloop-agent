@@ -20,6 +20,15 @@ __pycache__/
 # Local files
 data/
 dev_state/
+!dev_state/
+dev_state/*
+!dev_state/parser-note-completeness/
+dev_state/parser-note-completeness/*
+!dev_state/parser-note-completeness/04-formal-baseline-readiness.md
+!dev_state/parser-note-completeness/05-human-review-workbook.md
+!dev_state/parser-note-completeness/06-primary-gold-proposals.md
+!dev_state/parser-note-completeness/07-independent-review-handoff.md
+!dev_state/parser-note-completeness/human-review-result-template.json
 local_storage/
 uploads/
 tmp/

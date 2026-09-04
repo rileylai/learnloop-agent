@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from tests.evals.parser_note_completeness.benchmark_manifest import (
     BENCHMARK_VERSION_001,
     BENCHMARK_VERSION_002,
+    BENCHMARK_VERSION_003,
     BenchmarkManifest,
     benchmark_manifest_sha256,
     build_benchmark_manifest,
@@ -24,10 +25,11 @@ ROOT = Path(__file__).parent / "v1"
 MANIFESTS = {
     BENCHMARK_VERSION_001: ROOT / "manifests" / "benchmark" / "1.0.0",
     BENCHMARK_VERSION_002: ROOT / "manifests" / "benchmark" / "1.0.1",
+    BENCHMARK_VERSION_003: ROOT / "manifests" / "benchmark" / "1.0.2",
 }
 
 
-@pytest.mark.parametrize("benchmark_version", [BENCHMARK_VERSION_001, BENCHMARK_VERSION_002])
+@pytest.mark.parametrize("benchmark_version", [BENCHMARK_VERSION_001, BENCHMARK_VERSION_002, BENCHMARK_VERSION_003])
 def test_benchmark_manifest_is_canonical_and_validates_transitive_bindings(benchmark_version: str) -> None:
     manifest_root = MANIFESTS[benchmark_version]
     manifest_path = manifest_root / "manifest.json"
@@ -58,6 +60,14 @@ def test_benchmark_manifest_100_preserves_old_profile_and_101_selects_revision_0
     assert new.benchmark_version == "parser-note-completeness/1.0.1"
     assert new.full_profile_revision == "revision-002"
     assert new.full_profile_sha256 == "4e32c4d31c9fc4359ae15c693d6f35e0d56712a37214965adeede587bb5ebc27"
+
+    successor = load_benchmark_manifest(
+        MANIFESTS[BENCHMARK_VERSION_003] / "manifest.json",
+        MANIFESTS[BENCHMARK_VERSION_003] / "manifest.sha256",
+        ROOT,
+    )
+    assert successor.benchmark_version == "parser-note-completeness/1.0.2"
+    assert successor.full_profile_revision == "revision-003"
 
 
 def test_benchmark_manifest_build_is_byte_deterministic() -> None:
